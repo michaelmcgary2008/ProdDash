@@ -150,6 +150,7 @@ function sanitizeTile(t) {
     w,
     h: Math.max(1, Number(t.h) || 2),
     settings: (t.settings && typeof t.settings === 'object') ? t.settings : {},
+    headHidden: Boolean(t.headHidden),
   };
 }
 
@@ -229,7 +230,11 @@ function buildTile(tile) {
   title.className = 'tile-title';
   title.textContent = man ? man.name : tile.module + ' (not installed)';
 
-  head.append(dot, title);
+  // where moduleApi.header puts a module's own buttons and menus
+  const controls = document.createElement('span');
+  controls.className = 'tile-controls';
+
+  head.append(dot, title, controls);
 
   const hasSettings = man && man.instanceSchema && Object.keys(man.instanceSchema).length;
   if (hasSettings) {
@@ -261,10 +266,22 @@ function buildTile(tile) {
   resize.className = 'tile-resize';
   resize.title = 'Drag to resize';
 
-  el.append(head, body, resize);
+  // notch on the title bar's bottom edge: hides/shows the bar
+  const notch = document.createElement('button');
+  notch.className = 'tile-notch';
+  notch.title = 'Hide / show the title bar';
+  notch.addEventListener('click', (e) => {
+    e.stopPropagation();
+    tile.headHidden = !tile.headHidden;
+    el.classList.toggle('head-hidden', tile.headHidden);
+    saveLayout();
+  });
+
+  el.append(head, body, resize, notch);
+  el.classList.toggle('head-hidden', Boolean(tile.headHidden));
   grid.appendChild(el);
 
-  const entry = { el, body, dot, titleEl: title, instance: null };
+  const entry = { el, body, dot, titleEl: title, controls, instance: null };
   tileEls.set(tile.id, entry);
   applyRect(tile);
 
@@ -283,7 +300,7 @@ function refreshEmptyState() {
 
 function wireDrag(tile, el, handle) {
   handle.addEventListener('pointerdown', (ev) => {
-    if (ev.target.closest('.tile-btn')) return;
+    if (ev.target.closest('.tile-btn') || ev.target.closest('.tile-menu') || ev.target.closest('.tile-notch')) return;
     if (ev.button !== 0 && ev.pointerType === 'mouse') return;
     ev.preventDefault();
     closeSettingsPopovers();
@@ -555,6 +572,8 @@ function tileMessage(entry, text) {
  */
 function buildModuleApi(tile, man, entry) {
   const sseHandles = new Set();
+  const headerEls = new Set();     // controls this instance added to the title bar
+  const docListeners = new Set();  // outside-click closers for header menus
 
   const api = {
     id: man.id,
@@ -636,9 +655,96 @@ function buildModuleApi(tile, man, entry) {
       entry.dot.title = msg;
     },
 
-    /* shell-internal: safety net so a forgotten stream can't outlive the tile */
+    /**
+     * The tile's title bar. Controls added here live next to the gear/close
+     * buttons and are removed automatically when the instance stops. The
+     * whole bar can be hidden by the user via the notch, so nothing
+     * essential should exist ONLY as a header control.
+     */
+    header: {
+      /** A small button. icon = inline SVG string, label = short text (either or both). */
+      addButton({ icon = '', label = '', title = '', onClick } = {}) {
+        const btn = document.createElement('button');
+        btn.className = 'tile-btn module-btn';
+        btn.title = title || label;
+        if (icon) btn.innerHTML = icon;
+        if (label) btn.appendChild(document.createTextNode(label));
+        if (typeof onClick === 'function') {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            onClick(e);
+          });
+        }
+        entry.controls.appendChild(btn);
+        headerEls.add(btn);
+        return btn;
+      },
+
+      /**
+       * A dropdown menu button. build(menuEl) runs on every open and fills
+       * the (emptied) menu element. Returns { button, menu, setLabel, close }.
+       */
+      addMenu({ icon = '', label = '', title = '', build } = {}) {
+        const wrap = document.createElement('span');
+        wrap.className = 'tile-dd';
+        const btn = document.createElement('button');
+        btn.className = 'tile-btn module-btn';
+        btn.title = title || label;
+        if (icon) btn.innerHTML = icon;
+        if (label) btn.appendChild(document.createTextNode(label));
+        const menu = document.createElement('div');
+        menu.className = 'tile-menu';
+        menu.hidden = true;
+
+        const open = () => {
+          if (typeof build === 'function') {
+            menu.innerHTML = '';
+            build(menu);
+          }
+          menu.hidden = false;
+          // fixed positioning (escapes the tile's overflow): under the
+          // button, right-aligned, clamped to the viewport
+          const r = btn.getBoundingClientRect();
+          menu.style.top = Math.min(r.bottom + 6, window.innerHeight - 80) + 'px';
+          menu.style.left = '0px';
+          const w = menu.offsetWidth;
+          menu.style.left = Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8)) + 'px';
+        };
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (menu.hidden) open();
+          else menu.hidden = true;
+        });
+        const onDocClick = (e) => {
+          if (!menu.hidden && !menu.contains(e.target) && !btn.contains(e.target)) menu.hidden = true;
+        };
+        document.addEventListener('click', onDocClick);
+        docListeners.add(onDocClick);
+
+        wrap.append(btn, menu);
+        entry.controls.appendChild(wrap);
+        headerEls.add(wrap);
+        return {
+          button: btn,
+          menu,
+          setLabel(text) {
+            btn.textContent = text;
+          },
+          close() {
+            menu.hidden = true;
+          },
+        };
+      },
+    },
+
+    /* shell-internal: safety net so a forgotten stream, header control or
+       listener can't outlive the tile */
     _closeAll() {
       for (const handle of [...sseHandles]) handle.close();
+      for (const el of headerEls) el.remove();
+      headerEls.clear();
+      for (const fn of docListeners) document.removeEventListener('click', fn);
+      docListeners.clear();
     },
   };
   return api;

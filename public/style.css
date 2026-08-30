@@ -71,6 +71,14 @@ button { font-family: inherit; }
 }
 .tb-btn:hover { border-color: var(--muted); }
 .tb-btn:active { background: var(--border); }
+.tb-btn.icon {
+  padding: 6px 8px;
+  min-width: 30px;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+}
+.tb-btn.icon svg { display: block; }
 
 /* ── dropdown menus ────────────────────────────────────────────────── */
 
@@ -191,7 +199,8 @@ button { font-family: inherit; }
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 8px;
+  height: 32px; /* fixed so the notch below can sit at a known offset */
+  padding: 0 8px;
   background: rgba(255, 255, 255, 0.03);
   border-bottom: 1px solid var(--border);
   cursor: grab;
@@ -200,6 +209,7 @@ button { font-family: inherit; }
   touch-action: none;
 }
 .tile.dragging .tile-head { cursor: grabbing; }
+.tile.head-hidden .tile-head { display: none; }
 
 .tile-head .dot {
   flex: none;
@@ -241,7 +251,75 @@ button { font-family: inherit; }
 }
 .tile-btn:hover { background: var(--border); color: var(--text); }
 .tile-btn.close:hover { color: var(--danger); }
+.tile-btn.active { color: var(--accent); }
 .tile-btn svg { width: 13px; height: 13px; display: block; }
+
+/* controls a module adds to its own title bar (moduleApi.header) */
+.tile-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+}
+.tile-btn.module-btn {
+  width: auto;
+  min-width: 22px;
+  padding: 0 5px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.tile-dd { position: relative; display: inline-flex; }
+
+/* a module header menu — fixed-positioned by the shell so the tile's
+   overflow:hidden can't clip it */
+.tile-menu {
+  position: fixed;
+  z-index: 70;
+  min-width: 180px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 5px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+}
+.tile-menu[hidden] { display: none; }
+
+/* notch on the title bar's bottom edge: click to hide/show the bar
+   (same idea as the ProdCom Listener's pull-down menubar handle) */
+.tile-notch {
+  position: absolute;
+  top: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 46px;
+  height: 13px;
+  padding: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 10px 10px;
+  cursor: pointer;
+  z-index: 6;
+  opacity: 0;
+  transition: opacity 0.15s ease, top 0.15s ease;
+}
+.tile:hover .tile-notch { opacity: 0.6; }
+.tile .tile-notch:hover { opacity: 1; }
+.tile.head-hidden .tile-notch { top: 0; }
+.tile-notch::after {
+  content: "";
+  display: block;
+  width: 18px;
+  height: 3px;
+  margin: 4px auto 0;
+  border-radius: 999px;
+  background: var(--muted);
+}
+.tile-notch:hover::after { background: var(--text); }
 
 .tile-body {
   flex: 1;
@@ -331,7 +409,7 @@ button { font-family: inherit; }
 
 .tile-settings {
   position: absolute;
-  top: 30px;
+  top: 36px;
   right: 6px;
   z-index: 45;
   min-width: 220px;

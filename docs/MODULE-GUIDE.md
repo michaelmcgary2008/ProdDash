@@ -113,6 +113,43 @@ export default function create({ root, moduleApi }) {
 | `fetch(path, opts)` | `fetch` scoped to your server routes: `fetch('/state')` hits `/api/modules/<id>/state`. |
 | `sse(path, handlers)` | An `EventSource` scoped the same way, **with auto-reconnect** (see below). Returns a handle with `close()`. |
 | `setStatus(state, msg)` | Drives the tile's status dot: `'ok'`, `'connecting'` or `'error'`, plus a hover message. Call it honestly — during a live service the dot is how an operator spots a dead feed. |
+| `header.addButton(…)` | Put a small button in the tile's own title bar (see below). |
+| `header.addMenu(…)` | Put a dropdown menu button there (see below). |
+
+### Title-bar controls
+
+Modules don't build their own toolbars — actions live in the tile's title
+bar, next to the shell's gear/close buttons:
+
+```js
+const btn = moduleApi.header.addButton({
+  icon: '<svg …>…</svg>',   // inline SVG string, and/or
+  label: 'A+',              // short text
+  title: 'Larger text',     // hover tooltip
+  onClick() { … },
+});
+btn.classList.add('active'); // toggle styling for on/off buttons
+
+const menu = moduleApi.header.addMenu({
+  label: 'Channels ▾',
+  title: 'Choose visible channels',
+  build(menuEl) {
+    // called on every open with an emptied menu element — fill it with
+    // buttons (give them your scoped classes; the container is styled and
+    // fixed-positioned by the shell, so the tile's overflow can't clip it)
+  },
+});
+menu.setLabel('Channels (2/4) ▾'); // update the button text any time
+```
+
+Everything you add is removed automatically when your instance stops, so a
+remount never duplicates controls. Keep them compact (icon buttons, short
+labels): the title bar is 32 px tall and shared with the tile's name.
+
+One more thing to know: the user can hide the whole title bar with the
+small notch on its bottom edge (a clean-view mode for wall displays). Your
+controls disappear with it, so nothing essential — status, reconnects,
+live data — may exist *only* as a header control.
 
 `sse(path, handlers)` handlers:
 

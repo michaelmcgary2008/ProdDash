@@ -1,6 +1,6 @@
 {
   "id": "prodcom-transcript",
-  "name": "ProdCom Transcript",
+  "name": "ProdCom",
   "version": "1.0.0",
   "description": "Live ProdCom transcript stream",
   "client": "client.js",

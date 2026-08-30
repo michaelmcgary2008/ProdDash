@@ -22,14 +22,6 @@ export default function create({ root, moduleApi }) {
 
   root.innerHTML = `
     <div class="pt-wrap">
-      <div class="pt-bar">
-        <div class="pt-dd">
-          <button class="pt-btn pt-channels-btn" title="Choose visible channels">Channels ▾</button>
-          <div class="pt-menu" hidden></div>
-        </div>
-        <span class="pt-spacer"></span>
-        <button class="pt-btn pt-clear" title="Clear this tile (does not affect ProdCom)">Clear</button>
-      </div>
       <div class="pt-stream">
         <div class="pt-empty">Waiting for transcript…</div>
         <div class="pt-entries"></div>
@@ -42,14 +34,66 @@ export default function create({ root, moduleApi }) {
   const entriesEl = root.querySelector('.pt-entries');
   const emptyEl = root.querySelector('.pt-empty');
   const jumpBtn = root.querySelector('.pt-jump');
-  const channelBtn = root.querySelector('.pt-channels-btn');
-  const channelMenu = root.querySelector('.pt-menu');
+
+  /* ── title-bar controls ─────────────────────────────────────────── */
+
+  const CLOCK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
+  const JUMP_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>';
+  const CLEAR_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></svg>';
+
+  let channelMenuEl = null; // the open menu's element (filled on each open)
+  const channelsMenu = moduleApi.header.addMenu({
+    label: 'Channels ▾',
+    title: 'Choose visible channels',
+    build(menu) {
+      menu.classList.add('pt-menu');
+      channelMenuEl = menu;
+      rebuildChannelMenu();
+    },
+  });
+  channelsMenu.button.classList.add('pt-channels-btn');
+
+  let timeBtn = null;
+  timeBtn = moduleApi.header.addButton({
+    icon: CLOCK_SVG,
+    title: 'Show / hide timestamps',
+    onClick() {
+      moduleApi.saveInstanceSettings({ showTimes: !moduleApi.instanceSettings.showTimes });
+      applyInstanceSettings();
+    },
+  });
+
+  function bumpTextSize(delta) {
+    const current = Number(moduleApi.instanceSettings.textSize) || 15;
+    moduleApi.saveInstanceSettings({ textSize: Math.min(48, Math.max(10, current + delta)) });
+    applyInstanceSettings();
+  }
+  moduleApi.header.addButton({ label: 'A−', title: 'Smaller text', onClick: () => bumpTextSize(-2) });
+  moduleApi.header.addButton({ label: 'A+', title: 'Larger text', onClick: () => bumpTextSize(2) });
+
+  moduleApi.header.addButton({
+    icon: JUMP_SVG,
+    title: 'Jump to latest',
+    onClick() {
+      pinnedToBottom = true;
+      jumpBtn.hidden = true;
+      scrollToBottom();
+    },
+  });
+
+  const clearBtn = moduleApi.header.addButton({
+    icon: CLEAR_SVG,
+    title: 'Clear this tile (does not affect ProdCom)',
+    onClick: clearView,
+  });
+  clearBtn.classList.add('pt-clear');
 
   function applyInstanceSettings() {
     const s = moduleApi.instanceSettings;
     const size = Math.min(48, Math.max(10, Number(s.textSize) || 15));
     wrap.style.setProperty('--pt-size', size + 'px');
     wrap.classList.toggle('show-times', Boolean(s.showTimes));
+    timeBtn?.classList.toggle('active', Boolean(s.showTimes));
   }
   applyInstanceSettings();
 
@@ -106,7 +150,20 @@ export default function create({ root, moduleApi }) {
     );
   }
 
+  function updateChannelsLabel() {
+    let visibleCount = 0;
+    for (const id of channels.keys()) {
+      if (!hiddenChannels.has(id)) visibleCount++;
+    }
+    channelsMenu.setLabel(visibleCount === channels.size
+      ? 'Channels ▾'
+      : `Channels (${visibleCount}/${channels.size}) ▾`);
+  }
+
   function rebuildChannelMenu() {
+    updateChannelsLabel();
+    const channelMenu = channelMenuEl;
+    if (!channelMenu) return; // menu not opened yet — the label is enough
     channelMenu.innerHTML = '';
 
     if (groups.size) {
@@ -134,10 +191,8 @@ export default function create({ root, moduleApi }) {
       channelMenu.appendChild(divider);
     }
 
-    let visibleCount = 0;
     for (const [id, info] of channels) {
       const on = !hiddenChannels.has(id);
-      if (on) visibleCount++;
       const item = document.createElement('button');
       item.className = 'pt-channel-item' + (on ? ' on' : '');
       item.setAttribute('role', 'menuitemcheckbox');
@@ -158,27 +213,15 @@ export default function create({ root, moduleApi }) {
       });
       channelMenu.appendChild(item);
     }
-    channelBtn.textContent = visibleCount === channels.size
-      ? 'Channels ▾'
-      : `Channels (${visibleCount}/${channels.size}) ▾`;
   }
-
-  channelBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    channelMenu.hidden = !channelMenu.hidden;
-  });
-  const onDocClick = (e) => {
-    if (!channelMenu.hidden && !e.target.closest('.pt-dd')) channelMenu.hidden = true;
-  };
-  document.addEventListener('click', onDocClick);
 
   /* ── clear (local view only) ────────────────────────────────────── */
 
-  root.querySelector('.pt-clear').addEventListener('click', () => {
+  function clearView() {
     entryEls.forEach((el) => el.remove());
     entryEls.clear();
     emptyEl.hidden = false;
-  });
+  }
 
   /* ── scrolling ──────────────────────────────────────────────────── */
 
@@ -393,8 +436,7 @@ export default function create({ root, moduleApi }) {
       stopped = true;
       clearTimeout(bootTimer);
       stream?.close();
-      document.removeEventListener('click', onDocClick);
-      root.innerHTML = '';
+      root.innerHTML = ''; // header controls are removed by the shell
     },
     onResize() {
       if (pinnedToBottom) scrollToBottom();

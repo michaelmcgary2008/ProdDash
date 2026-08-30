@@ -60,29 +60,33 @@ are written by the app itself.
 
 ## Using the dashboard
 
-- **＋ Add tile** — add any enabled module; multiple tiles of the same
-  module are fine (e.g. two transcripts filtered to different channels).
-- Drag a tile by its **header** to move it; drag the **corner handle** to
-  resize; **✕** removes it. Tiles sit flush — when two share an edge, hover
-  the seam and a small grab pill appears; drag it to trade width between
-  the two tiles (macOS split-view style).
+- **＋** — add any enabled module; multiple tiles of the same module are
+  fine (e.g. two transcripts filtered to different channels).
+- Drag a tile by its **title bar** to move it; drag the **corner handle**
+  to resize; **✕** removes it. Tiles sit flush — when two share an edge,
+  hover the seam and a small grab pill appears; drag it to trade width
+  between the two tiles (macOS split-view style).
+- A tile's actions (menus, text size, clear…) live in its **title bar**;
+  the small **notch** on the bar's bottom edge hides/shows the whole bar
+  for a clean wall-display look.
 - The **gear** on a tile holds per-tile settings (filters, text size,
   display options) — these belong to this browser's layout, not the server.
-- **Layout ▾** — save the current arrangement to the server under a name,
-  load a named layout (it becomes a local copy — browsers are never linked),
-  or reset this browser's dashboard.
+- The **grid icon** — save the current arrangement to the server under a
+  name, load a named layout (it becomes a local copy — browsers are never
+  linked), or reset this browser's dashboard.
 - Every tile has a **status dot**: green = live, amber = connecting,
   red = upstream unreachable (hover it for details). Tiles reconnect
   automatically.
 
 ## Included modules
 
-- **ProdCom Transcript** — live transcript stream with in-place updates of
-  in-progress speech, channel colors, per-tile channel visibility toggles
-  and group presets. Admin config: ProdCom URL, API key.
-- **ProPresenter Now / Next** — what's live and what's next, with slide
-  progress, driven by the shared `propresenter-core` client (ProPresenter
-  7/20). Admin config: host, port, password.
+- **ProdCom** — live transcript stream with in-place updates of in-progress
+  speech, channel colors, per-tile channel visibility toggles and group
+  presets, timestamps, text size and jump-to-latest in the title bar.
+  Admin config: ProdCom URL, API key.
+- **ProPresenter** — what's live and what's next, with slide progress,
+  driven by the shared `propresenter-core` client (ProPresenter 7/20).
+  Admin config: host, port, password.
 - **Clock** — a big booth clock; also the smallest possible module and the
   reference for module authors.
 

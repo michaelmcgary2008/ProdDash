@@ -1,6 +1,6 @@
 {
   "id": "propresenter-now-next",
-  "name": "ProPresenter Now / Next",
+  "name": "ProPresenter",
   "version": "1.0.0",
   "description": "What is live in ProPresenter and what comes next",
   "client": "client.js",

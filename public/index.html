@@ -20,12 +20,18 @@
     <span class="spacer"></span>
 
     <div class="dropdown" id="add-dd">
-      <button class="tb-btn" id="add-btn" title="Add a module tile">＋ Add tile ▾</button>
+      <button class="tb-btn icon" id="add-btn" title="Add a module tile" aria-label="Add tile">＋</button>
       <div class="menu" id="add-menu" hidden></div>
     </div>
 
     <div class="dropdown" id="layout-dd">
-      <button class="tb-btn" id="layout-btn" title="Save, load or reset layouts">Layout ▾</button>
+      <button class="tb-btn icon" id="layout-btn" title="Save, load or reset layouts" aria-label="Layouts">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <rect x="3" y="3" width="8" height="8" rx="1.5"/>
+          <rect x="3" y="13" width="8" height="8" rx="1.5"/>
+          <rect x="13" y="3" width="8" height="18" rx="1.5"/>
+        </svg>
+      </button>
       <div class="menu" id="layout-menu" hidden></div>
     </div>
 

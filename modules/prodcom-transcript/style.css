@@ -9,49 +9,9 @@
   flex-direction: column;
 }
 
-/* ── toolbar ── */
-
-[data-module="prodcom-transcript"] .pt-bar {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
-  border-bottom: 1px solid var(--border);
-}
-
-[data-module="prodcom-transcript"] .pt-spacer { flex: 1; }
-
-[data-module="prodcom-transcript"] .pt-btn {
-  background: var(--bg);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 3px 8px;
-  font-size: 11px;
-  font-family: inherit;
-  cursor: pointer;
-  white-space: nowrap;
-}
-[data-module="prodcom-transcript"] .pt-btn:hover { border-color: var(--muted); }
-
-[data-module="prodcom-transcript"] .pt-dd { position: relative; }
-
-[data-module="prodcom-transcript"] .pt-menu {
-  position: absolute;
-  top: calc(100% + 5px);
-  left: 0;
-  z-index: 30;
-  min-width: 170px;
-  max-height: 45vh;
-  overflow-y: auto;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 5px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
-}
-[data-module="prodcom-transcript"] .pt-menu[hidden] { display: none; }
+/* ── channels menu ──
+   The menu container is created and positioned by the shell (.tile-menu);
+   it lives inside the tile, so [data-module] scoping still applies. */
 
 [data-module="prodcom-transcript"] .pt-channel-item {
   display: flex;
