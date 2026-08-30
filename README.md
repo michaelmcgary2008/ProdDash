@@ -63,7 +63,9 @@ are written by the app itself.
 - **＋ Add tile** — add any enabled module; multiple tiles of the same
   module are fine (e.g. two transcripts filtered to different channels).
 - Drag a tile by its **header** to move it; drag the **corner handle** to
-  resize; **✕** removes it.
+  resize; **✕** removes it. Tiles sit flush — when two share an edge, hover
+  the seam and a small grab pill appears; drag it to trade width between
+  the two tiles (macOS split-view style).
 - The **gear** on a tile holds per-tile settings (filters, text size,
   display options) — these belong to this browser's layout, not the server.
 - **Layout ▾** — save the current arrangement to the server under a name,

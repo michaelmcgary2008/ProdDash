@@ -161,7 +161,8 @@ function newId() {
 
 function cellMetrics() {
   const style = getComputedStyle(grid);
-  const gap = parseFloat(style.columnGap) || 10;
+  const gapRaw = parseFloat(style.columnGap);
+  const gap = Number.isFinite(gapRaw) ? gapRaw : 0;
   const cw = (grid.clientWidth - gap * (COLS - 1)) / COLS;
   const ch = parseFloat(style.gridAutoRows) || 72;
   return { cw, ch, gap };
@@ -171,9 +172,13 @@ function overlaps(a, b) {
   return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 }
 
-function isFree(rect, excludeId) {
+function isFreeExcept(rect, excludeIds) {
   if (rect.x < 0 || rect.y < 0 || rect.x + rect.w > COLS) return false;
-  return !tiles.some((t) => t.id !== excludeId && overlaps(rect, t));
+  return !tiles.some((t) => !excludeIds.includes(t.id) && overlaps(rect, t));
+}
+
+function isFree(rect, excludeId) {
+  return isFreeExcept(rect, [excludeId]);
 }
 
 /** First free spot scanning top-to-bottom, left-to-right. */
@@ -296,6 +301,7 @@ function wireDrag(tile, el, handle) {
       if (!moved && (dCols || dRows)) {
         moved = true;
         el.classList.add('dragging');
+        grid.classList.add('no-dividers');
       }
       const cand = {
         x: Math.max(0, Math.min(COLS - tile.w, startX + dCols)),
@@ -314,7 +320,11 @@ function wireDrag(tile, el, handle) {
       handle.removeEventListener('pointerup', onUp);
       handle.removeEventListener('pointercancel', onUp);
       el.classList.remove('dragging');
-      if (moved) saveLayout();
+      grid.classList.remove('no-dividers');
+      if (moved) {
+        saveLayout();
+        rebuildDividers();
+      }
     };
     handle.addEventListener('pointermove', onMove);
     handle.addEventListener('pointerup', onUp);
@@ -337,6 +347,7 @@ function wireResize(tile, el, handle) {
     const startH = tile.h;
     const min = minSizeOf(tile);
     el.classList.add('resizing');
+    grid.classList.add('no-dividers');
     let changed = false;
 
     const onMove = (e) => {
@@ -361,7 +372,11 @@ function wireResize(tile, el, handle) {
       handle.removeEventListener('pointerup', onUp);
       handle.removeEventListener('pointercancel', onUp);
       el.classList.remove('resizing');
-      if (changed) saveLayout();
+      grid.classList.remove('no-dividers');
+      if (changed) {
+        saveLayout();
+        rebuildDividers();
+      }
     };
     handle.addEventListener('pointermove', onMove);
     handle.addEventListener('pointerup', onUp);
@@ -374,6 +389,88 @@ function notifyResize(tile) {
   try {
     entry?.instance?.onResize?.(tile.w, tile.h);
   } catch { /* module's problem, not the shell's */ }
+}
+
+/* ── seam dividers between adjacent tiles ───────────────────────────── */
+
+/* Wherever two tiles share a vertical edge, a divider sits on the seam.
+   Dragging its pill moves the shared edge, trading width between the two
+   tiles — their combined span never changes, so nothing else can collide
+   except via the explicit check below (a third tile can sit behind the
+   seam for part of its height). */
+
+function rebuildDividers() {
+  grid.querySelectorAll('.tile-divider').forEach((el) => el.remove());
+  for (const L of tiles) {
+    for (const R of tiles) {
+      if (L === R || L.x + L.w !== R.x) continue;
+      const top = Math.max(L.y, R.y);
+      const bottom = Math.min(L.y + L.h, R.y + R.h);
+      if (bottom <= top) continue;
+      buildDivider(L, R, top, bottom);
+    }
+  }
+}
+
+function buildDivider(L, R, top, bottom) {
+  const el = document.createElement('div');
+  el.className = 'tile-divider';
+  el.title = 'Drag to resize';
+
+  const place = () => {
+    const m = cellMetrics();
+    // left as a percentage so the pill tracks window resizes for free
+    el.style.left = ((L.x + L.w) / COLS) * 100 + '%';
+    el.style.top = top * (m.ch + m.gap) + 'px';
+    el.style.height = (bottom - top) * (m.ch + m.gap) - m.gap + 'px';
+  };
+  place();
+
+  el.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0 && ev.pointerType === 'mouse') return;
+    ev.preventDefault();
+    closeSettingsPopovers();
+    el.setPointerCapture(ev.pointerId);
+    el.classList.add('active');
+    const m = cellMetrics();
+    const sx = ev.clientX;
+    const startBoundary = L.x + L.w;
+    const rightEdge = R.x + R.w; // fixed for the whole drag
+    const minB = L.x + minSizeOf(L).w;
+    const maxB = rightEdge - minSizeOf(R).w;
+    let changed = false;
+
+    const onMove = (e) => {
+      const b = Math.max(minB, Math.min(maxB,
+        startBoundary + Math.round((e.clientX - sx) / (m.cw + m.gap))));
+      if (b === L.x + L.w) return;
+      const candL = { x: L.x, y: L.y, w: b - L.x, h: L.h };
+      const candR = { x: b, y: R.y, w: rightEdge - b, h: R.h };
+      if (!isFreeExcept(candL, [L.id, R.id]) || !isFreeExcept(candR, [L.id, R.id])) return;
+      L.w = candL.w;
+      R.x = candR.x;
+      R.w = candR.w;
+      applyRect(L);
+      applyRect(R);
+      notifyResize(L);
+      notifyResize(R);
+      place();
+      changed = true;
+    };
+    const onUp = () => {
+      el.removeEventListener('pointermove', onMove);
+      el.removeEventListener('pointerup', onUp);
+      el.removeEventListener('pointercancel', onUp);
+      el.classList.remove('active');
+      if (changed) saveLayout();
+      rebuildDividers(); // adjacencies may have changed
+    };
+    el.addEventListener('pointermove', onMove);
+    el.addEventListener('pointerup', onUp);
+    el.addEventListener('pointercancel', onUp);
+  });
+
+  grid.appendChild(el);
 }
 
 /* ── add / remove tiles ─────────────────────────────────────────────── */
@@ -394,6 +491,7 @@ function addTile(moduleId) {
   buildTile(tile);
   refreshEmptyState();
   saveLayout();
+  rebuildDividers();
 }
 
 function removeTile(id) {
@@ -408,6 +506,7 @@ function removeTile(id) {
   }
   refreshEmptyState();
   saveLayout();
+  rebuildDividers();
 }
 
 function clearAllTiles() {
@@ -686,6 +785,7 @@ function renderLayout(list) {
   tiles = list.map(sanitizeTile);
   for (const tile of tiles) buildTile(tile);
   refreshEmptyState();
+  rebuildDividers();
 }
 
 /* ── menus ──────────────────────────────────────────────────────────── */
