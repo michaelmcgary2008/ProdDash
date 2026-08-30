@@ -22,8 +22,10 @@ const os = require('os');
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const CONFIG_DIR = path.join(ROOT, 'config');
+const MODULES_DIR = path.join(ROOT, 'modules');
+const MODULES_CONFIG_PATH = path.join(CONFIG_DIR, 'modules.json');
 
-/* ── config ─────────────────────────────────────────────────────────── */
+/* ── config files ───────────────────────────────────────────────────── */
 
 function readJson(file, fallback) {
   try {
@@ -33,8 +35,269 @@ function readJson(file, fallback) {
   }
 }
 
+function writeJson(file, value) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = file + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2) + '\n');
+  fs.renameSync(tmp, file); // atomic-ish: never leave a half-written config
+}
+
 const shellConfig = readJson(path.join(CONFIG_DIR, 'proddash.json'), {});
 const PORT = Number(process.env.PORT || shellConfig.port || 24500);
+
+/** Per-module server-wide state: { "<id>": { enabled: bool, config: {…} } } */
+let modulesConfig = readJson(MODULES_CONFIG_PATH, {});
+
+/* ── module discovery ───────────────────────────────────────────────── */
+
+/** @type {Map<string, object>} module id -> manifest (with .dir added) */
+const manifests = new Map();
+
+function discoverModules() {
+  manifests.clear();
+  let dirs = [];
+  try {
+    dirs = fs.readdirSync(MODULES_DIR, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+  } catch {
+    return; // no modules/ folder yet — the shell still runs
+  }
+  for (const dir of dirs) {
+    const manifestPath = path.join(MODULES_DIR, dir, 'module.json');
+    const man = readJson(manifestPath, null);
+    if (!man || typeof man !== 'object') {
+      if (fs.existsSync(manifestPath)) console.warn(`[proddash] ${dir}/module.json is invalid — skipped`);
+      continue;
+    }
+    if (man.id && man.id !== dir) {
+      console.warn(`[proddash] module "${dir}": manifest id "${man.id}" must match its folder name — skipped`);
+      continue;
+    }
+    man.id = dir;
+    if (!man.client) {
+      console.warn(`[proddash] module "${dir}": manifest has no "client" entry — skipped`);
+      continue;
+    }
+    man.dir = path.join(MODULES_DIR, dir);
+    manifests.set(dir, man);
+  }
+}
+
+function moduleState(id) {
+  const s = modulesConfig[id];
+  return s && typeof s === 'object' ? s : {};
+}
+
+function isEnabled(id) {
+  return moduleState(id).enabled !== false; // newly dropped modules default to enabled
+}
+
+/** Admin config for a module: schema defaults overlaid with stored values. */
+function effectiveConfig(id) {
+  const man = manifests.get(id);
+  const out = {};
+  for (const [key, spec] of Object.entries(man?.configSchema || {})) {
+    if (spec && 'default' in spec) out[key] = spec.default;
+  }
+  const stored = moduleState(id).config;
+  if (stored && typeof stored === 'object') Object.assign(out, stored);
+  return out;
+}
+
+/** Config as sent to browsers: password-typed fields never leave the server. */
+function clientConfig(id) {
+  const man = manifests.get(id);
+  const cfg = effectiveConfig(id);
+  const out = {};
+  for (const [key, value] of Object.entries(cfg)) {
+    if (man?.configSchema?.[key]?.type === 'password') continue;
+    out[key] = value;
+  }
+  return out;
+}
+
+/* ── module server mounting ─────────────────────────────────────────── */
+
+/**
+ * A module's optional server.js exports:
+ *   init({ config, log })   -> handle with stop() (and optionally health())
+ *   routes({ config, log }) -> { 'GET /state': handler, 'GET /stream': handler,
+ *                                'GET /proxy/*': handler, '* /any/*': handler }
+ * Routes are mounted under /api/modules/<id>/. A trailing "/*" makes a prefix
+ * route; the matched remainder is passed as req.wildcard (req.search carries
+ * the query string). init() runs before routes(), so routes can close over
+ * state init created.
+ */
+const mounted = new Map(); // id -> { routes: [...], handle, error }
+
+function makeLog(id) {
+  return (...args) => console.log(`[${id}]`, ...args);
+}
+
+function parseRouteTable(table) {
+  const routes = [];
+  for (const [key, handler] of Object.entries(table || {})) {
+    if (typeof handler !== 'function') continue;
+    const sp = key.indexOf(' ');
+    if (sp < 0) continue;
+    const method = key.slice(0, sp).toUpperCase();
+    let route = key.slice(sp + 1).trim();
+    let wildcard = false;
+    if (route.endsWith('/*')) {
+      wildcard = true;
+      route = route.slice(0, -2) || '';
+    }
+    if (!route.startsWith('/')) route = '/' + route;
+    routes.push({ method, path: route, wildcard, handler });
+  }
+  return routes;
+}
+
+function mountModule(id) {
+  const man = manifests.get(id);
+  if (!man) return;
+  const entry = { routes: [], handle: null, error: '' };
+  mounted.set(id, entry);
+  if (!man.server) return;
+  const log = makeLog(id);
+  try {
+    const serverPath = path.join(man.dir, man.server);
+    // Re-require fresh config on every (re)mount; the module code itself stays cached.
+    const mod = require(serverPath);
+    const config = effectiveConfig(id);
+    if (typeof mod.init === 'function') {
+      entry.handle = mod.init({ config, log }) || null;
+    }
+    if (typeof mod.routes === 'function') {
+      entry.routes = parseRouteTable(mod.routes({ config, log }));
+    }
+    log('mounted' + (entry.routes.length ? ` (${entry.routes.length} routes)` : ''));
+  } catch (err) {
+    entry.error = err instanceof Error ? err.message : String(err);
+    console.error(`[proddash] module "${id}" failed to mount:`, err);
+  }
+}
+
+function unmountModule(id) {
+  const entry = mounted.get(id);
+  if (!entry) return;
+  try {
+    entry.handle?.stop?.();
+  } catch (err) {
+    console.error(`[proddash] module "${id}" failed to stop cleanly:`, err);
+  }
+  mounted.delete(id);
+}
+
+/** Re-init a module after its config changed (admin page). */
+function remountModule(id) {
+  unmountModule(id);
+  if (manifests.has(id) && isEnabled(id)) mountModule(id);
+}
+
+function mountAllModules() {
+  for (const id of manifests.keys()) {
+    if (isEnabled(id)) mountModule(id);
+  }
+}
+
+/** Health of a mounted module, as reported by its own handle.health(). */
+function moduleHealth(id) {
+  const entry = mounted.get(id);
+  if (!entry) return null;
+  if (entry.error) return { status: 'error', message: entry.error };
+  try {
+    const h = entry.handle?.health?.();
+    if (h && typeof h === 'object') return { status: String(h.status || 'ok'), message: String(h.message || '') };
+  } catch { /* a bad health() must not break the admin page */ }
+  return null;
+}
+
+/* ── shell API helpers ──────────────────────────────────────────────── */
+
+function sendJson(res, status, body) {
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+  });
+  res.end(JSON.stringify(body));
+}
+
+function readBody(req, limitBytes = 512 * 1024) {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    let size = 0;
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > limitBytes) {
+        reject(new Error('Request body too large.'));
+        req.destroy();
+        return;
+      }
+      data += chunk;
+    });
+    req.on('end', () => resolve(data));
+    req.on('error', reject);
+  });
+}
+
+/** Manifest as sent to the dashboard client (enabled modules only). */
+function clientManifest(id) {
+  const man = manifests.get(id);
+  return {
+    id: man.id,
+    name: String(man.name || man.id),
+    version: String(man.version || ''),
+    description: String(man.description || ''),
+    client: String(man.client),
+    style: man.style ? String(man.style) : '',
+    minSize: man.minSize || { w: 1, h: 1 },
+    defaultSize: man.defaultSize || { w: 4, h: 3 },
+    instanceSchema: man.instanceSchema || {},
+    hasServer: Boolean(man.server),
+    config: clientConfig(id),
+  };
+}
+
+/* ── module API dispatch ────────────────────────────────────────────── */
+
+function dispatchModuleApi(req, res, id, subPath, search) {
+  if (!manifests.has(id)) return sendJson(res, 404, { error: `No module "${id}" is installed.` });
+  if (!isEnabled(id)) return sendJson(res, 404, { error: `Module "${id}" is disabled.` });
+  const entry = mounted.get(id);
+  if (!entry) return sendJson(res, 503, { error: `Module "${id}" is not mounted.` });
+  if (entry.error) return sendJson(res, 502, { error: `Module "${id}" failed to start: ${entry.error}` });
+
+  for (const route of entry.routes) {
+    if (route.method !== '*' && route.method !== req.method) continue;
+    if (route.wildcard) {
+      if (subPath === route.path || subPath.startsWith(route.path + '/')) {
+        req.wildcard = subPath.slice(route.path.length) || '/';
+        req.search = search;
+        try {
+          route.handler(req, res);
+        } catch (err) {
+          console.error(`[${id}] route handler threw:`, err);
+          if (!res.headersSent) sendJson(res, 500, { error: 'Module error.' });
+          else try { res.end(); } catch { /* gone */ }
+        }
+        return;
+      }
+    } else if (subPath === route.path) {
+      req.search = search;
+      try {
+        route.handler(req, res);
+      } catch (err) {
+        console.error(`[${id}] route handler threw:`, err);
+        if (!res.headersSent) sendJson(res, 500, { error: 'Module error.' });
+        else try { res.end(); } catch { /* gone */ }
+      }
+      return;
+    }
+  }
+  sendJson(res, 404, { error: `Module "${id}" has no route for ${req.method} ${subPath}` });
+}
 
 /* ── static files ───────────────────────────────────────────────────── */
 
@@ -90,22 +353,61 @@ function serveFile(res, baseDir, urlPath) {
 
 /* ── request routing ────────────────────────────────────────────────── */
 
+function handleRequest(req, res) {
+  let urlPath;
+  let search = '';
+  try {
+    const u = new URL(req.url, 'http://proddash.invalid');
+    urlPath = u.pathname;
+    search = u.search || '';
+  } catch {
+    res.writeHead(400, { 'Content-Type': 'text/plain' });
+    return res.end('Bad request');
+  }
+
+  /* — shell API — */
+  if (urlPath === '/api/modules' && req.method === 'GET') {
+    const list = [...manifests.keys()].filter(isEnabled).map(clientManifest);
+    return sendJson(res, 200, { modules: list });
+  }
+
+  /* — module APIs: /api/modules/<id>/… (any method; modules decide) — */
+  const apiMatch = urlPath.match(/^\/api\/modules\/([^/]+)(\/.*)?$/);
+  if (apiMatch) {
+    const id = decodeURIComponent(apiMatch[1]);
+    const subPath = apiMatch[2] || '/';
+    return dispatchModuleApi(req, res, id, subPath, search);
+  }
+
+  if (urlPath.startsWith('/api/')) {
+    return sendJson(res, 404, { error: 'Unknown endpoint.' });
+  }
+
+  /* — static — */
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    res.writeHead(405, { Allow: 'GET, HEAD' });
+    return res.end('Method not allowed');
+  }
+
+  /* module client assets: /modules/<id>/… */
+  const assetMatch = urlPath.match(/^\/modules\/([^/]+)(\/.*)?$/);
+  if (assetMatch) {
+    const id = decodeURIComponent(assetMatch[1]);
+    const man = manifests.get(id);
+    if (!man || !isEnabled(id)) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      return res.end('Not found');
+    }
+    return serveFile(res, man.dir, assetMatch[2] || '/');
+  }
+
+  serveFile(res, PUBLIC_DIR, urlPath);
+}
+
 const server = http.createServer((req, res) => {
   // Everything is guarded: one throw must never take the dashboard down mid-service.
   try {
-    let urlPath;
-    try {
-      urlPath = new URL(req.url, 'http://proddash.invalid').pathname;
-    } catch {
-      res.writeHead(400, { 'Content-Type': 'text/plain' });
-      return res.end('Bad request');
-    }
-
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
-      res.writeHead(405, { Allow: 'GET, HEAD' });
-      return res.end('Method not allowed');
-    }
-    serveFile(res, PUBLIC_DIR, urlPath);
+    handleRequest(req, res);
   } catch (err) {
     console.error('[proddash] request error:', err);
     try {
@@ -118,6 +420,11 @@ const server = http.createServer((req, res) => {
 // Never time out long-lived SSE connections.
 server.requestTimeout = 0;
 
+/* ── boot ───────────────────────────────────────────────────────────── */
+
+discoverModules();
+mountAllModules();
+
 server.listen(PORT, '0.0.0.0', () => {
   console.log('ProdDash running');
   console.log('  Local       : http://localhost:' + PORT);
@@ -128,4 +435,16 @@ server.listen(PORT, '0.0.0.0', () => {
       }
     }
   }
+  const ids = [...manifests.keys()];
+  console.log(ids.length
+    ? '  Modules     : ' + ids.map((id) => id + (isEnabled(id) ? '' : ' (disabled)')).join(', ')
+    : '  Modules     : none installed');
 });
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => {
+    for (const id of [...mounted.keys()]) unmountModule(id);
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 1500).unref();
+  });
+}

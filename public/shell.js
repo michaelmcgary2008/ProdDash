@@ -104,32 +104,20 @@ function menuItem(label, onClick, { sub = '', danger = false } = {}) {
 
 /* ── module registry ────────────────────────────────────────────────── */
 
-/* Filled from GET /api/modules once the module system is up (milestone 2).
-   Until then — or if the fetch fails — the shell offers a built-in
-   placeholder tile so the grid itself is usable and testable. */
+let registry = new Map(); // module id -> manifest from GET /api/modules
 
-const PLACEHOLDER_MANIFEST = {
-  id: '__placeholder',
-  name: 'Placeholder',
-  description: 'An empty tile for trying out the grid',
-  defaultSize: { w: 3, h: 2 },
-  minSize: { w: 1, h: 1 },
-  builtin: true,
-};
-
-let registry = new Map(); // module id -> manifest
-
+/** Refresh the enabled-module list. On failure the last known list is kept
+    (the server may just be restarting mid-service). Returns true on success. */
 async function loadRegistry() {
-  registry = new Map();
   try {
     const res = await fetch('/api/modules');
     if (!res.ok) throw new Error('modules ' + res.status);
     const body = await res.json();
-    for (const m of body.modules || []) registry.set(m.id, m);
+    registry = new Map((body.modules || []).map((m) => [m.id, m]));
+    return true;
   } catch {
-    /* no module API yet (or server just restarted) — placeholder only */
+    return false;
   }
-  if (!registry.size) registry.set(PLACEHOLDER_MANIFEST.id, PLACEHOLDER_MANIFEST);
 }
 
 /* ── layout state ───────────────────────────────────────────────────── */
@@ -434,34 +422,167 @@ function clearAllTiles() {
 
 /* ── module mounting ────────────────────────────────────────────────── */
 
-/* Milestone 2 turns this into the real module loader (dynamic import of each
-   module's client.js plus the moduleApi). For now only the built-in
-   placeholder renders. */
+const clientModuleCache = new Map(); // module id -> Promise<ES module>
 
-function mountModule(tile) {
+function loadClientModule(man) {
+  if (!clientModuleCache.has(man.id)) {
+    clientModuleCache.set(man.id, import(`/modules/${man.id}/${man.client || 'client.js'}`));
+  }
+  return clientModuleCache.get(man.id);
+}
+
+/** Inject a module's stylesheet once (shared by every instance of it). */
+function ensureModuleStyle(man) {
+  if (!man.style) return;
+  const id = 'module-style-' + man.id;
+  if (document.getElementById(id)) return;
+  const link = document.createElement('link');
+  link.id = id;
+  link.rel = 'stylesheet';
+  link.href = `/modules/${man.id}/${man.style}`;
+  document.head.appendChild(link);
+}
+
+function tileMessage(entry, text) {
+  const msg = document.createElement('div');
+  msg.className = 'tile-msg';
+  msg.textContent = text;
+  entry.body.appendChild(msg);
+}
+
+/**
+ * The API handed to each module instance — the whole surface a module may
+ * touch outside its root element. See docs/MODULE-GUIDE.md.
+ */
+function buildModuleApi(tile, man, entry) {
+  const sseHandles = new Set();
+
+  const api = {
+    id: man.id,
+    instanceId: tile.id,
+
+    /** Admin (server-wide) config, read-only. Password fields never reach the client. */
+    config: Object.freeze({ ...(man.config || {}) }),
+
+    /** Per-tile settings: schema defaults overlaid with what this tile saved. */
+    get instanceSettings() {
+      const out = {};
+      for (const [key, spec] of Object.entries(man.instanceSchema || {})) {
+        if (spec && 'default' in spec) out[key] = spec.default;
+      }
+      return Object.assign(out, tile.settings || {});
+    },
+
+    /** Persist per-tile settings into the layout (no remount — the module
+        already knows, it made the change). */
+    saveInstanceSettings(patch) {
+      Object.assign(tile.settings, patch || {});
+      saveLayout();
+    },
+
+    /** fetch scoped to this module's server routes. */
+    fetch(subPath, opts) {
+      return fetch('/api/modules/' + man.id + subPath, opts);
+    },
+
+    /**
+     * EventSource scoped the same way, with auto-reconnect: EventSource
+     * retries transient drops itself but gives up for good when a retry gets
+     * a completed non-SSE response (a 502 while the upstream is down), so a
+     * closed stream is recreated on a timer until it works again.
+     * handlers: { open(e), error(e), message(e), events: { name: fn } }
+     */
+    sse(subPath, handlers = {}) {
+      const url = '/api/modules/' + man.id + subPath;
+      let es = null;
+      let retryTimer = null;
+      let closed = false;
+      const connect = () => {
+        if (closed) return;
+        try { es?.close(); } catch { /* already closed */ }
+        es = new EventSource(url);
+        if (handlers.open) es.onopen = handlers.open;
+        if (handlers.message) es.onmessage = handlers.message;
+        for (const [name, fn] of Object.entries(handlers.events || {})) {
+          es.addEventListener(name, fn);
+        }
+        es.onerror = (e) => {
+          try { handlers.error?.(e); } catch { /* module's problem */ }
+          if (es.readyState === EventSource.CLOSED) {
+            clearTimeout(retryTimer);
+            retryTimer = setTimeout(connect, 3000);
+          }
+        };
+      };
+      connect();
+      const handle = {
+        close() {
+          closed = true;
+          clearTimeout(retryTimer);
+          try { es?.close(); } catch { /* already closed */ }
+          sseHandles.delete(handle);
+        },
+      };
+      sseHandles.add(handle);
+      return handle;
+    },
+
+    /** Drive the tile's status dot: 'ok' | 'connecting' | 'error'. */
+    setStatus(state, msg = '') {
+      const cls = state === 'ok' || state === 'connecting' || state === 'error' ? state : '';
+      entry.dot.className = 'dot ' + cls;
+      entry.dot.title = msg;
+    },
+
+    /* shell-internal: safety net so a forgotten stream can't outlive the tile */
+    _closeAll() {
+      for (const handle of [...sseHandles]) handle.close();
+    },
+  };
+  return api;
+}
+
+async function mountModule(tile) {
   const entry = tileEls.get(tile.id);
   if (!entry) return;
   const man = registry.get(tile.module);
   if (!man) {
-    entry.body.innerHTML = '<div class="tile-msg">Module “' + tile.module + '” is not installed.</div>';
+    tileMessage(entry, `Module “${tile.module}” is not installed or is disabled. Check Admin.`);
     entry.dot.className = 'dot error';
+    entry.dot.title = 'Module unavailable';
     return;
   }
-  if (man.builtin) {
-    const msg = document.createElement('div');
-    msg.className = 'tile-msg';
-    msg.textContent = 'Placeholder tile — drag me by the header, resize me by the corner.';
-    entry.body.appendChild(msg);
-    entry.dot.className = 'dot ok';
+  entry.dot.className = 'dot connecting';
+  ensureModuleStyle(man);
+  try {
+    const mod = await loadClientModule(man);
+    if (tileEls.get(tile.id) !== entry || entry.instance) return; // tile removed/remounted while loading
+    const factory = mod.default;
+    if (typeof factory !== 'function') throw new Error('client.js has no default-export factory');
+    const api = buildModuleApi(tile, man, entry);
+    const instance = factory({ root: entry.body, moduleApi: api }) || {};
+    entry.instance = instance;
+    entry.api = api;
+    instance.start?.();
+  } catch (err) {
+    console.error(`[shell] module "${tile.module}" failed to start:`, err);
+    entry.body.innerHTML = '';
+    tileMessage(entry, `“${man.name}” failed to start: ${err?.message || err}`);
+    entry.dot.className = 'dot error';
   }
 }
 
 function unmountModule(tile) {
   const entry = tileEls.get(tile.id);
+  if (!entry) return;
   try {
-    entry?.instance?.stop?.();
+    entry.instance?.stop?.();
   } catch { /* stopping is best-effort */ }
-  if (entry) entry.instance = null;
+  try {
+    entry.api?._closeAll();
+  } catch { /* ditto */ }
+  entry.instance = null;
+  entry.api = null;
 }
 
 /* ── per-tile settings popover ──────────────────────────────────────── */
@@ -598,7 +719,12 @@ wireDropdown('layout-btn', 'layout-menu', async (menu) => {
 /* ── boot ───────────────────────────────────────────────────────────── */
 
 async function boot() {
-  await loadRegistry();
+  const ok = await loadRegistry();
+  if (!ok) {
+    toast('ProdDash server unreachable — retrying…', true);
+    setTimeout(boot, 4000);
+    return;
+  }
   renderLayout(loadLayoutFromStorage());
 }
 

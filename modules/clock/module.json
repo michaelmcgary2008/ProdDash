@@ -1,0 +1,23 @@
+{
+  "id": "clock",
+  "name": "Clock",
+  "version": "1.0.0",
+  "description": "Big booth clock — the smallest possible ProdDash module",
+  "client": "client.js",
+  "style": "style.css",
+  "minSize": { "w": 2, "h": 1 },
+  "defaultSize": { "w": 3, "h": 2 },
+  "instanceSchema": {
+    "format": {
+      "type": "select",
+      "label": "Format",
+      "default": "24h",
+      "options": [
+        { "value": "24h", "label": "24-hour" },
+        { "value": "12h", "label": "12-hour" }
+      ]
+    },
+    "showSeconds": { "type": "boolean", "label": "Show seconds", "default": true },
+    "showDate": { "type": "boolean", "label": "Show date", "default": false }
+  }
+}

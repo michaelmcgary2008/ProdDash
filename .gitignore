@@ -3,3 +3,7 @@ dist/
 .DS_Store
 *.log
 .env
+
+# runtime state written by the admin page / layout saves
+config/modules.json
+config/layouts/
