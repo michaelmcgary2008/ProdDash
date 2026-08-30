@@ -1,8 +1,10 @@
 # ProdDash
 
-New web application for Waters Church production, to be developed in this repo.
-The stack and structure of the new app are not yet decided — build it at the
-repo root (or in an `app/` folder if that stays cleaner).
+Modular production dashboard web app for Waters Church, developed in this repo.
+**Read [SPEC.md](SPEC.md) first — it is the authority on what to build**: the
+dashboard shell, the module system and its contract, the admin page, and the
+two initial modules ported from the reference forks below. The app lives at
+the repo root.
 
 ## Reference code (read-only forks — don't develop these here)
 
