@@ -1,0 +1,40 @@
+{
+  "id": "prodcom-transcript",
+  "name": "ProdCom Transcript",
+  "version": "1.0.0",
+  "description": "Live ProdCom transcript stream",
+  "client": "client.js",
+  "server": "server.js",
+  "style": "style.css",
+  "minSize": { "w": 3, "h": 2 },
+  "defaultSize": { "w": 4, "h": 4 },
+  "configSchema": {
+    "prodcomUrl": {
+      "type": "string",
+      "label": "ProdCom URL",
+      "default": "http://10.3.11.152:24480"
+    },
+    "apiKey": {
+      "type": "password",
+      "label": "API key (only if PSK auth is enabled in ProdCom)",
+      "default": ""
+    }
+  },
+  "instanceSchema": {
+    "channel": {
+      "type": "string",
+      "label": "Channel filter (channel name; empty = all)",
+      "default": ""
+    },
+    "textSize": {
+      "type": "number",
+      "label": "Text size (px)",
+      "default": 15
+    },
+    "showTimes": {
+      "type": "boolean",
+      "label": "Show timestamps",
+      "default": false
+    }
+  }
+}
