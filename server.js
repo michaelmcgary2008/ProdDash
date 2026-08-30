@@ -424,6 +424,127 @@ async function handleAdminApi(req, res, urlPath) {
   sendJson(res, 404, { error: 'Unknown admin endpoint.' });
 }
 
+/* ── named layouts (JSON files under config/layouts/) ───────────────── */
+
+const LAYOUTS_DIR = path.join(CONFIG_DIR, 'layouts');
+
+/** Names double as file names — keep them boring on purpose. */
+function layoutNameOk(name) {
+  return typeof name === 'string' && /^[A-Za-z0-9][A-Za-z0-9 _()-]{0,39}$/.test(name);
+}
+
+function layoutPath(name) {
+  return path.join(LAYOUTS_DIR, name + '.json');
+}
+
+/** Keep only the fields a layout is made of; everything else is dropped. */
+function sanitizeLayout(raw) {
+  const tiles = Array.isArray(raw?.tiles) ? raw.tiles.slice(0, 100) : [];
+  return {
+    tiles: tiles.map((t) => ({
+      id: String(t?.id || ''),
+      module: String(t?.module || ''),
+      x: Number(t?.x) || 0,
+      y: Number(t?.y) || 0,
+      w: Number(t?.w) || 1,
+      h: Number(t?.h) || 1,
+      settings: t?.settings && typeof t.settings === 'object' ? t.settings : {},
+    })),
+  };
+}
+
+async function handleLayoutsApi(req, res, urlPath) {
+  if (urlPath === '/api/layouts' && req.method === 'GET') {
+    let files = [];
+    try {
+      files = fs.readdirSync(LAYOUTS_DIR).filter((f) => f.endsWith('.json'));
+    } catch { /* no layouts dir yet */ }
+    const layouts = [];
+    for (const file of files.sort()) {
+      const name = file.slice(0, -5);
+      const data = readJson(path.join(LAYOUTS_DIR, file), null);
+      if (!data) continue;
+      let updated = null;
+      try { updated = fs.statSync(path.join(LAYOUTS_DIR, file)).mtime.toISOString(); } catch { /* fine */ }
+      layouts.push({ name, tiles: Array.isArray(data.tiles) ? data.tiles.length : 0, updated });
+    }
+    return sendJson(res, 200, { layouts });
+  }
+
+  const m = urlPath.match(/^\/api\/layouts\/([^/]+)(\/rename)?$/);
+  if (!m) return sendJson(res, 404, { error: 'Unknown endpoint.' });
+  let name;
+  try {
+    name = decodeURIComponent(m[1]);
+  } catch {
+    return sendJson(res, 400, { error: 'Bad layout name.' });
+  }
+  if (!layoutNameOk(name)) {
+    return sendJson(res, 400, { error: 'Layout names can use letters, numbers, spaces, dashes and parentheses (max 40).' });
+  }
+
+  if (!m[2] && req.method === 'GET') {
+    const data = readJson(layoutPath(name), null);
+    if (!data) return sendJson(res, 404, { error: `No layout named "${name}".` });
+    return sendJson(res, 200, { name, layout: sanitizeLayout(data) });
+  }
+
+  // Saving is open to every dashboard (volunteers save their booth setups);
+  // renaming and deleting are admin actions.
+  if (!m[2] && req.method === 'PUT') {
+    const contentType = String(req.headers['content-type'] || '').toLowerCase();
+    if (!contentType.startsWith('application/json')) {
+      return sendJson(res, 415, { error: 'Send application/json.' });
+    }
+    let body = {};
+    try {
+      body = JSON.parse((await readBody(req)) || '{}');
+    } catch {
+      return sendJson(res, 400, { error: 'Malformed request.' });
+    }
+    const layout = sanitizeLayout(body.layout);
+    if (!layout.tiles.length) return sendJson(res, 400, { error: 'Refusing to save an empty layout.' });
+    writeJson(layoutPath(name), layout);
+    return sendJson(res, 200, { ok: true, name });
+  }
+
+  if (!m[2] && req.method === 'DELETE') {
+    if (!isAuthed(req)) return sendJson(res, 401, { error: 'Enter the admin passcode first.', authRequired: true });
+    try {
+      fs.unlinkSync(layoutPath(name));
+    } catch {
+      return sendJson(res, 404, { error: `No layout named "${name}".` });
+    }
+    return sendJson(res, 200, { ok: true });
+  }
+
+  if (m[2] && req.method === 'POST') {
+    if (refuseAdminWrite(req, res)) return;
+    let body = {};
+    try {
+      body = JSON.parse((await readBody(req)) || '{}');
+    } catch {
+      return sendJson(res, 400, { error: 'Malformed request.' });
+    }
+    const next = String(body.name || '').trim();
+    if (!layoutNameOk(next)) {
+      return sendJson(res, 400, { error: 'Layout names can use letters, numbers, spaces, dashes and parentheses (max 40).' });
+    }
+    if (!fs.existsSync(layoutPath(name))) return sendJson(res, 404, { error: `No layout named "${name}".` });
+    if (next !== name && fs.existsSync(layoutPath(next))) {
+      return sendJson(res, 409, { error: `A layout named "${next}" already exists.` });
+    }
+    try {
+      fs.renameSync(layoutPath(name), layoutPath(next));
+    } catch (err) {
+      return sendJson(res, 500, { error: 'Rename failed: ' + (err?.message || err) });
+    }
+    return sendJson(res, 200, { ok: true, name: next });
+  }
+
+  sendJson(res, 405, { error: 'Method not allowed.' });
+}
+
 /* ── module API dispatch ────────────────────────────────────────────── */
 
 function dispatchModuleApi(req, res, id, subPath, search) {
@@ -547,6 +668,16 @@ function handleRequest(req, res) {
     try { req.socket.setKeepAlive(true, 15000); } catch { /* gone */ }
     shellStreams.add(res);
     req.on('close', () => shellStreams.delete(res));
+    return;
+  }
+
+  /* — named layouts — */
+  if (urlPath === '/api/layouts' || urlPath.startsWith('/api/layouts/')) {
+    handleLayoutsApi(req, res, urlPath).catch((err) => {
+      console.error('[proddash] layouts API error:', err);
+      if (!res.headersSent) sendJson(res, 500, { error: 'Server error.' });
+      else try { res.end(); } catch { /* gone */ }
+    });
     return;
   }
 

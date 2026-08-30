@@ -711,6 +711,68 @@ wireDropdown('add-btn', 'add-menu', async (menu) => {
 
 wireDropdown('layout-btn', 'layout-menu', async (menu) => {
   menu.innerHTML = '';
+
+  menu.appendChild(menuItem('Save as named layout…', async () => {
+    menu.hidden = true;
+    if (!tiles.length) {
+      toast('Nothing to save — this dashboard is empty', true);
+      return;
+    }
+    const name = await promptModal({
+      title: 'Save this layout to the server',
+      placeholder: 'e.g. FOH booth, Video world',
+      okLabel: 'Save',
+    });
+    if (!name) return;
+    try {
+      const res = await fetch('/api/layouts/' + encodeURIComponent(name), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ layout: { tiles } }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'Save failed (' + res.status + ')');
+      toast(`Saved “${name}” — any browser can load it now`);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }, { sub: 'Share this arrangement with other browsers' }));
+
+  const divider = document.createElement('div');
+  divider.className = 'menu-divider';
+  menu.appendChild(divider);
+
+  // named layouts stored on the server
+  let layouts = [];
+  try {
+    const res = await fetch('/api/layouts');
+    if (res.ok) layouts = (await res.json()).layouts || [];
+  } catch { /* server briefly away — the menu just shows none */ }
+  if (layouts.length) {
+    const title = document.createElement('div');
+    title.className = 'menu-title';
+    title.textContent = 'Load from server';
+    menu.appendChild(title);
+    for (const l of layouts) {
+      menu.appendChild(menuItem(l.name, async () => {
+        menu.hidden = true;
+        try {
+          const res = await fetch('/api/layouts/' + encodeURIComponent(l.name));
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(body.error || 'Load failed (' + res.status + ')');
+          // Loading copies the layout into this browser's own state — it
+          // does not live-link browsers together.
+          renderLayout(body.layout.tiles || []);
+          saveLayout();
+          toast(`Loaded “${l.name}”`);
+        } catch (e) {
+          toast(e.message, true);
+        }
+      }, { sub: `${l.tiles} tile${l.tiles === 1 ? '' : 's'}` }));
+    }
+    menu.appendChild(divider.cloneNode());
+  }
+
   menu.appendChild(menuItem('Reset layout', () => {
     menu.hidden = true;
     renderLayout([]);
