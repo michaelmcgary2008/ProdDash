@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f0f12" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Stage Now / Next</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="screen" id="screen">
+      <header class="top" id="top">
+        <div class="playlist-name" id="playlist-name"></div>
+        <div class="live" id="live">
+          <span class="live-dot" id="live-dot" aria-hidden="true"></span>
+          <span class="live-text" id="live-text">Connecting…</span>
+        </div>
+      </header>
+
+      <section class="now" id="now" aria-live="polite">
+        <div class="now-label">Now</div>
+        <div class="now-title-box" id="now-title-box">
+          <div class="now-title" id="now-title">Waiting for ProPresenter…</div>
+        </div>
+        <div class="now-meta" id="now-meta"></div>
+        <div class="progress" id="progress" hidden>
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
+      </section>
+
+      <section class="next-wrap">
+        <div class="section-label" id="next-label" hidden>Next</div>
+        <div class="next-list" id="next-list"></div>
+        <div class="next-more" id="next-more" hidden></div>
+      </section>
+    </div>
+
+    <button type="button" class="gear" id="gear" aria-label="Display settings" title="Display settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path
+          d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm8.4-2.1.1-1.4-.1-1.4 1.7-1.3-1.6-2.8-2 .7a7.9 7.9 0 0 0-2.4-1.4l-.3-2.1H11l-.3 2.1a7.9 7.9 0 0 0-2.4 1.4l-2-.7L4.7 9.3 6.4 10.6l-.1 1.4.1 1.4-1.7 1.3 1.6 2.8 2-.7a7.9 7.9 0 0 0 2.4 1.4l.3 2.1h2.8l.3-2.1a7.9 7.9 0 0 0 2.4-1.4l2 .7 1.6-2.8-1.7-1.3Z"
+          fill="currentColor"
+        />
+      </svg>
+    </button>
+
+    <div class="panel-backdrop hidden" id="panel-backdrop"></div>
+    <aside class="panel hidden" id="panel" role="dialog" aria-modal="true" aria-labelledby="panel-title">
+      <div class="panel-head">
+        <h1 class="panel-title" id="panel-title">Display settings</h1>
+        <button type="button" class="btn ghost" id="panel-close" aria-label="Close settings">Done</button>
+      </div>
+
+      <div class="panel-section" id="managed-section" hidden>
+        <h2 class="panel-section-title">ProPresenter connection</h2>
+        <p class="panel-copy" id="managed-note"></p>
+      </div>
+
+      <div class="panel-section" id="connection-section">
+        <h2 class="panel-section-title">ProPresenter connection</h2>
+        <p class="panel-copy">
+          IP address and network port of the computer running ProPresenter. Turn the API on in
+          ProPresenter ▸ Preferences ▸ Network.
+        </p>
+        <label class="field">
+          <span>Host / IP address</span>
+          <input type="text" id="host" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="192.168.1.50" />
+        </label>
+        <label class="field field-narrow">
+          <span>Port</span>
+          <input type="text" id="port" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="1025" />
+        </label>
+        <label class="field">
+          <span>Password <em>(only if set in ProPresenter)</em></span>
+          <input type="password" id="password" autocomplete="off" spellcheck="false" placeholder="Leave blank to keep current" />
+        </label>
+        <div class="panel-actions">
+          <button type="button" class="btn primary" id="btn-connect">Connect</button>
+          <button type="button" class="btn" id="btn-disconnect">Disconnect</button>
+        </div>
+        <div class="panel-status" id="panel-status"></div>
+      </div>
+
+      <div class="panel-section">
+        <h2 class="panel-section-title">This screen</h2>
+        <p class="panel-copy">Saved on this device only, so every screen can be sized for its own room.</p>
+        <div class="chip-row" id="scale-row" role="group" aria-label="Text size">
+          <button type="button" class="chip" data-scale="0.8">Small</button>
+          <button type="button" class="chip" data-scale="1">Medium</button>
+          <button type="button" class="chip" data-scale="1.25">Large</button>
+          <button type="button" class="chip" data-scale="1.5">Huge</button>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="opt-playlist" checked />
+          <span>Show the playlist name</span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="opt-progress" checked />
+          <span>Show the slide progress bar</span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="opt-clean" checked />
+          <span>Tidy titles (hide <code>[ Full ]</code> tags and date codes)</span>
+        </label>
+        <div class="panel-actions">
+          <button type="button" class="btn" id="btn-fullscreen">Fullscreen</button>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <h2 class="panel-section-title">Other screens</h2>
+        <p class="panel-copy">Open any of these on a studio machine, hallway TV, or tablet — they all follow this same connection.</p>
+        <div class="url-list" id="url-list"></div>
+      </div>
+
+      <div class="panel-section">
+        <h2 class="panel-section-title">About</h2>
+        <p class="panel-copy" id="about-line">Stage Now / Next</p>
+      </div>
+    </aside>
+
+    <script src="app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Band Lineup</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="top-edge-hit" id="top-edge-hit" aria-hidden="true"></div>
+    <header class="toolbar" id="toolbar">
+      <button type="button" class="btn primary" id="btn-add">Add photos</button>
+      <div class="toolbar-spacer"></div>
+      <div class="layout-controls">
+        <label class="layout-field">
+          <span>Cols</span>
+          <input type="number" id="layout-cols" min="1" step="1" value="7" />
+        </label>
+        <label class="layout-field">
+          <span>Rows</span>
+          <input type="number" id="layout-rows" min="1" step="1" value="2" />
+        </label>
+        <button type="button" class="btn" id="btn-apply-layout">Apply</button>
+      </div>
+      <button type="button" class="btn" id="btn-toggle-parallax">Parallax On</button>
+      <button type="button" class="btn" id="btn-fullscreen">Fullscreen</button>
+      <span class="app-version" id="app-version" title="Installed version"></span>
+    </header>
+    <div class="app-main">
+      <main class="stage" id="drop-zone">
+        <div class="row" id="row" aria-label="Lineup"></div>
+        <p class="empty" id="empty">Drag people from the right into any stage slot.</p>
+      </main>
+      <aside class="library-panel" id="library-panel" aria-label="Setup panel">
+        <nav class="library-tabs" id="library-tabs" role="tablist" aria-label="Panel sections">
+          <button type="button" class="lib-tab is-active" id="tab-pictures" data-tab="pictures" role="tab" aria-selected="true">Pictures</button>
+          <button type="button" class="lib-tab" id="tab-pco" data-tab="pco" role="tab" aria-selected="false">PCO</button>
+          <button type="button" class="lib-tab" id="tab-propresenter" data-tab="propresenter" role="tab" aria-selected="false">ProPresenter</button>
+        </nav>
+
+        <div class="library-pane is-active" data-pane="pictures" role="tabpanel" aria-labelledby="tab-pictures">
+          <div class="library-scroll" id="library-list"></div>
+          <div class="pane-foot">
+            <span class="slot-size-readout" id="slot-size-readout"></span>
+          </div>
+        </div>
+
+        <div class="library-pane" data-pane="pco" role="tabpanel" aria-labelledby="tab-pco">
+          <div class="pane-scroll">
+            <div class="pane-head">
+              <span class="pane-title">Planning Center</span>
+              <button type="button" class="btn btn-small" id="btn-pco-connect">Connect PCO</button>
+            </div>
+            <div class="pco-controls">
+              <select id="pco-service-type" class="pco-select" aria-label="Planning Center service type">
+                <option value="">Choose service type</option>
+              </select>
+              <button type="button" class="btn btn-small" id="btn-pco-sync">Sync Upcoming</button>
+              <button type="button" class="btn btn-small" id="btn-pco-disconnect">Disconnect</button>
+            </div>
+            <div class="pco-status" id="pco-status">Planning Center is not connected.</div>
+            <div class="pco-position-builder">
+              <select id="pco-position-option" class="pco-select" aria-label="Planning Center position">
+                <option value="">Choose position</option>
+              </select>
+              <button type="button" class="btn btn-small" id="btn-pco-add-position">Add Position</button>
+            </div>
+            <div class="pco-position-list" id="pco-position-list" aria-label="Selected Planning Center positions"></div>
+          </div>
+        </div>
+
+        <div class="library-pane" data-pane="propresenter" role="tabpanel" aria-labelledby="tab-propresenter">
+          <div class="pane-scroll">
+            <div class="pane-head">
+              <span class="pane-title">ProPresenter</span>
+              <div class="pp-controls-buttons">
+                <button type="button" class="btn btn-small" id="btn-pp-connect">Connect</button>
+                <button type="button" class="btn btn-small" id="btn-pp-disconnect">Disconnect</button>
+              </div>
+            </div>
+            <div class="pp-status" id="pp-status">ProPresenter is not connected.</div>
+            <select id="pp-playlist-select" class="pco-select pp-playlist-select" aria-label="ProPresenter playlist to display">
+              <option value="">Choose playlist</option>
+            </select>
+
+            <div class="pane-head pane-head-spaced">
+              <span class="pane-title">Studio Displays</span>
+              <button type="button" class="btn btn-small" id="btn-display-toggle">Turn On</button>
+            </div>
+            <div class="pp-status" id="display-status">Off &mdash; screens around the building can&rsquo;t see this yet.</div>
+            <div class="display-urls" id="display-urls"></div>
+            <div class="display-port-row">
+              <label class="display-port-field">
+                <span>Port</span>
+                <input type="text" id="display-port" inputmode="numeric" autocomplete="off" spellcheck="false" />
+              </label>
+            </div>
+          </div>
+        </div>
+      </aside>
+      <aside class="pp-column" id="pp-column" aria-label="ProPresenter playlist position">
+        <div class="pp-playlist-name" id="pp-playlist-name"></div>
+        <div class="pp-now" id="pp-now"></div>
+        <div class="pp-next-wrap">
+          <div class="pp-section-label" id="pp-next-label">Next</div>
+          <div class="pp-next-list" id="pp-next-list"></div>
+        </div>
+      </aside>
+    </div>
+
+    <div id="label-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="label-modal-title">
+      <div class="modal-backdrop" id="label-modal-backdrop"></div>
+      <div class="modal-card">
+        <h2 id="label-modal-title" class="modal-title">Edit label</h2>
+        <input type="text" class="label-input" id="label-input" autocomplete="off" spellcheck="false" />
+        <div class="vkeyboard" id="vkeyboard" aria-label="On-screen keyboard"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="label-cancel">Cancel</button>
+          <button type="button" class="btn primary" id="label-done">Done</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="number-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="number-modal-title">
+      <div class="modal-backdrop" id="number-modal-backdrop"></div>
+      <div class="modal-card modal-card-small">
+        <h2 id="number-modal-title" class="modal-title">Set value</h2>
+        <input type="text" class="label-input number-input" id="number-input" inputmode="numeric" autocomplete="off" readonly />
+        <div class="vkeyboard" id="number-keyboard" aria-label="On-screen number keyboard"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="number-cancel">Cancel</button>
+          <button type="button" class="btn primary" id="number-done">Done</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="pco-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="pco-modal-title">
+      <div class="modal-backdrop" id="pco-modal-backdrop"></div>
+      <div class="modal-card modal-card-small">
+        <h2 id="pco-modal-title" class="modal-title">Connect Planning Center</h2>
+        <p class="modal-copy">Paste the Client ID and Secret from your Planning Center personal access token.</p>
+        <label class="modal-field">
+          <span>Client ID</span>
+          <input type="text" class="label-input modal-input" id="pco-client-id" autocomplete="off" spellcheck="false" />
+        </label>
+        <label class="modal-field">
+          <span>Secret</span>
+          <input type="password" class="label-input modal-input" id="pco-secret" autocomplete="off" spellcheck="false" />
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="pco-cancel">Cancel</button>
+          <button type="button" class="btn primary" id="pco-save">Connect</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="pp-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="pp-modal-title">
+      <div class="modal-backdrop" id="pp-modal-backdrop"></div>
+      <div class="modal-card modal-card-small">
+        <h2 id="pp-modal-title" class="modal-title">Connect ProPresenter</h2>
+        <p class="modal-copy">Enter the IP address and network port of the computer running ProPresenter. Turn on the API in ProPresenter ▸ Preferences ▸ Network.</p>
+        <label class="modal-field">
+          <span>Host / IP address</span>
+          <input type="text" class="label-input modal-input" id="pp-host" autocomplete="off" spellcheck="false" placeholder="192.168.1.50" />
+        </label>
+        <label class="modal-field">
+          <span>Port</span>
+          <input type="text" class="label-input modal-input" id="pp-port" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="1025" />
+        </label>
+        <label class="modal-field">
+          <span>Password (only if set in ProPresenter)</span>
+          <input type="password" class="label-input modal-input" id="pp-password" autocomplete="off" spellcheck="false" />
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="pp-cancel">Cancel</button>
+          <button type="button" class="btn primary" id="pp-save">Connect</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="drag-ghost" class="drag-ghost hidden" aria-hidden="true"></div>
+    <script src="renderer.js"></script>
+  </body>
+</html>

@@ -1,0 +1,48 @@
+{
+  "name": "propresenter-now-next",
+  "productName": "Stage Now / Next",
+  "version": "1.3.6",
+  "buildNumber": "14",
+  "description": "Standalone ProPresenter Now / Next display for studios and hallway screens",
+  "main": "main.js",
+  "scripts": {
+    "start": "node server.js",
+    "kiosk": "../node_modules/.bin/electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win --x64"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.band.propresenter.nownext",
+    "productName": "Stage Now Next",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "server.js",
+      "config.js",
+      "public/**/*",
+      "../propresenter-core/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

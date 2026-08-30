@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "checklist",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-lc",
+        "cd /Users/Studio/Documents/recurring-checklist-app/server && ADMIN_PASSWORD=changeme REPORT_EMAIL='' PORT=4998 node server.js"
+      ],
+      "port": 4998
+    },
+    {
+      "name": "ppdisplay",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-lc",
+        "cd /Users/Studio/Documents/BandLineupDisplay/propresenter-app && node server.js"
+      ],
+      "port": 7654
+    }
+  ]
+}

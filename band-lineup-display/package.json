@@ -1,0 +1,61 @@
+{
+  "name": "band-lineup-display",
+  "productName": "Band Lineup",
+  "version": "1.3.6",
+  "buildNumber": "92",
+  "description": "Stage lineup photos with mic/pack labels",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win --x64",
+    "postdist": "node scripts/archive-builds.js",
+    "archive": "node scripts/archive-builds.js"
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.band.lineup.display",
+    "productName": "Band Lineup",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "renderer.js",
+      "styles.css",
+      "propresenter-core/**/*",
+      "propresenter-app/server.js",
+      "propresenter-app/config.js",
+      "propresenter-app/mdns.js",
+      "propresenter-app/public/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "include": "build/installer.nsh",
+      "differentialPackage": false,
+      "useZip": true
+    }
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
+    "sharp": "^0.34.5"
+  },
+  "optionalDependencies": {
+    "@img/sharp-libvips-win32-x64": "^1.2.4",
+    "@img/sharp-win32-x64": "^0.34.5"
+  }
+}

@@ -1,0 +1,638 @@
+/* Stage Now / Next — standalone ProPresenter display.
+   Visual language matches the Band Lineup app's Now/Next column, scaled up from a
+   sidebar to a whole screen. Sizes are viewport-relative and multiplied by --scale
+   (set per device in the settings panel) so one page suits a 15" studio monitor,
+   a 65" hallway TV, and an iPad. */
+
+:root {
+  --scale: 1;
+  --bg: #0f0f12;
+  --panel: #16161a;
+  --line: #2a2a32;
+  --line-soft: #2f2f3a;
+  --text: #f4f6fb;
+  --text-dim: #9ea7bc;
+  --text-faint: #7a7a8a;
+  --accent: #7fa8e0;
+  --accent-deep: #4a6fa5;
+  --danger: #d98c8c;
+  --unit: clamp(11px, 1.35vh, 22px);
+  --pad: calc(var(--unit) * 1.4);
+  --gap: calc(var(--unit) * 0.9);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  /* dvh so iPad Safari's collapsing toolbars don't leave the layout taller than the glass;
+     the 100% first line keeps older browsers working. */
+  height: 100%;
+  height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  /* Stop iOS inflating text on a rotated wall display, and stop a stray pinch or
+     double-tap from zooming a screen nobody is standing at. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  touch-action: pan-x pan-y;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  overflow: hidden;
+}
+
+/* ---------- the display ---------- */
+
+.screen {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  padding: calc(var(--pad) + env(safe-area-inset-top)) calc(var(--pad) + env(safe-area-inset-right))
+    calc(var(--pad) + env(safe-area-inset-bottom)) calc(var(--pad) + env(safe-area-inset-left));
+}
+
+.top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--gap);
+  flex-shrink: 0;
+  min-height: 0;
+}
+
+.top.hidden-row {
+  display: none;
+}
+
+.playlist-name {
+  flex: 1;
+  min-width: 0;
+  font-size: calc(var(--unit) * 1.05 * var(--scale));
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8a8a99;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.live {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--unit) * 0.5);
+  flex-shrink: 0;
+  font-size: calc(var(--unit) * 0.95 * var(--scale));
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.live-dot {
+  width: calc(var(--unit) * 0.62);
+  height: calc(var(--unit) * 0.62);
+  border-radius: 999px;
+  background: #55555f;
+  transition: background 0.3s ease, box-shadow 0.3s ease;
+}
+
+.live.is-live .live-dot {
+  background: #6fd08c;
+  box-shadow: 0 0 0 calc(var(--unit) * 0.22) rgba(111, 208, 140, 0.18);
+}
+
+.live.is-down .live-dot {
+  background: var(--danger);
+  box-shadow: 0 0 0 calc(var(--unit) * 0.22) rgba(217, 140, 140, 0.16);
+}
+
+/* Idle screens don't need a status chip staring at them — it fades once we're live. */
+.live.is-live .live-text {
+  opacity: 0;
+  transition: opacity 0.6s ease 1.4s;
+}
+
+/* Losing the feed is the one thing a wall display MUST admit to, so this overrides the
+   "hide the top row" preference — otherwise a frozen lineup looks like a live one. */
+body.is-offline .top {
+  display: flex !important;
+}
+
+body.is-offline .live-text {
+  opacity: 1 !important;
+  color: var(--danger);
+}
+
+body.is-offline .now {
+  border-color: rgba(217, 140, 140, 0.5);
+}
+
+.stale-note {
+  flex-shrink: 0;
+  margin-top: calc(var(--unit) * 0.4);
+  font-size: calc(var(--unit) * 1 * var(--scale));
+  font-weight: 600;
+  color: var(--danger);
+}
+
+/* With no NEXT list there is nothing below the card, so centre it rather than leaving a
+   tall band of empty black under a top-aligned card. */
+body.no-upcoming .screen {
+  justify-content: center;
+}
+
+/* FIXED height. When NOW was flexible it shared vertical space with the NEXT block and the
+   two fed back every frame — the fitter sized the title to the leftover space, which changed
+   how many NEXT rows fit, which changed the leftover space… a two-layout strobe. A fixed NOW
+   makes NEXT depend on NOW and never the reverse, so the title box is deterministic and the
+   layout cannot oscillate. */
+.now {
+  flex: 0 0 auto;
+  height: 40vh;
+  min-height: 180px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #30303c;
+  border-radius: calc(var(--unit) * 1.1);
+  background: linear-gradient(160deg, rgba(61, 90, 128, 0.22), rgba(26, 26, 34, 0.6));
+  padding: calc(var(--pad) * 1.05) calc(var(--pad) * 1.2);
+}
+
+.now-label {
+  flex-shrink: 0;
+  font-size: calc(var(--unit) * 0.95 * var(--scale));
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.now-title-box {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  margin-top: calc(var(--unit) * 0.4);
+}
+
+.now-title {
+  width: 100%;
+  /* Font size is set by fitNowTitle() in app.js so the title fills the box. Keep the
+     line-height at or above the font's natural ~1.2: a tighter line box clips the ink of
+     ascenders and descenders (the "y" in "This Is The Day") once the size gets large. */
+  font-size: calc(var(--unit) * 3 * var(--scale));
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text);
+  /* Wrapping is controlled by fitNowTitle() in app.js, which forbids mid-word breaks and
+     sizes down until whole words fit. Defaulting to break-word here would let the browser
+     split a word ("Promis / ed Land") between fitter runs. */
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+/* Status text, not a title: a readable size, never the fill-the-box treatment. */
+.now-title.is-waiting {
+  color: var(--text-faint);
+  font-weight: 600;
+  font-size: calc(var(--unit) * 1.9 * var(--scale));
+  white-space: normal;
+}
+
+.now-hint {
+  flex-shrink: 0;
+  margin-top: calc(var(--unit) * 0.5);
+  font-size: calc(var(--unit) * 1.05 * var(--scale));
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.now-meta {
+  flex-shrink: 0;
+  margin-top: calc(var(--unit) * 0.55);
+  font-size: calc(var(--unit) * 1.35 * var(--scale));
+  font-weight: 600;
+  color: #c6cada;
+  font-variant-numeric: tabular-nums;
+  /* Never wrap: a wrap to 2 lines changes the title box height, which refits the title —
+     the source of the every-other-slide size flap as the slide-number width changes. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.now-meta:empty {
+  display: none;
+}
+
+.now-error {
+  margin-top: calc(var(--unit) * 0.4);
+  font-size: calc(var(--unit) * 0.9 * var(--scale));
+  color: var(--danger);
+  word-break: break-word;
+}
+
+.progress {
+  flex-shrink: 0;
+  margin-top: calc(var(--unit) * 0.7);
+  height: calc(var(--unit) * 0.45);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent-deep);
+  transition: width 0.25s ease;
+}
+
+.next-wrap {
+  /* Takes whatever is left below the fixed NOW card; markNextOverflow() hides rows past the
+     fold into a "+ N more" line. */
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--unit) * 0.6);
+}
+
+.section-label {
+  flex-shrink: 0;
+  font-size: calc(var(--unit) * 0.95 * var(--scale));
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.next-list {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--unit) * 0.55);
+  overflow: hidden;
+}
+
+.next-item {
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  padding: calc(var(--unit) * 0.75) calc(var(--unit) * 1);
+  border: 1px solid var(--line);
+  border-radius: calc(var(--unit) * 0.75);
+  background: rgba(26, 26, 32, 0.7);
+}
+
+.next-name {
+  flex: 1;
+  min-width: 0;
+  font-size: calc(var(--unit) * 1.45 * var(--scale));
+  font-weight: 600;
+  color: #e2e4ec;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.count-chip {
+  flex-shrink: 0;
+  min-width: calc(var(--unit) * 2.2);
+  padding: calc(var(--unit) * 0.2) calc(var(--unit) * 0.6);
+  text-align: center;
+  border-radius: 999px;
+  background: rgba(74, 111, 165, 0.28);
+  color: #cfe0f7;
+  font-size: calc(var(--unit) * 1.05 * var(--scale));
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.type-tag {
+  flex-shrink: 0;
+  font-size: calc(var(--unit) * 0.85 * var(--scale));
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #8a8a99;
+}
+
+.next-item.is-header {
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  padding: calc(var(--unit) * 0.7) calc(var(--unit) * 0.15) calc(var(--unit) * 0.25);
+}
+
+.next-item.is-header .next-name {
+  font-size: calc(var(--unit) * 0.95 * var(--scale));
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #8a8a99;
+}
+
+.next-more {
+  flex-shrink: 0;
+  font-size: calc(var(--unit) * 0.95 * var(--scale));
+  color: var(--text-faint);
+  font-weight: 600;
+}
+
+.empty-next {
+  font-size: calc(var(--unit) * 1.1 * var(--scale));
+  color: var(--text-faint);
+}
+
+/* ---------- settings (hidden until someone reaches for it) ---------- */
+
+.gear {
+  position: fixed;
+  right: calc(var(--pad) + env(safe-area-inset-right));
+  bottom: calc(var(--pad) + env(safe-area-inset-bottom));
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  /* A floating control: opaque with a shadow so it reads as sitting above the NEXT list
+     during the few seconds it is visible after someone touches the screen. */
+  background: #1c1c22;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  color: #9a9aa8;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+body.chrome-visible .gear {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.gear:hover {
+  color: var(--text);
+  border-color: #3d3d4a;
+}
+
+.gear svg {
+  width: 22px;
+  height: 22px;
+}
+
+.panel-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 6, 8, 0.62);
+}
+
+.panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(440px, 100vw);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: calc(18px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom));
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  overflow-y: auto;
+  user-select: text;
+  font-size: 14px;
+}
+
+.panel.hidden,
+.panel-backdrop.hidden {
+  display: none;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.panel-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.panel-section-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #8a8a99;
+}
+
+.panel-copy {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.panel-copy code {
+  font-size: 12px;
+  color: #cfe0f7;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #a0a0ae;
+}
+
+.field em {
+  font-style: normal;
+  color: var(--text-faint);
+}
+
+.field input {
+  padding: 10px 12px;
+  font-size: 15px;
+  color: var(--text);
+  background: #0f0f13;
+  border: 1px solid #33333d;
+  border-radius: 9px;
+}
+
+.field input:focus {
+  outline: none;
+  border-color: var(--accent-deep);
+}
+
+.field-narrow input {
+  max-width: 140px;
+}
+
+.panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.btn {
+  padding: 9px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: #24242c;
+  border: 1px solid #35353f;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.btn:hover {
+  background: #2b2b34;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn.primary {
+  background: var(--accent-deep);
+  border-color: #5b83bd;
+}
+
+.btn.primary:hover {
+  background: #547cb6;
+}
+
+.btn.ghost {
+  background: none;
+  border-color: transparent;
+  color: var(--text-dim);
+}
+
+.panel-status {
+  min-height: 18px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
+.panel-status.is-error {
+  color: #ffb1b1;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  padding: 8px 13px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: #1e1e25;
+  border: 1px solid #33333d;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.chip.is-on {
+  color: #cfe0f7;
+  background: rgba(74, 111, 165, 0.3);
+  border-color: #4a6fa5;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: #c6cada;
+  cursor: pointer;
+}
+
+.toggle input {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--accent-deep);
+}
+
+.url-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #cfe0f7;
+  word-break: break-all;
+}
+
+.url-list span.muted {
+  font-weight: 500;
+  color: var(--text-faint);
+}
+
+/* Short windows (a strip display above a door, or a small browser window): shed the NOW
+   card's chrome rather than squeezing the title down to nothing. */
+@media (max-height: 460px) {
+  .now {
+    height: 62vh;
+    min-height: 0;
+    padding: calc(var(--pad) * 0.55) calc(var(--pad) * 0.9);
+  }
+
+  .now-label {
+    font-size: calc(var(--unit) * 0.8 * var(--scale));
+  }
+
+  .now-meta {
+    margin-top: calc(var(--unit) * 0.25);
+    font-size: calc(var(--unit) * 1 * var(--scale));
+  }
+
+  /* The meta line already reads "Slide 12 / 43", so the bar is the first thing to go. */
+  .progress {
+    display: none;
+  }
+}
+
+/* Phones and small tablets in portrait: give NOW less height so NEXT still shows. */
+@media (max-aspect-ratio: 3 / 4) {
+  .now {
+    height: 38vh;
+  }
+}
+
+@media (max-width: 520px) {
+  .panel {
+    width: 100vw;
+    border-left: none;
+  }
+}

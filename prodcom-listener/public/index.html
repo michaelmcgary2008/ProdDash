@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ProdCom Listener</title>
+  <meta name="theme-color" content="#0b0e12">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/icons/icon-180.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="ProdCom">
+  <link rel="stylesheet" href="/style.css?v=3">
+</head>
+<body>
+  <header id="topbar">
+    <span id="status-dot" class="dot" title="Connection status"></span>
+    <div class="controls">
+      <div class="dropdown" id="channel-dd">
+        <button id="channel-btn" title="Choose visible channels">Channels ▾</button>
+        <div id="channel-menu" hidden></div>
+      </div>
+      <button id="time-toggle" title="Toggle timestamps" aria-label="Toggle timestamps" aria-pressed="false">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>
+        </svg>
+      </button>
+      <button id="font-dec" title="Smaller text">A−</button>
+      <button id="font-inc" title="Larger text">A+</button>
+      <button id="clear-btn" title="Clear this view (does not affect ProdCom)">Clear</button>
+    </div>
+    <button id="menu-handle" aria-label="Toggle menu"></button>
+  </header>
+
+  <main id="stream" aria-live="polite">
+    <div id="empty-state">Waiting for transcript…</div>
+    <div id="entries"></div>
+  </main>
+
+  <button id="jump-latest" hidden>↓ New messages</button>
+
+  <script src="/app.js?v=3"></script>
+</body>
+</html>
