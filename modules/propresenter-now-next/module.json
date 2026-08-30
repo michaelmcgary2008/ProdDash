@@ -1,0 +1,33 @@
+{
+  "id": "propresenter-now-next",
+  "name": "ProPresenter Now / Next",
+  "version": "1.0.0",
+  "description": "What is live in ProPresenter and what comes next",
+  "client": "client.js",
+  "server": "server.js",
+  "style": "style.css",
+  "minSize": { "w": 3, "h": 3 },
+  "defaultSize": { "w": 4, "h": 5 },
+  "configSchema": {
+    "host": {
+      "type": "string",
+      "label": "ProPresenter host / IP",
+      "default": ""
+    },
+    "port": {
+      "type": "number",
+      "label": "ProPresenter network port",
+      "default": 1025
+    },
+    "password": {
+      "type": "password",
+      "label": "API password (only if set in ProPresenter)",
+      "default": ""
+    }
+  },
+  "instanceSchema": {
+    "showPlaylist": { "type": "boolean", "label": "Show the playlist name", "default": true },
+    "showProgress": { "type": "boolean", "label": "Show the slide progress bar", "default": true },
+    "cleanTitles": { "type": "boolean", "label": "Tidy titles (hide [ Full ] tags and date codes)", "default": true }
+  }
+}

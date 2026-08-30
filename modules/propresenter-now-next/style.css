@@ -1,0 +1,297 @@
+/* ProPresenter Now / Next module — the wall display's visual language,
+   scaled to a tile. All sizes hang off --unit (set from the tile height by
+   client.js); all colors come from the shell's variables. */
+
+[data-module="propresenter-now-next"] .nn-screen {
+  --unit: 12px;
+  --nn-pad: calc(var(--unit) * 1.1);
+  --nn-gap: calc(var(--unit) * 0.7);
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--nn-gap);
+  padding: var(--nn-pad);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* With no NEXT list there is nothing below the card — centre it. */
+[data-module="propresenter-now-next"] .nn-screen.no-upcoming {
+  justify-content: center;
+}
+
+/* ── top row ── */
+
+[data-module="propresenter-now-next"] .nn-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--nn-gap);
+  flex-shrink: 0;
+  min-height: 0;
+}
+[data-module="propresenter-now-next"] .nn-top.hidden-row { display: none; }
+
+/* Losing the feed is the one thing the tile MUST admit to — overrides the
+   "hide the top row" preference. */
+[data-module="propresenter-now-next"] .is-offline .nn-top,
+[data-module="propresenter-now-next"] .nn-screen.is-offline .nn-top {
+  display: flex !important;
+}
+[data-module="propresenter-now-next"] .is-offline .nn-live-text {
+  opacity: 1 !important;
+  color: var(--danger);
+}
+[data-module="propresenter-now-next"] .is-offline .nn-now {
+  border-color: color-mix(in srgb, var(--danger) 50%, transparent);
+}
+
+[data-module="propresenter-now-next"] .nn-playlist {
+  flex: 1;
+  min-width: 0;
+  font-size: calc(var(--unit) * 1.0);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+[data-module="propresenter-now-next"] .nn-live {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--unit) * 0.45);
+  flex-shrink: 0;
+  font-size: calc(var(--unit) * 0.9);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+[data-module="propresenter-now-next"] .nn-live-dot {
+  width: calc(var(--unit) * 0.6);
+  height: calc(var(--unit) * 0.6);
+  border-radius: 999px;
+  background: var(--border);
+  transition: background 0.3s ease, box-shadow 0.3s ease;
+}
+[data-module="propresenter-now-next"] .nn-live.is-live .nn-live-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 calc(var(--unit) * 0.2) color-mix(in srgb, var(--accent) 18%, transparent);
+}
+[data-module="propresenter-now-next"] .nn-live.is-down .nn-live-dot {
+  background: var(--danger);
+  box-shadow: 0 0 0 calc(var(--unit) * 0.2) color-mix(in srgb, var(--danger) 16%, transparent);
+}
+
+/* Idle tiles don't need a status chip staring at them — it fades once live. */
+[data-module="propresenter-now-next"] .nn-live.is-live .nn-live-text {
+  opacity: 0;
+  transition: opacity 0.6s ease 1.4s;
+}
+
+/* ── NOW card ──
+   FIXED height so the title box is deterministic and the NOW/NEXT layout
+   cannot oscillate (see the wall display's notes). */
+
+[data-module="propresenter-now-next"] .nn-now {
+  flex: 0 0 auto;
+  height: 42%;
+  min-height: calc(var(--unit) * 7);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--unit) * 0.9);
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--accent) 9%, transparent),
+    color-mix(in srgb, var(--bg) 60%, transparent)
+  );
+  padding: calc(var(--nn-pad) * 0.8) var(--nn-pad);
+}
+
+[data-module="propresenter-now-next"] .nn-label {
+  flex-shrink: 0;
+  font-size: calc(var(--unit) * 0.9);
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+[data-module="propresenter-now-next"] .nn-title-box {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  margin-top: calc(var(--unit) * 0.3);
+}
+
+[data-module="propresenter-now-next"] .nn-title {
+  width: 100%;
+  /* Font size is set by fitNowTitle() so the title fills the box; keep
+     line-height ≥ the font's natural ~1.2 or large ascenders/descenders clip. */
+  font-size: calc(var(--unit) * 2.4);
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text);
+  /* Wrapping is controlled by fitNowTitle(), which forbids mid-word breaks. */
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+/* Status text, not a title: readable size, never the fill-the-box treatment. */
+[data-module="propresenter-now-next"] .nn-title.is-waiting {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: calc(var(--unit) * 1.5);
+  white-space: normal;
+}
+
+[data-module="propresenter-now-next"] .nn-hint {
+  flex-shrink: 0;
+  margin-top: calc(var(--unit) * 0.4);
+  font-size: calc(var(--unit) * 0.95);
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+[data-module="propresenter-now-next"] .nn-stale {
+  flex-shrink: 0;
+  margin-top: calc(var(--unit) * 0.4);
+  font-size: calc(var(--unit) * 0.95);
+  font-weight: 600;
+  color: var(--danger);
+}
+
+[data-module="propresenter-now-next"] .nn-meta {
+  flex-shrink: 0;
+  margin-top: calc(var(--unit) * 0.45);
+  font-size: calc(var(--unit) * 1.15);
+  font-weight: 600;
+  color: var(--text);
+  opacity: 0.85;
+  font-variant-numeric: tabular-nums;
+  /* Never wrap: a wrap changes the title box height, which refits the title. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+[data-module="propresenter-now-next"] .nn-meta:empty { display: none; }
+
+[data-module="propresenter-now-next"] .nn-progress {
+  flex-shrink: 0;
+  margin-top: calc(var(--unit) * 0.55);
+  height: calc(var(--unit) * 0.4);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  overflow: hidden;
+}
+[data-module="propresenter-now-next"] .nn-progress[hidden] { display: none; }
+
+[data-module="propresenter-now-next"] .nn-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 65%, var(--panel));
+  transition: width 0.25s ease;
+}
+
+/* ── NEXT list ── */
+
+[data-module="propresenter-now-next"] .nn-next-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--unit) * 0.5);
+}
+
+[data-module="propresenter-now-next"] .nn-next-label {
+  flex-shrink: 0;
+  font-size: calc(var(--unit) * 0.9);
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+[data-module="propresenter-now-next"] .nn-next-label[hidden] { display: none; }
+
+[data-module="propresenter-now-next"] .nn-next-list {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--unit) * 0.45);
+  overflow: hidden;
+}
+
+[data-module="propresenter-now-next"] .nn-next-item {
+  display: flex;
+  align-items: center;
+  gap: var(--nn-gap);
+  padding: calc(var(--unit) * 0.6) calc(var(--unit) * 0.85);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--unit) * 0.6);
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+}
+
+[data-module="propresenter-now-next"] .nn-next-name {
+  flex: 1;
+  min-width: 0;
+  font-size: calc(var(--unit) * 1.25);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+[data-module="propresenter-now-next"] .nn-count-chip {
+  flex-shrink: 0;
+  min-width: calc(var(--unit) * 2);
+  padding: calc(var(--unit) * 0.15) calc(var(--unit) * 0.5);
+  text-align: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--text);
+  font-size: calc(var(--unit) * 0.95);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-module="propresenter-now-next"] .nn-type-tag {
+  flex-shrink: 0;
+  font-size: calc(var(--unit) * 0.8);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+[data-module="propresenter-now-next"] .nn-next-item.is-header {
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: calc(var(--unit) * 0.55) calc(var(--unit) * 0.1) calc(var(--unit) * 0.2);
+}
+[data-module="propresenter-now-next"] .nn-next-item.is-header .nn-next-name {
+  font-size: calc(var(--unit) * 0.9);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+[data-module="propresenter-now-next"] .nn-next-more {
+  flex-shrink: 0;
+  font-size: calc(var(--unit) * 0.9);
+  color: var(--muted);
+  font-weight: 600;
+}
+[data-module="propresenter-now-next"] .nn-next-more[hidden] { display: none; }
