@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ProdDash Admin</title>
+  <meta name="theme-color" content="#0b0e12">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+  <header id="topbar">
+    <span id="brand">Prod<span class="accent">Dash</span> <span class="admin-tag">Admin</span></span>
+    <span class="spacer"></span>
+    <a class="tb-btn" href="/">← Dashboard</a>
+  </header>
+
+  <main id="admin-main">
+    <section class="admin-card" id="login-card" hidden>
+      <h2>Admin passcode</h2>
+      <p class="admin-copy">This page changes the server-wide configuration for every dashboard in the building.</p>
+      <div class="login-row">
+        <input type="password" id="passcode" placeholder="Passcode" autocomplete="current-password">
+        <button class="btn primary" id="login-btn">Unlock</button>
+      </div>
+      <div class="admin-status" id="login-status"></div>
+    </section>
+
+    <section id="modules-section" hidden>
+      <h1 class="admin-h1">Modules</h1>
+      <p class="admin-copy">Server-wide settings, shared by every dashboard. Saving re-initialises the
+        module immediately — open tiles reconnect on their own. Per-tile options (filters, text size)
+        live in each tile's gear menu instead.</p>
+      <div id="modules-list"></div>
+    </section>
+
+    <section id="layouts-section" hidden>
+      <h1 class="admin-h1">Named layouts</h1>
+      <p class="admin-copy">Layouts saved to the server from the dashboard's Layout menu. Loading one
+        copies it into that browser; deleting one here does not touch any browser's current layout.</p>
+      <div id="layouts-list"></div>
+    </section>
+  </main>
+
+  <div id="toast" hidden></div>
+
+  <script type="module" src="/admin/admin.js"></script>
+</body>
+</html>

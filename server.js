@@ -18,6 +18,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -260,6 +261,169 @@ function clientManifest(id) {
   };
 }
 
+/* ── shell events (SSE to every open dashboard/admin page) ──────────── */
+
+const shellStreams = new Set();
+
+function broadcastShellEvent(type, payload = {}) {
+  if (!shellStreams.size) return;
+  const frame = `event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`;
+  for (const res of shellStreams) {
+    try {
+      res.write(frame);
+    } catch {
+      shellStreams.delete(res);
+    }
+  }
+}
+
+setInterval(() => {
+  for (const res of shellStreams) {
+    try {
+      res.write(': ping\n\n');
+    } catch {
+      shellStreams.delete(res);
+    }
+  }
+}, 25000).unref();
+
+/* ── admin API ──────────────────────────────────────────────────────── */
+
+const ADMIN_PASSCODE = String(process.env.PRODDASH_PASSCODE || shellConfig.adminPasscode || '');
+/** Session token: regenerating it every boot is fine — admins just re-enter the passcode. */
+const adminToken = crypto.randomBytes(24).toString('hex');
+
+function isAuthed(req) {
+  if (!ADMIN_PASSCODE) return true;
+  const cookies = String(req.headers.cookie || '');
+  return cookies.split(';').some((c) => c.trim() === 'proddash_admin=' + adminToken);
+}
+
+/** Guard a state-changing admin route. Returns true when the request was refused. */
+function refuseAdminWrite(req, res) {
+  if (!isAuthed(req)) {
+    sendJson(res, 401, { error: 'Enter the admin passcode first.', authRequired: true });
+    return true;
+  }
+  // Requiring application/json forces a CORS preflight that a hostile page
+  // on some other origin cannot pass (same reasoning as the reference apps).
+  const contentType = String(req.headers['content-type'] || '').toLowerCase();
+  if (!contentType.startsWith('application/json')) {
+    sendJson(res, 415, { error: 'Send application/json.' });
+    return true;
+  }
+  return false;
+}
+
+/** Everything the admin page needs, per module. */
+function adminModuleView(id) {
+  const man = manifests.get(id);
+  const cfg = effectiveConfig(id);
+  const values = {};
+  const passwordSet = {};
+  for (const [key, spec] of Object.entries(man.configSchema || {})) {
+    if (spec?.type === 'password') {
+      passwordSet[key] = Boolean(cfg[key]);
+      values[key] = ''; // never echo secrets back to a browser
+    } else {
+      values[key] = cfg[key];
+    }
+  }
+  const entry = mounted.get(id);
+  return {
+    id,
+    name: String(man.name || id),
+    version: String(man.version || ''),
+    description: String(man.description || ''),
+    hasServer: Boolean(man.server),
+    enabled: isEnabled(id),
+    configSchema: man.configSchema || {},
+    config: values,
+    passwordSet,
+    mountError: entry?.error || '',
+    health: isEnabled(id) ? moduleHealth(id) : null,
+  };
+}
+
+/** Coerce and store a config patch according to the module's schema.
+    Empty password fields mean "keep what is stored". */
+function applyConfigPatch(id, patch) {
+  const man = manifests.get(id);
+  const current = effectiveConfig(id);
+  const next = {};
+  for (const [key, spec] of Object.entries(man.configSchema || {})) {
+    const type = spec?.type || 'string';
+    let value = patch && typeof patch === 'object' && key in patch ? patch[key] : current[key];
+    if (type === 'password' && (value === '' || value === undefined || value === null)) {
+      value = current[key] || '';
+    }
+    if (type === 'number') value = Number(value) || 0;
+    else if (type === 'boolean') value = Boolean(value);
+    else value = value === undefined || value === null ? '' : String(value);
+    next[key] = value;
+  }
+  modulesConfig[id] = { ...moduleState(id), enabled: isEnabled(id), config: next };
+  writeJson(MODULES_CONFIG_PATH, modulesConfig);
+}
+
+async function handleAdminApi(req, res, urlPath) {
+  if (urlPath === '/api/admin/login' && req.method === 'POST') {
+    let body = {};
+    try {
+      body = JSON.parse((await readBody(req)) || '{}');
+    } catch {
+      return sendJson(res, 400, { error: 'Malformed request.' });
+    }
+    if (!ADMIN_PASSCODE) return sendJson(res, 200, { ok: true, authRequired: false });
+    if (String(body.passcode || '') !== ADMIN_PASSCODE) {
+      return sendJson(res, 403, { error: 'Wrong passcode.' });
+    }
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Set-Cookie': `proddash_admin=${adminToken}; Path=/; SameSite=Lax; HttpOnly`,
+      'Cache-Control': 'no-store',
+    });
+    return res.end(JSON.stringify({ ok: true }));
+  }
+
+  if (urlPath === '/api/admin/state' && req.method === 'GET') {
+    if (!isAuthed(req)) {
+      return sendJson(res, 401, { authRequired: true, authed: false });
+    }
+    return sendJson(res, 200, {
+      authRequired: Boolean(ADMIN_PASSCODE),
+      authed: true,
+      modules: [...manifests.keys()].sort().map(adminModuleView),
+    });
+  }
+
+  const m = urlPath.match(/^\/api\/admin\/modules\/([^/]+)\/(config|enabled)$/);
+  if (m && req.method === 'PUT') {
+    const id = decodeURIComponent(m[1]);
+    if (!manifests.has(id)) return sendJson(res, 404, { error: `No module "${id}" is installed.` });
+    if (refuseAdminWrite(req, res)) return;
+    let body = {};
+    try {
+      body = JSON.parse((await readBody(req)) || '{}');
+    } catch {
+      return sendJson(res, 400, { error: 'Malformed request.' });
+    }
+    if (m[2] === 'config') {
+      applyConfigPatch(id, body.config);
+      remountModule(id); // config changes take effect without a manual restart
+    } else {
+      const enabled = Boolean(body.enabled);
+      modulesConfig[id] = { ...moduleState(id), enabled };
+      writeJson(MODULES_CONFIG_PATH, modulesConfig);
+      remountModule(id); // mounts when enabled, unmounts (only) otherwise
+    }
+    broadcastShellEvent('modules-changed', { id });
+    return sendJson(res, 200, { ok: true, module: adminModuleView(id) });
+  }
+
+  sendJson(res, 404, { error: 'Unknown admin endpoint.' });
+}
+
 /* ── module API dispatch ────────────────────────────────────────────── */
 
 function dispatchModuleApi(req, res, id, subPath, search) {
@@ -369,6 +533,31 @@ function handleRequest(req, res) {
   if (urlPath === '/api/modules' && req.method === 'GET') {
     const list = [...manifests.keys()].filter(isEnabled).map(clientManifest);
     return sendJson(res, 200, { modules: list });
+  }
+
+  /* — shell events: open dashboards learn about admin changes live — */
+  if (urlPath === '/api/events' && req.method === 'GET') {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    res.write('retry: 3000\n\n');
+    try { req.socket.setKeepAlive(true, 15000); } catch { /* gone */ }
+    shellStreams.add(res);
+    req.on('close', () => shellStreams.delete(res));
+    return;
+  }
+
+  /* — admin API — */
+  if (urlPath.startsWith('/api/admin/')) {
+    handleAdminApi(req, res, urlPath).catch((err) => {
+      console.error('[proddash] admin API error:', err);
+      if (!res.headersSent) sendJson(res, 500, { error: 'Server error.' });
+      else try { res.end(); } catch { /* gone */ }
+    });
+    return;
   }
 
   /* — module APIs: /api/modules/<id>/… (any method; modules decide) — */

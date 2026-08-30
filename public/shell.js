@@ -461,8 +461,11 @@ function buildModuleApi(tile, man, entry) {
     id: man.id,
     instanceId: tile.id,
 
-    /** Admin (server-wide) config, read-only. Password fields never reach the client. */
-    config: Object.freeze({ ...(man.config || {}) }),
+    /** Admin (server-wide) config, read-only. Password fields never reach
+        the client. Live: reflects the latest registry after admin saves. */
+    get config() {
+      return { ...((registry.get(man.id) || man).config || {}) };
+    },
 
     /** Per-tile settings: schema defaults overlaid with what this tile saved. */
     get instanceSettings() {
@@ -716,6 +719,55 @@ wireDropdown('layout-btn', 'layout-menu', async (menu) => {
   }, { danger: true, sub: 'Remove every tile from this browser' }));
 });
 
+/* ── live updates from the admin page ───────────────────────────────── */
+
+/* The server broadcasts `modules-changed` on /api/events whenever admin
+   config or enabled flags change. Tiles of a changed module get
+   onConfigChange(cfg) if they implement it, otherwise a clean remount. */
+
+let eventsSource = null;
+let eventsRetry = null;
+
+function subscribeEvents() {
+  try { eventsSource?.close(); } catch { /* not open */ }
+  eventsSource = new EventSource('/api/events');
+  eventsSource.addEventListener('modules-changed', () => handleModulesChanged());
+  eventsSource.onerror = () => {
+    if (eventsSource.readyState === EventSource.CLOSED) {
+      clearTimeout(eventsRetry);
+      eventsRetry = setTimeout(subscribeEvents, 4000);
+    }
+  };
+}
+
+async function handleModulesChanged() {
+  const before = registry;
+  if (!(await loadRegistry())) return;
+  for (const tile of [...tiles]) {
+    const oldMan = before.get(tile.module);
+    const newMan = registry.get(tile.module);
+    if (!newMan !== !oldMan) {
+      // enabled or disabled: rebuild the tile body (shows the module, or
+      // an "unavailable" note)
+      remountTile(tile);
+      continue;
+    }
+    if (!newMan) continue;
+    if (JSON.stringify(oldMan.config || {}) !== JSON.stringify(newMan.config || {})) {
+      const entry = tileEls.get(tile.id);
+      if (typeof entry?.instance?.onConfigChange === 'function') {
+        try {
+          entry.instance.onConfigChange({ ...newMan.config });
+        } catch {
+          remountTile(tile);
+        }
+      } else {
+        remountTile(tile);
+      }
+    }
+  }
+}
+
 /* ── boot ───────────────────────────────────────────────────────────── */
 
 async function boot() {
@@ -726,6 +778,7 @@ async function boot() {
     return;
   }
   renderLayout(loadLayoutFromStorage());
+  subscribeEvents();
 }
 
 boot();
