@@ -1,0 +1,28 @@
+{
+  "id": "propresenter-timers",
+  "name": "Timers",
+  "version": "1.0.0",
+  "description": "Live ProPresenter timers and LTC timecode",
+  "client": "client.js",
+  "server": "server.js",
+  "style": "style.css",
+  "minSize": { "w": 2, "h": 1 },
+  "defaultSize": { "w": 4, "h": 2 },
+  "configSchema": {
+    "host": {
+      "type": "string",
+      "label": "ProPresenter host / IP",
+      "default": ""
+    },
+    "port": {
+      "type": "number",
+      "label": "ProPresenter network port",
+      "default": 1025
+    },
+    "password": {
+      "type": "password",
+      "label": "API password (only if set in ProPresenter)",
+      "default": ""
+    }
+  }
+}

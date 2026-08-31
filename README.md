@@ -87,13 +87,20 @@ are written by the app itself.
 - **ProPresenter** — what's live and what's next, with slide progress,
   driven by the shared `propresenter-core` client (ProPresenter 7/20).
   Admin config: host, port, password.
+- **Timers** — live ProPresenter timers (countdown, countdown-to-time,
+  elapsed) and LTC timecode as auto-sized cards. The ＋ picker lists every
+  discovered timer (and the LTC card) as its own tile, or add "All timers"
+  and pick a selection via the tile's "Timers ▾" menu; overruns are
+  unmistakably red. Read-only — no start/stop controls. Admin config: host,
+  port, password.
 - **Clock** — a big booth clock; also the smallest possible module and the
   reference for module authors.
 
 To develop modules against mocks instead of real gear:
-`node tools/prodcom-mock.js` (ProdCom on `127.0.0.1:24480`) and
-`node band-lineup-display/tmp/pp-mock.js 1599` (ProPresenter on
-`127.0.0.1:1599`). See the testing section of the
+`node tools/prodcom-mock.js` (ProdCom on `127.0.0.1:24480`),
+`node band-lineup-display/tmp/pp-mock.js 1599` (ProPresenter slides on
+`127.0.0.1:1599`) and `node tools/pp-timers-mock.js 1600` (ProPresenter
+timers + timecode on `127.0.0.1:1600`). See the testing section of the
 [module guide](docs/MODULE-GUIDE.md).
 
 ## Install as a desktop web app
