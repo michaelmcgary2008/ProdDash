@@ -9,10 +9,10 @@
   "minSize": { "w": 3, "h": 2 },
   "defaultSize": { "w": 4, "h": 4 },
   "configSchema": {
-    "prodcomUrl": {
-      "type": "string",
-      "label": "ProdCom URL",
-      "default": "http://10.3.11.152:24480"
+    "prodcom": {
+      "type": "endpoint",
+      "label": "ProdCom server",
+      "default": { "host": "10.3.11.152", "port": 24480 }
     },
     "apiKey": {
       "type": "password",

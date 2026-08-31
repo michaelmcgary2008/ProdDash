@@ -96,6 +96,32 @@ function fieldFor(key, spec, value, passwordSet) {
     input.checked = Boolean(value);
     field.append(input, document.createTextNode(label));
     read = () => input.checked;
+  } else if (type === 'endpoint') {
+    // One consistent "Host / IP : Port" control for every module's upstream.
+    const span = document.createElement('span');
+    span.textContent = label;
+    const row = document.createElement('span');
+    row.className = 'endpoint-row';
+    const host = document.createElement('input');
+    host.type = 'text';
+    host.className = 'ep-host';
+    host.placeholder = 'Host / IP';
+    host.autocomplete = 'off';
+    host.spellcheck = false;
+    host.value = value?.host ? String(value.host) : '';
+    const sep = document.createElement('span');
+    sep.className = 'ep-sep';
+    sep.textContent = ':';
+    const port = document.createElement('input');
+    port.type = 'number';
+    port.className = 'ep-port';
+    port.placeholder = 'Port';
+    port.min = '1';
+    port.max = '65535';
+    port.value = value?.port ? String(value.port) : '';
+    row.append(host, sep, port);
+    field.append(span, row);
+    read = () => ({ host: host.value.trim(), port: Number(port.value) || 0 });
   } else if (type === 'select' && Array.isArray(spec.options)) {
     const span = document.createElement('span');
     span.textContent = label;

@@ -93,6 +93,12 @@ body { overflow: auto; }
 
 .module-form { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px; }
 .module-form .field { max-width: 420px; }
+
+/* endpoint fields: every module's upstream is entered the same way */
+.field .endpoint-row { display: flex; align-items: center; gap: 7px; }
+.endpoint-row .ep-host { flex: 1; min-width: 0; }
+.endpoint-row .ep-port { width: 92px; flex: none; }
+.endpoint-row .ep-sep { color: var(--muted); font-weight: 600; }
 .module-form-empty { color: var(--muted); font-size: 12px; margin-top: 10px; }
 
 .module-actions {

@@ -23,7 +23,13 @@ let current = null;
 module.exports = {
   init({ config, log }) {
     const streams = new Set();
-    const enabled = Boolean(config.host && Number(config.port));
+    // Endpoint config. Legacy flat host/port keys (saved before the endpoint
+    // field existed) can only still be present until the admin form is
+    // re-saved, so when they exist they win over the endpoint's default.
+    const ep = config.propresenter && typeof config.propresenter === 'object' ? config.propresenter : {};
+    const host = String(config.host ?? ep.host ?? '');
+    const port = Number(config.port ?? ep.port) || 1025;
+    const enabled = Boolean(host && port);
     let latest = clearedViewModel();
     let lastFrame = '';
 
@@ -54,14 +60,14 @@ module.exports = {
 
     client.configure({
       enabled,
-      host: String(config.host || ''),
-      port: Number(config.port) || 1025,
+      host,
+      port,
       password: String(config.password || ''),
     });
 
     if (enabled) {
       client.start();
-      log(`following ProPresenter at ${config.host}:${config.port}`);
+      log(`following ProPresenter at ${host}:${port}`);
     } else {
       log('no ProPresenter host configured — set one in /admin');
     }
@@ -91,7 +97,7 @@ module.exports = {
       },
       health() {
         if (!enabled) return { status: 'error', message: 'No ProPresenter host configured' };
-        if (latest.reachable) return { status: 'ok', message: `Following ${config.host}:${config.port}` };
+        if (latest.reachable) return { status: 'ok', message: `Following ${host}:${port}` };
         return {
           status: 'error',
           message: latest.lastError

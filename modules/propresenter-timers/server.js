@@ -65,8 +65,12 @@ function clearedState(enabled) {
 module.exports = {
   init({ config, log }) {
     const streams = new Set();
-    const host = String(config.host || '');
-    const port = Number(config.port) || 1025;
+    // Endpoint config. Legacy flat host/port keys (saved before the endpoint
+    // field existed) can only still be present until the admin form is
+    // re-saved, so when they exist they win over the endpoint's default.
+    const ep = config.propresenter && typeof config.propresenter === 'object' ? config.propresenter : {};
+    const host = String(config.host ?? ep.host ?? '');
+    const port = Number(config.port ?? ep.port) || 1025;
     const password = String(config.password || '');
     const enabled = Boolean(host && port);
 
