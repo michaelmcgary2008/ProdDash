@@ -125,6 +125,13 @@ function clientConfig(id) {
  *   init({ config, log })   -> handle with stop() (and optionally health())
  *   routes({ config, log }) -> { 'GET /state': handler, 'GET /stream': handler,
  *                                'GET /proxy/*': handler, '* /any/*': handler }
+ *   tiles({ config, log })  -> optional, sync or async: the tiles this module
+ *                              presents in the Add-tile picker, e.g.
+ *                              [{ id, name, description, settings, minSize,
+ *                                 defaultSize }]. Called on every picker load,
+ *                              so the list may be dynamic (discovered timers,
+ *                              admin-configured pages). Omitted or empty →
+ *                              the module appears once, as before.
  * Routes are mounted under /api/modules/<id>/. A trailing "/*" makes a prefix
  * route; the matched remainder is passed as req.wildcard (req.search carries
  * the query string). init() runs before routes(), so routes can close over
@@ -172,6 +179,9 @@ function mountModule(id) {
     }
     if (typeof mod.routes === 'function') {
       entry.routes = parseRouteTable(mod.routes({ config, log }));
+    }
+    if (typeof mod.tiles === 'function') {
+      entry.tiles = () => mod.tiles({ config, log });
     }
     log('mounted' + (entry.routes.length ? ` (${entry.routes.length} routes)` : ''));
   } catch (err) {
@@ -243,8 +253,51 @@ function readBody(req, limitBytes = 512 * 1024) {
   });
 }
 
+/** One entry of a module's tile list, with everything untrusted dropped. */
+function sanitizeTileEntry(raw) {
+  if (!raw || typeof raw !== 'object' || !raw.id || !raw.name) return null;
+  const out = {
+    id: String(raw.id),
+    name: String(raw.name),
+    description: raw.description ? String(raw.description) : '',
+    settings: raw.settings && typeof raw.settings === 'object' ? raw.settings : {},
+  };
+  for (const key of ['minSize', 'defaultSize']) {
+    const size = raw[key];
+    if (size && Number(size.w) > 0 && Number(size.h) > 0) {
+      out[key] = { w: Number(size.w), h: Number(size.h) };
+    }
+  }
+  return out;
+}
+
+/**
+ * The tiles a module presents in the picker. A module's tiles() runs on every
+ * picker load so the list can be live data — but a hung or throwing module
+ * must never stall the picker, so it gets a short deadline and any failure
+ * falls back to the classic single entry (empty list).
+ */
+async function moduleTiles(id) {
+  const man = manifests.get(id);
+  const entry = mounted.get(id);
+  let list = Array.isArray(man.tiles) ? man.tiles : []; // static, for client-only modules
+  if (entry?.tiles) {
+    try {
+      const dynamic = await Promise.race([
+        Promise.resolve(entry.tiles()),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('tiles() timed out')), 2000).unref()),
+      ]);
+      if (Array.isArray(dynamic)) list = dynamic;
+    } catch (err) {
+      console.error(`[proddash] module "${id}" tiles() failed:`, err?.message || err);
+      list = [];
+    }
+  }
+  return list.map(sanitizeTileEntry).filter(Boolean).slice(0, 100);
+}
+
 /** Manifest as sent to the dashboard client (enabled modules only). */
-function clientManifest(id) {
+async function clientManifest(id) {
   const man = manifests.get(id);
   return {
     id: man.id,
@@ -258,6 +311,7 @@ function clientManifest(id) {
     instanceSchema: man.instanceSchema || {},
     hasServer: Boolean(man.server),
     config: clientConfig(id),
+    tiles: await moduleTiles(id),
   };
 }
 
@@ -652,8 +706,13 @@ function handleRequest(req, res) {
 
   /* — shell API — */
   if (urlPath === '/api/modules' && req.method === 'GET') {
-    const list = [...manifests.keys()].filter(isEnabled).map(clientManifest);
-    return sendJson(res, 200, { modules: list });
+    Promise.all([...manifests.keys()].filter(isEnabled).map(clientManifest))
+      .then((list) => sendJson(res, 200, { modules: list }))
+      .catch((err) => {
+        console.error('[proddash] /api/modules failed:', err);
+        if (!res.headersSent) sendJson(res, 500, { error: 'Server error.' });
+      });
+    return;
   }
 
   /* — shell events: open dashboards learn about admin changes live — */

@@ -142,7 +142,7 @@ function loadLayoutFromStorage() {
 
 function sanitizeTile(t) {
   const w = Math.max(1, Math.min(COLS, Number(t.w) || 3));
-  return {
+  const tile = {
     id: String(t.id || newId()),
     module: String(t.module || ''),
     x: Math.max(0, Math.min(COLS - w, Number(t.x) || 0)),
@@ -151,7 +151,14 @@ function sanitizeTile(t) {
     h: Math.max(1, Number(t.h) || 2),
     settings: (t.settings && typeof t.settings === 'object') ? t.settings : {},
     headHidden: Boolean(t.headHidden),
+    // set when the tile was added from a module's tile list (multi-tile modules)
+    variant: t.variant ? String(t.variant) : '',
+    title: t.title ? String(t.title) : '',
   };
+  if (t.minSize && Number(t.minSize.w) > 0 && Number(t.minSize.h) > 0) {
+    tile.minSize = { w: Number(t.minSize.w), h: Number(t.minSize.h) };
+  }
+  return tile;
 }
 
 function newId() {
@@ -200,10 +207,10 @@ function applyRect(tile) {
 }
 
 function minSizeOf(tile) {
-  const man = registry.get(tile.module);
+  const min = tile.minSize || registry.get(tile.module)?.minSize;
   return {
-    w: Math.max(1, man?.minSize?.w || 1),
-    h: Math.max(1, man?.minSize?.h || 1),
+    w: Math.max(1, min?.w || 1),
+    h: Math.max(1, min?.h || 1),
   };
 }
 
@@ -228,7 +235,7 @@ function buildTile(tile) {
 
   const title = document.createElement('span');
   title.className = 'tile-title';
-  title.textContent = man ? man.name : tile.module + ' (not installed)';
+  title.textContent = man ? (tile.title || man.name) : tile.module + ' (not installed)';
 
   // where moduleApi.header puts a module's own buttons and menus
   const controls = document.createElement('span');
@@ -492,18 +499,30 @@ function buildDivider(L, R, top, bottom) {
 
 /* ── add / remove tiles ─────────────────────────────────────────────── */
 
-function addTile(moduleId) {
+/**
+ * Add a tile. `entry` is one item of a multi-tile module's tile list
+ * (picker variants): its preset settings overlay the schema defaults, and
+ * its name/sizes stick to the tile.
+ */
+function addTile(moduleId, entry = null) {
   const man = registry.get(moduleId);
+  const defaultSize = entry?.defaultSize || man?.defaultSize;
   const size = {
-    w: Math.max(1, Math.min(COLS, man?.defaultSize?.w || 4)),
-    h: Math.max(1, man?.defaultSize?.h || 3),
+    w: Math.max(1, Math.min(COLS, defaultSize?.w || 4)),
+    h: Math.max(1, defaultSize?.h || 3),
   };
   const spot = findSpot(size.w, size.h);
   const settings = {};
   for (const [key, spec] of Object.entries(man?.instanceSchema || {})) {
     if (spec && 'default' in spec) settings[key] = spec.default;
   }
+  Object.assign(settings, entry?.settings || {});
   const tile = { id: newId(), module: moduleId, ...spot, ...size, settings };
+  if (entry) {
+    tile.variant = String(entry.id);
+    tile.title = String(entry.name || '');
+    if (entry.minSize) tile.minSize = { w: entry.minSize.w, h: entry.minSize.h };
+  }
   tiles.push(tile);
   buildTile(tile);
   refreshEmptyState();
@@ -578,6 +597,10 @@ function buildModuleApi(tile, man, entry) {
   const api = {
     id: man.id,
     instanceId: tile.id,
+
+    /** For multi-tile modules: which entry of the module's tile list this
+        tile was added as ('' when added as the plain module). */
+    variant: tile.variant || '',
 
     /** Admin (server-wide) config, read-only. Password fields never reach
         the client. Live: reflects the latest registry after admin saves. */
@@ -908,10 +931,26 @@ wireDropdown('add-btn', 'add-menu', async (menu) => {
     return;
   }
   for (const man of manifests) {
-    menu.appendChild(menuItem(man.name, () => {
-      menu.hidden = true;
-      addTile(man.id);
-    }, { sub: man.description || '' }));
+    const entries = Array.isArray(man.tiles) ? man.tiles : [];
+    if (entries.length) {
+      // A multi-tile module: its name becomes a group heading and each of
+      // its tiles is added individually.
+      const title = document.createElement('div');
+      title.className = 'menu-title';
+      title.textContent = man.name;
+      menu.appendChild(title);
+      for (const entry of entries) {
+        menu.appendChild(menuItem(entry.name, () => {
+          menu.hidden = true;
+          addTile(man.id, entry);
+        }, { sub: entry.description || '' }));
+      }
+    } else {
+      menu.appendChild(menuItem(man.name, () => {
+        menu.hidden = true;
+        addTile(man.id);
+      }, { sub: man.description || '' }));
+    }
   }
 });
 
