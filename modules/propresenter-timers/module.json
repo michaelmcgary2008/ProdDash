@@ -9,15 +9,10 @@
   "minSize": { "w": 2, "h": 1 },
   "defaultSize": { "w": 4, "h": 2 },
   "configSchema": {
-    "host": {
-      "type": "string",
-      "label": "ProPresenter host / IP",
-      "default": ""
-    },
-    "port": {
-      "type": "number",
-      "label": "ProPresenter network port",
-      "default": 1025
+    "propresenter": {
+      "type": "endpoint",
+      "label": "ProPresenter",
+      "default": { "host": "", "port": 1025 }
     },
     "password": {
       "type": "password",

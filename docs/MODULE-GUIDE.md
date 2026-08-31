@@ -64,7 +64,7 @@ shell code changes, ever.
 Both schemas map field names to specs:
 
 ```
-{ "type": "string" | "number" | "boolean" | "select" | "password",
+{ "type": "string" | "number" | "boolean" | "select" | "password" | "endpoint",
   "label": "Shown next to the field",
   "default": <value>,
   "options": [ { "value": "a", "label": "A" }, … ]   // "select" only
@@ -76,6 +76,34 @@ in `config/modules.json`, handed to your *server* entry, and **never sent to
 browsers** — not in `/api/modules`, and never echoed back into the admin
 form. Anything upstream that needs the secret must go through your server
 routes.
+
+### Connection settings: use `endpoint`
+
+Anything that points at a device or service on the network — ProPresenter,
+ProdCom, a camera, a mixer — must be **one `endpoint` field**, so every
+module's connection is entered the same way. The admin page renders an
+endpoint as a single "Host / IP : Port" control; the value is stored and
+handed to your server as an object:
+
+```json
+"propresenter": {
+  "type": "endpoint",
+  "label": "ProPresenter",
+  "default": { "host": "", "port": 1025 }
+}
+```
+
+```js
+// in your server entry
+const { host, port } = config.propresenter;
+const base = `http://${host}:${port}`;
+```
+
+Do **not** split host and port into separate `string`/`number` fields, and
+do **not** ask for a full `http://…` URL unless the setting genuinely is a
+web address where protocol or path matter (a page to embed, a webhook).
+Endpoints belong in admin config, not per-tile settings — connections are
+server-wide by design.
 
 Admin config lives in `config/modules.json` (written by the admin page —
 your module never touches that file). Per-tile settings live inside each

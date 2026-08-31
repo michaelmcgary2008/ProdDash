@@ -71,11 +71,22 @@ function proxy(req, res, target, apiKey) {
   req.pipe(preq);
 }
 
+/** The ProdCom base URL from the endpoint config. A legacy prodcomUrl (saved
+    before the endpoint field existed) can only still be present until the
+    admin form is re-saved, so when it exists it wins over the endpoint's
+    schema default. */
+function resolveTarget(config) {
+  if (config.prodcomUrl) return new URL(config.prodcomUrl);
+  const ep = config.prodcom;
+  if (ep && ep.host && Number(ep.port)) return new URL(`http://${ep.host}:${Number(ep.port)}`);
+  return null;
+}
+
 module.exports = {
   init({ config }) {
-    health = config.prodcomUrl
+    health = resolveTarget(config)
       ? { status: 'connecting', message: 'No traffic yet' }
-      : { status: 'error', message: 'No ProdCom URL configured' };
+      : { status: 'error', message: 'No ProdCom server configured' };
     return {
       stop() { /* nothing persistent to tear down — streams die with their sockets */ },
       health: () => health,
@@ -83,8 +94,8 @@ module.exports = {
   },
 
   routes({ config, log }) {
-    // An invalid URL throws here, which surfaces as a mount error in /admin.
-    const target = new URL(config.prodcomUrl || 'http://10.3.11.152:24480');
+    // An invalid host/URL throws here, which surfaces as a mount error in /admin.
+    const target = resolveTarget(config) || new URL('http://10.3.11.152:24480');
     log(`proxying /prodcom/* → ${target.origin}`);
     return {
       '* /prodcom/*': (req, res) => proxy(req, res, target, config.apiKey || ''),

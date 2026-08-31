@@ -82,15 +82,24 @@
   to   { opacity: 1; transform: none; }
 }
 
+[data-module="prodcom-transcript"] .channel-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+  min-width: 0;
+}
+
+/* timestamp sits to the right of the channel name; the clock button only
+   toggles its visibility */
 [data-module="prodcom-transcript"] .pt-entry .time {
   display: none;
   color: var(--muted);
   font-size: 0.72em;
   font-variant-numeric: tabular-nums;
   flex: none;
-  padding-top: 3px;
 }
-[data-module="prodcom-transcript"] .show-times .pt-entry .time { display: block; }
+[data-module="prodcom-transcript"] .show-times .pt-entry .time { display: inline; }
 
 [data-module="prodcom-transcript"] .pt-entry .avatar {
   flex: none;
@@ -114,7 +123,9 @@
   letter-spacing: 0.01em;
   line-height: 1;
   white-space: nowrap;
-  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 [data-module="prodcom-transcript"] .pt-entry .text {

@@ -413,7 +413,13 @@ function applyConfigPatch(id, patch) {
     }
     if (type === 'number') value = Number(value) || 0;
     else if (type === 'boolean') value = Boolean(value);
-    else value = value === undefined || value === null ? '' : String(value);
+    else if (type === 'endpoint') {
+      const src = value && typeof value === 'object' ? value : {};
+      value = {
+        host: String(src.host ?? '').trim(),
+        port: Math.max(0, Math.min(65535, Math.trunc(Number(src.port)) || 0)),
+      };
+    } else value = value === undefined || value === null ? '' : String(value);
     next[key] = value;
   }
   modulesConfig[id] = { ...moduleState(id), enabled: isEnabled(id), config: next };

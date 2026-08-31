@@ -273,6 +273,10 @@ function buildTile(tile) {
   resize.className = 'tile-resize';
   resize.title = 'Drag to resize';
 
+  const resizeLeft = document.createElement('div');
+  resizeLeft.className = 'tile-resize-left';
+  resizeLeft.title = 'Drag to resize';
+
   // notch on the title bar's bottom edge: hides/shows the bar
   const notch = document.createElement('button');
   notch.className = 'tile-notch';
@@ -284,7 +288,7 @@ function buildTile(tile) {
     saveLayout();
   });
 
-  el.append(head, body, resize, notch);
+  el.append(head, body, resize, resizeLeft, notch);
   el.classList.toggle('head-hidden', Boolean(tile.headHidden));
   grid.appendChild(el);
 
@@ -293,7 +297,8 @@ function buildTile(tile) {
   applyRect(tile);
 
   wireDrag(tile, el, head);
-  wireResize(tile, el, resize);
+  wireResize(tile, el, resize, false);
+  wireResize(tile, el, resizeLeft, true);
 
   mountModule(tile);
   return entry;
@@ -309,6 +314,7 @@ function wireDrag(tile, el, handle) {
   handle.addEventListener('pointerdown', (ev) => {
     if (ev.target.closest('.tile-btn') || ev.target.closest('.tile-menu') || ev.target.closest('.tile-notch')) return;
     if (ev.button !== 0 && ev.pointerType === 'mouse') return;
+    if (document.body.classList.contains('fullscreen')) return;
     ev.preventDefault();
     closeSettingsPopovers();
     handle.setPointerCapture(ev.pointerId);
@@ -356,17 +362,19 @@ function wireDrag(tile, el, handle) {
   });
 }
 
-/* ── drag to resize ─────────────────────────────────────────────────── */
+/* ── drag to resize (bottom-right and bottom-left corners) ──────────── */
 
-function wireResize(tile, el, handle) {
+function wireResize(tile, el, handle, fromLeft) {
   handle.addEventListener('pointerdown', (ev) => {
     if (ev.button !== 0 && ev.pointerType === 'mouse') return;
+    if (document.body.classList.contains('fullscreen')) return;
     ev.preventDefault();
     ev.stopPropagation();
     handle.setPointerCapture(ev.pointerId);
     const m = cellMetrics();
     const sx = ev.clientX;
     const sy = ev.clientY;
+    const startX = tile.x;
     const startW = tile.w;
     const startH = tile.h;
     const min = minSizeOf(tile);
@@ -377,13 +385,26 @@ function wireResize(tile, el, handle) {
     const onMove = (e) => {
       const dCols = Math.round((e.clientX - sx) / (m.cw + m.gap));
       const dRows = Math.round((e.clientY - sy) / (m.ch + m.gap));
-      const cand = {
-        x: tile.x,
-        y: tile.y,
-        w: Math.max(min.w, Math.min(COLS - tile.x, startW + dCols)),
-        h: Math.max(min.h, startH + dRows),
-      };
-      if ((cand.w !== tile.w || cand.h !== tile.h) && isFree(cand, tile.id)) {
+      let cand;
+      if (fromLeft) {
+        // the left edge moves; the right edge stays put
+        const newX = Math.max(0, Math.min(startX + startW - min.w, startX + dCols));
+        cand = {
+          x: newX,
+          y: tile.y,
+          w: startX + startW - newX,
+          h: Math.max(min.h, startH + dRows),
+        };
+      } else {
+        cand = {
+          x: tile.x,
+          y: tile.y,
+          w: Math.max(min.w, Math.min(COLS - tile.x, startW + dCols)),
+          h: Math.max(min.h, startH + dRows),
+        };
+      }
+      if ((cand.x !== tile.x || cand.w !== tile.w || cand.h !== tile.h) && isFree(cand, tile.id)) {
+        tile.x = cand.x;
         tile.w = cand.w;
         tile.h = cand.h;
         applyRect(tile);
@@ -452,6 +473,7 @@ function buildDivider(L, R, top, bottom) {
 
   el.addEventListener('pointerdown', (ev) => {
     if (ev.button !== 0 && ev.pointerType === 'mouse') return;
+    if (document.body.classList.contains('fullscreen')) return;
     ev.preventDefault();
     closeSettingsPopovers();
     el.setPointerCapture(ev.pointerId);
@@ -915,6 +937,7 @@ function renderLayout(list) {
   for (const tile of tiles) buildTile(tile);
   refreshEmptyState();
   rebuildDividers();
+  if (document.body.classList.contains('fullscreen')) applyFullscreenFit();
 }
 
 /* ── menus ──────────────────────────────────────────────────────────── */
@@ -1024,6 +1047,140 @@ wireDropdown('layout-btn', 'layout-menu', async (menu) => {
     saveLayout();
     toast('Layout cleared');
   }, { danger: true, sub: 'Remove every tile from this browser' }));
+});
+
+/* ── menu bar show/hide (notch, like the tile title bars) ───────────── */
+
+const topbar = document.getElementById('topbar');
+const topbarNotch = document.getElementById('topbar-notch');
+const LS_MENU = 'proddash:menuHidden';
+
+/** Keep the notch glued to the menubar's bottom edge, whatever its height. */
+const topbarSizer = new ResizeObserver(() => {
+  document.documentElement.style.setProperty('--topbar-h', topbar.offsetHeight + 'px');
+});
+topbarSizer.observe(topbar);
+
+function setMenuHidden(hidden, { persist = true } = {}) {
+  document.body.classList.toggle('menu-hidden', hidden);
+  if (persist) {
+    try { localStorage.setItem(LS_MENU, hidden ? '1' : '0'); } catch { /* fine */ }
+  }
+}
+
+topbarNotch.addEventListener('click', () => {
+  setMenuHidden(!document.body.classList.contains('menu-hidden'));
+});
+
+try {
+  if (localStorage.getItem(LS_MENU) === '1') setMenuHidden(true, { persist: false });
+} catch { /* fine */ }
+
+/* ── fullscreen: auto-fit the layout to the screen ──────────────────── */
+
+/* Fullscreen is a viewing mode. The occupied columns stretch proportionally
+   to the full width; tiles whose bottom edge lands near the bottom of the
+   viewport are stretched to end exactly at it; when nothing extends below
+   the viewport, scrolling is disabled. All of it is visual-only — the saved
+   layout is untouched and everything reverts on exit. */
+
+const fsBtn = document.getElementById('fs-btn');
+/** Rows this close to the viewport bottom count as "near" and get stretched. */
+const FS_NEAR_ROWS = 2;
+let menuHiddenBeforeFs = false;
+
+function fsSmallExempt(tile) {
+  // A small tile (like the clock) alone in its columns must not become a
+  // full-height ribbon.
+  if (tile.h > 2) return false;
+  return !tiles.some((t) => t !== tile && t.x < tile.x + tile.w && tile.x < t.x + t.w);
+}
+
+function fsBottomMost(tile) {
+  return !tiles.some((t) => t !== tile
+    && t.x < tile.x + tile.w && tile.x < t.x + t.w
+    && t.y >= tile.y + tile.h);
+}
+
+function applyFullscreenFit() {
+  if (!document.body.classList.contains('fullscreen') || !tiles.length) return;
+  const m = cellMetrics();
+  const baseCellH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--cell-h')) || 72;
+  const wrapH = gridwrap.clientHeight;
+  const maxCol = Math.max(1, ...tiles.map((t) => t.x + t.w));
+  const maxRow = Math.max(1, ...tiles.map((t) => t.y + t.h));
+
+  // x: the occupied columns stretch proportionally across the full width
+  grid.style.gridTemplateColumns = `repeat(${maxCol}, minmax(0, 1fr))`;
+
+  const layoutH = maxRow * (baseCellH + m.gap) - m.gap;
+  if (layoutH > wrapH) {
+    // deeper than the screen: keep natural rows and scrolling
+    grid.style.gridAutoRows = '';
+    gridwrap.classList.remove('no-scroll');
+    for (const tile of tiles) applyRect(tile);
+    return;
+  }
+
+  // nothing below the fold: lock scrolling and make R rows fill the height exactly
+  gridwrap.classList.add('no-scroll');
+  const R = Math.max(maxRow, Math.floor((wrapH + m.gap) / (baseCellH + m.gap)));
+  const cellH = (wrapH - (R - 1) * m.gap) / R;
+  grid.style.gridAutoRows = cellH + 'px';
+
+  for (const tile of tiles) {
+    applyRect(tile); // reset any previous stretch first
+    const bottom = tile.y + tile.h;
+    if (R - bottom <= FS_NEAR_ROWS && fsBottomMost(tile) && !fsSmallExempt(tile)) {
+      const entry = tileEls.get(tile.id);
+      if (entry) {
+        entry.el.style.gridRow = `${tile.y + 1} / span ${R - tile.y}`;
+        try { entry.instance?.onResize?.(tile.w, R - tile.y); } catch { /* module's problem */ }
+      }
+    }
+  }
+}
+
+function clearFullscreenFit() {
+  grid.style.gridTemplateColumns = '';
+  grid.style.gridAutoRows = '';
+  gridwrap.classList.remove('no-scroll');
+  for (const tile of tiles) {
+    applyRect(tile);
+    notifyResize(tile);
+  }
+}
+
+fsBtn.addEventListener('click', () => {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen?.().catch(() => {});
+  } else {
+    document.exitFullscreen?.().catch(() => {});
+  }
+});
+
+document.addEventListener('fullscreenchange', () => {
+  const active = Boolean(document.fullscreenElement);
+  document.body.classList.toggle('fullscreen', active);
+  if (active) {
+    closeSettingsPopovers();
+    menuHiddenBeforeFs = document.body.classList.contains('menu-hidden');
+    setMenuHidden(true, { persist: false }); // the menu auto-hides; its notch brings it back
+    // let the collapsed menubar's space settle before measuring
+    requestAnimationFrame(() => requestAnimationFrame(applyFullscreenFit));
+  } else {
+    setMenuHidden(menuHiddenBeforeFs, { persist: false });
+    clearFullscreenFit();
+  }
+});
+
+window.addEventListener('resize', () => {
+  if (document.body.classList.contains('fullscreen')) applyFullscreenFit();
+});
+
+// the menubar collapse animates, so the grid's final height arrives late
+topbar.addEventListener('transitionend', () => {
+  if (document.body.classList.contains('fullscreen')) applyFullscreenFit();
 });
 
 /* ── live updates from the admin page ───────────────────────────────── */
