@@ -1,10 +1,27 @@
 # ProdDash
 
 Modular production dashboard web app for Waters Church, developed in this repo.
-**Read [SPEC.md](SPEC.md) first — it is the authority on what to build**: the
-dashboard shell, the module system and its contract, the admin page, and the
-two initial modules ported from the reference forks below. The app lives at
-the repo root.
+The app lives at the repo root and is built: zero-dependency Node server
+(`server.js`, Node 18+), dashboard shell client in `public/`, admin page at
+`/admin`, modules in `modules/`. [SPEC.md](SPEC.md) was the authority for the
+initial build; [README.md](README.md) has run/configure/use instructions.
+
+## Building a new module — read docs/MODULE-GUIDE.md first
+
+**[docs/MODULE-GUIDE.md](docs/MODULE-GUIDE.md) is the authority on the module
+contract** (manifest, client factory + moduleApi, optional server entry,
+title-bar controls). The rules that matter most:
+
+- A module is one self-contained folder in `modules/` — **never modify the
+  shell** (`server.js`, `public/`) to add one. Installation = drop the folder,
+  restart, configure in `/admin`.
+- Browsers never call upstream services directly; the module's server routes
+  proxy everything (no CORS, secrets stay server-side).
+- Style with the shell's CSS variables only, scoped under
+  `[data-module="<id>"]`; survive upstream loss (reconnect + `setStatus`).
+- Verify against the guide's testing section and resilience checklist. Mocks
+  for the existing upstreams: `node tools/prodcom-mock.js` (ProdCom) and
+  `node band-lineup-display/tmp/pp-mock.js 1599` (ProPresenter).
 
 ## Reference code (read-only forks — don't develop these here)
 
