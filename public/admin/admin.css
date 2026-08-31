@@ -1,0 +1,154 @@
+/* ProdDash admin page — on top of the shell's style.css */
+
+body { overflow: auto; }
+
+.admin-tag {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 6px;
+  margin-left: 6px;
+  vertical-align: 2px;
+}
+
+#admin-main {
+  flex: 1;
+  overflow-y: auto;
+  width: min(720px, 100%);
+  margin: 0 auto;
+  padding: 18px 16px 60px;
+}
+
+.admin-h1 {
+  font-size: 16px;
+  margin: 22px 0 6px;
+}
+
+.admin-copy {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 14px;
+}
+
+.admin-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+
+.admin-card h2 { font-size: 14px; margin-bottom: 8px; }
+
+.login-row { display: flex; gap: 8px; }
+.login-row input {
+  flex: 1;
+  padding: 8px 10px;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+.login-row input:focus { outline: none; border-color: var(--accent); }
+
+.module-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.module-head .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+.module-head .dot.ok { background: var(--accent); box-shadow: 0 0 5px var(--accent); }
+.module-head .dot.connecting { background: var(--warn); }
+.module-head .dot.error { background: var(--danger); }
+
+.module-name { font-size: 14px; font-weight: 700; }
+.module-version { color: var(--muted); font-size: 11px; }
+.module-head .spacer { flex: 1; }
+
+.module-desc { color: var(--muted); font-size: 12px; margin: 6px 0 2px; }
+
+.module-health {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+  min-height: 15px;
+}
+.module-health.error { color: var(--danger); }
+
+.module-mount-error {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.module-form { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px; }
+.module-form .field { max-width: 420px; }
+.module-form-empty { color: var(--muted); font-size: 12px; margin-top: 10px; }
+
+.module-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.admin-status { min-height: 16px; font-size: 12px; color: var(--muted); margin-top: 8px; }
+.admin-status.error { color: var(--danger); }
+.admin-status.ok { color: var(--accent); }
+
+/* enable/disable switch */
+.switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  user-select: none;
+}
+.switch input { position: absolute; opacity: 0; pointer-events: none; }
+.switch .track {
+  width: 34px;
+  height: 19px;
+  border-radius: 999px;
+  background: var(--border);
+  position: relative;
+  transition: background 0.2s;
+  flex: none;
+}
+.switch .track::after {
+  content: "";
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 15px; height: 15px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.2s, background 0.2s;
+}
+.switch input:checked + .track { background: var(--accent); }
+.switch input:checked + .track::after { transform: translateX(15px); background: var(--bg); }
+
+.layout-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 8px;
+}
+.layout-row .name { flex: 1; font-size: 13px; font-weight: 600; }
+.layout-row .meta { color: var(--muted); font-size: 11px; }
+.layouts-empty { color: var(--muted); font-size: 13px; }

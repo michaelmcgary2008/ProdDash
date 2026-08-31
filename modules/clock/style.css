@@ -1,0 +1,25 @@
+/* Clock module — scoped under its tile via [data-module="clock"], styled
+   with the shell's CSS variables only. */
+
+[data-module="clock"] .clock-wrap {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2%;
+}
+
+[data-module="clock"] .clock-time {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  line-height: 1;
+}
+
+[data-module="clock"] .clock-date {
+  color: var(--muted);
+  font-weight: 600;
+}

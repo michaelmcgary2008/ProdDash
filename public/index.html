@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ProdDash</title>
+  <meta name="theme-color" content="#0b0e12">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/icons/icon-180.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="ProdDash">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header id="topbar">
+    <span id="brand">Prod<span class="accent">Dash</span></span>
+
+    <span class="spacer"></span>
+
+    <div class="dropdown" id="add-dd">
+      <button class="tb-btn icon" id="add-btn" title="Add a module tile" aria-label="Add tile">＋</button>
+      <div class="menu" id="add-menu" hidden></div>
+    </div>
+
+    <div class="dropdown" id="layout-dd">
+      <button class="tb-btn icon" id="layout-btn" title="Save, load or reset layouts" aria-label="Layouts">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <rect x="3" y="3" width="8" height="8" rx="1.5"/>
+          <rect x="3" y="13" width="8" height="8" rx="1.5"/>
+          <rect x="13" y="3" width="8" height="18" rx="1.5"/>
+        </svg>
+      </button>
+      <div class="menu" id="layout-menu" hidden></div>
+    </div>
+
+    <a class="tb-btn" href="/admin/" title="Configure modules (server-wide)">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm8.4-2.1.1-1.4-.1-1.4 1.7-1.3-1.6-2.8-2 .7a7.9 7.9 0 0 0-2.4-1.4l-.3-2.1H11l-.3 2.1a7.9 7.9 0 0 0-2.4 1.4l-2-.7L4.7 9.3 6.4 10.6l-.1 1.4.1 1.4-1.7 1.3 1.6 2.8 2-.7a7.9 7.9 0 0 0 2.4 1.4l.3 2.1h2.8l.3-2.1a7.9 7.9 0 0 0 2.4-1.4l2 .7 1.6-2.8-1.7-1.3Z"/>
+      </svg>
+      Admin
+    </a>
+  </header>
+
+  <main id="gridwrap">
+    <div id="grid">
+      <div id="empty-state">No tiles yet — use “＋ Add tile” to build this dashboard.<br>
+        Every browser keeps its own layout.</div>
+    </div>
+  </main>
+
+  <div id="modal-backdrop" hidden>
+    <div id="modal" role="dialog" aria-modal="true"></div>
+  </div>
+
+  <div id="toast" hidden></div>
+
+  <script type="module" src="/shell.js"></script>
+</body>
+</html>
