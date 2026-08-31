@@ -43,12 +43,17 @@ const STALE_MS = 2500;
 
 const WS_MAGIC = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
+const ZERO_UID = '00000000-0000-0000-0000-000000000000';
+/** Timecode-shaped text: a fourth (frames) group separates it from timers. */
+const TC_SHAPE = /^-?\d{1,2}:\d{2}:\d{2}[:;.]\d{1,3}$/;
+
 /**
  * @param {{host:string, port:number, password:string, log:Function,
+ *          isTimerUid?:(uid:string)=>boolean,
  *          onUpdate:(ltc:{bound:boolean,time:string,receiving:boolean,note:string})=>void}} opts
  * @returns {{stop:()=>void}}
  */
-function createStageLtcClient({ host, port, password, log, onUpdate }) {
+function createStageLtcClient({ host, port, password, log, isTimerUid, onUpdate }) {
   let sock = null;
   let stopped = false;
   let reconnectTimer = null;
@@ -56,6 +61,9 @@ function createStageLtcClient({ host, port, password, log, onUpdate }) {
   let staleTimer = null;
 
   let ltcUid = '';          // uid of the frame labeled LTC, once bound
+  let boundBy = '';         // 'label' (layout frame) or 'heuristic' (sniffed)
+  let candidateUid = '';    // heuristic candidate awaiting a second, advancing sample
+  let candidateText = '';
   let lastText = '';
   let lastAdvance = 0;
   // Known-but-unused message types; anything else is logged once so a new
@@ -119,6 +127,7 @@ function createStageLtcClient({ host, port, password, log, onUpdate }) {
       if (frame && frame.uid) {
         if (ltcUid !== frame.uid) {
           ltcUid = String(frame.uid);
+          boundBy = 'label';
           log(`stage display: bound LTC to field "${frame.nme}" (${ltcUid}) in layout "${layout.nme || layout.uid}"`);
           emit({ receiving: false });
         }
@@ -128,8 +137,14 @@ function createStageLtcClient({ host, port, password, log, onUpdate }) {
         log(`stage display: layout "${layout.nme}" has an LTC field with no uid — it never streams; link it to a timecode/timer source`);
       }
     }
+    // Verified on ProPresenter 21.4: the legacy protocol (the only version
+    // it accepts, ptl 610) omits stage objects it predates — a timecode
+    // field never appears in any layout's frame list. So a heuristic
+    // binding sniffed from the live stream must survive layout refreshes.
+    if (boundBy === 'heuristic' && ltcUid) return;
     ltcUid = '';
-    emit({ bound: false, time: '', note: 'No stage layout field labeled "LTC"' });
+    boundBy = '';
+    emit({ bound: false, time: '', note: 'No LTC field visible on the stage-display feed' });
   }
 
   function handleMessage(obj) {
@@ -165,6 +180,23 @@ function createStageLtcClient({ host, port, password, log, onUpdate }) {
         return;
       default:
         break;
+    }
+    // Heuristic fallback: with no LTC-labeled frame to bind to, an unknown
+    // uid streaming timecode-shaped text (a fourth :FF group — timers never
+    // have one) that is NOT a configured timer can only be the timecode
+    // field. Require two advancing samples before trusting it.
+    if (!ltcUid && obj.uid && obj.uid !== ZERO_UID && typeof obj.txt === 'string'
+      && TC_SHAPE.test(obj.txt.trim()) && !(isTimerUid && isTimerUid(obj.uid))) {
+      if (candidateUid === obj.uid && candidateText !== obj.txt) {
+        ltcUid = String(obj.uid);
+        boundBy = 'heuristic';
+        log(`stage display: no LTC-labeled field in any layout, but ${obj.uid} streams timecode-shaped text (acn "${acn}") — binding it as LTC`);
+        // fall through to the normal update path below
+      } else {
+        candidateUid = String(obj.uid);
+        candidateText = obj.txt;
+        return;
+      }
     }
     // Anything carrying our bound uid is the LTC text, whatever its acn —
     // ProPresenter 21's tag for timecode fields is undocumented.

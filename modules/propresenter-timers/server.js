@@ -308,6 +308,9 @@ module.exports = {
         port,
         password: String(config.stagePassword || ''),
         log,
+        // The HTTP poller knows every configured timer's uuid — anything
+        // else streaming timecode-shaped text can be heuristically bound.
+        isTimerUid: (uid) => timerConfigs.has(uid),
         onUpdate(update) {
           stageLtc = update;
           broadcast();

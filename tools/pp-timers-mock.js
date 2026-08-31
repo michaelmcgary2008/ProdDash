@@ -46,6 +46,9 @@ const NO_LTC = args.includes('--no-ltc');
 const DROP = new Set(args.flatMap((a) => (a.startsWith('--drop=') ? a.slice(7).split(',') : [])));
 const STAGE_PWD = (args.find((a) => a.startsWith('--stage-pwd=')) || '').slice(12);
 const NO_LTC_FIELD = args.includes('--no-ltc-field');
+// Like real ProPresenter 21: the layout list omits the timecode field, but
+// its updates still stream — exercises the module's heuristic binding.
+const LTC_UNLISTED = args.includes('--ltc-unlisted');
 const FPS = 30;
 
 const startedAt = Date.now();
@@ -164,7 +167,7 @@ const STAGE_LAYOUT = {
   nme: 'Timers',
   fme: [
     { nme: 'Current Slide', typ: 1 },
-    ...(NO_LTC_FIELD ? [] : [{ nme: 'LTC', typ: 7, uid: 'LTC-FIELD' }]),
+    ...(NO_LTC_FIELD || LTC_UNLISTED ? [] : [{ nme: 'LTC', typ: 7, uid: 'LTC-FIELD' }]),
     { nme: 'Sermon Countdown', typ: 7, uid: 'T1-SERMON' },
   ],
 };
