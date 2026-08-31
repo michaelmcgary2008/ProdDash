@@ -18,6 +18,11 @@
       "type": "password",
       "label": "API password (only if set in ProPresenter)",
       "default": ""
+    },
+    "stagePassword": {
+      "type": "password",
+      "label": "Stage display password (for LTC — ProPresenter Settings → Network)",
+      "default": ""
     }
   }
 }
