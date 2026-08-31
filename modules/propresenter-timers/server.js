@@ -314,6 +314,35 @@ module.exports = {
     };
   },
 
+  /**
+   * The Add-tile picker's entries: one per discovered timer, plus "All
+   * timers" and the LTC card (moduleApi.variant carries the entry id —
+   * 'all', 'timer:<uuid>' or 'ltc'). Answered from the poller's latest
+   * state, never from a fresh upstream request — the picker must stay
+   * instant, and a dead ProPresenter must not stall it.
+   */
+  tiles() {
+    const state = current ? current.getLatest() : null;
+    if (!state || !state.enabled) return []; // unconfigured → classic single entry
+    const TYPE_LABEL = {
+      countdown: 'Countdown timer',
+      countdown_to_time: 'Countdown to a time of day',
+      elapsed: 'Elapsed timer',
+      unknown: 'Timer',
+    };
+    const oneCard = { defaultSize: { w: 3, h: 2 }, minSize: { w: 2, h: 1 } };
+    return [
+      { id: 'all', name: 'All timers', description: 'Every timer and the LTC timecode, selectable per tile' },
+      ...state.timers.map((t) => ({
+        id: `timer:${t.uuid}`,
+        name: t.name,
+        description: TYPE_LABEL[t.type] || 'Timer',
+        ...oneCard,
+      })),
+      { id: 'ltc', name: 'LTC timecode', description: 'Incoming timecode (HH:MM:SS:FF)', ...oneCard },
+    ];
+  },
+
   routes() {
     return {
       'GET /state': (req, res) => {

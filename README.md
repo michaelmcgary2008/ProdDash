@@ -88,9 +88,11 @@ are written by the app itself.
   driven by the shared `propresenter-core` client (ProPresenter 7/20).
   Admin config: host, port, password.
 - **Timers** — live ProPresenter timers (countdown, countdown-to-time,
-  elapsed) and LTC timecode as auto-sized cards; each tile picks which to
-  show via its "Timers ▾" menu, overruns are unmistakably red. Read-only —
-  no start/stop controls. Admin config: host, port, password.
+  elapsed) and LTC timecode as auto-sized cards. The ＋ picker lists every
+  discovered timer (and the LTC card) as its own tile, or add "All timers"
+  and pick a selection via the tile's "Timers ▾" menu; overruns are
+  unmistakably red. Read-only — no start/stop controls. Admin config: host,
+  port, password.
 - **Clock** — a big booth clock; also the smallest possible module and the
   reference for module authors.
 

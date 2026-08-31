@@ -63,6 +63,7 @@
    that message must never be hidden. */
 [data-module="propresenter-timers"] .tm-compact .tm-card .tm-state { display: none; }
 [data-module="propresenter-timers"] .tm-compact .tm-card-ltc.is-ltc-unavailable .tm-state { display: block; }
+[data-module="propresenter-timers"] .tm-compact .tm-card.is-missing .tm-state { display: block; }
 
 /* ── one timer card ── */
 
@@ -138,6 +139,11 @@
 }
 [data-module="propresenter-timers"] .tm-card.is-complete .tm-time { color: var(--warn); }
 [data-module="propresenter-timers"] .tm-card.is-complete .tm-state { color: var(--warn); }
+
+/* A solo tile whose timer was deleted in ProPresenter. */
+[data-module="propresenter-timers"] .tm-card.is-missing { border-style: dashed; }
+[data-module="propresenter-timers"] .tm-card.is-missing .tm-time { color: var(--muted); }
+[data-module="propresenter-timers"] .tm-card.is-missing .tm-state { color: var(--warn); }
 
 /* Overrun: readable across the room even on a wall display. */
 [data-module="propresenter-timers"] .tm-card.is-overrun {

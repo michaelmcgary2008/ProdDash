@@ -3,7 +3,7 @@
  * propresenter-timers module without a live ProPresenter (the older
  * band-lineup-display/tmp/pp-mock.js simulates slides, not timers).
  *
- *   node tools/pp-timers-mock.js [port] [--no-ltc]
+ *   node tools/pp-timers-mock.js [port] [--no-ltc] [--drop=<uuid,...>]
  *
  * Serves the endpoint shapes verified against openapi.propresenter.com:
  *   GET /version            (reachability probe)
@@ -19,6 +19,10 @@
  *                           Pass --no-ltc to 404 it and exercise the
  *                           "not available on this ProPresenter" path.
  *
+ * --drop=<uuid,...> omits those timers from both timer endpoints — restart
+ * the mock with e.g. --drop=T2-WALKIN to simulate a timer being deleted in
+ * ProPresenter (a solo tile for it must say so, not error).
+ *
  * Every incoming request is logged so we can confirm what the module fetches.
  */
 'use strict';
@@ -28,6 +32,7 @@ const http = require('http');
 const args = process.argv.slice(2);
 const PORT = Number.parseInt(args.find((a) => /^\d+$/.test(a)) || '1600', 10);
 const NO_LTC = args.includes('--no-ltc');
+const DROP = new Set(args.flatMap((a) => (a.startsWith('--drop=') ? a.slice(7).split(',') : [])));
 const FPS = 30;
 
 const startedAt = Date.now();
@@ -128,8 +133,8 @@ const server = http.createServer((req, res) => {
   if (p === '/version') {
     return sendJson(res, { name: 'NA-ProP (timers mock)', platform: 'mac', host_description: 'ProPresenter 20.0.1', api_version: 'v1' });
   }
-  if (p === '/v1/timers') return sendJson(res, TIMERS);
-  if (p === '/v1/timers/current') return sendJson(res, currentTimes());
+  if (p === '/v1/timers') return sendJson(res, TIMERS.filter((t) => !DROP.has(t.id.uuid)));
+  if (p === '/v1/timers/current') return sendJson(res, currentTimes().filter((t) => !DROP.has(t.id.uuid)));
   if (p === '/v1/timecode/status' && !NO_LTC) return sendJson(res, timecodeStatus());
 
   sendJson(res, { error: 'not found' }, 404);

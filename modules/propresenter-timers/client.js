@@ -18,6 +18,17 @@ export default function create({ root, moduleApi }) {
   let resizeObserver = null;
   let hiddenItems = new Set(moduleApi.instanceSettings.hiddenItems || []);
 
+  // Which picker entry this tile was added as (the module's tiles() list):
+  // '' or 'all' = every item, selectable via the Timers ▾ menu;
+  // 'timer:<uuid>' or 'ltc' = exactly one card, no menu.
+  const variant = String(moduleApi.variant || '');
+  const soloKey = variant === 'ltc' ? LTC_KEY
+    : variant.startsWith('timer:') ? variant.slice('timer:'.length)
+      : '';
+  /** Last name seen for a solo timer, so its card stays labeled if the
+      timer is later deleted in ProPresenter. */
+  let lastSoloName = '';
+
   /* ── DOM skeleton ───────────────────────────────────────────────── */
 
   root.innerHTML = `
@@ -38,7 +49,7 @@ export default function create({ root, moduleApi }) {
   /* ── title-bar menu: pick which timers / LTC this tile shows ────── */
 
   let menuEl = null; // the open menu's element (filled on each open)
-  const itemsMenu = moduleApi.header.addMenu({
+  const itemsMenu = soloKey ? null : moduleApi.header.addMenu({
     label: 'Timers ▾',
     title: 'Choose which timers this tile shows',
     build(menu) {
@@ -67,6 +78,7 @@ export default function create({ root, moduleApi }) {
   }
 
   function updateMenuLabel() {
+    if (!itemsMenu) return;
     const rows = menuRows();
     const visible = rows.filter((r) => !hiddenItems.has(r.key)).length;
     itemsMenu.setLabel(visible === rows.length
@@ -131,11 +143,23 @@ export default function create({ root, moduleApi }) {
   }
 
   function visibleItems() {
+    const ltcState = state?.ltc || { supported: null, time: '', receiving: false };
+    if (soloKey === LTC_KEY) return [{ key: LTC_KEY, ltc: ltcState }];
+    if (soloKey) {
+      const timer = (state?.timers || []).find((t) => t.uuid === soloKey);
+      if (timer) {
+        lastSoloName = timer.name;
+        return [{ key: soloKey, timer }];
+      }
+      // The timer this tile was added for isn't in ProPresenter's list (yet,
+      // or any more) — keep a clearly-labeled card up rather than erroring.
+      return [{ key: soloKey, missing: true }];
+    }
     const items = [];
     for (const t of state?.timers || []) {
       if (!hiddenItems.has(t.uuid)) items.push({ key: t.uuid, timer: t });
     }
-    if (!hiddenItems.has(LTC_KEY)) items.push({ key: LTC_KEY, ltc: state?.ltc || { supported: null, time: '', receiving: false } });
+    if (!hiddenItems.has(LTC_KEY)) items.push({ key: LTC_KEY, ltc: ltcState });
     return items;
   }
 
@@ -156,6 +180,21 @@ export default function create({ root, moduleApi }) {
     }
     el.append(nameEl, timeEl, stateEl);
     return { el, nameEl, timeEl, stateEl };
+  }
+
+  /** A solo tile whose timer vanished from ProPresenter's list. While the
+      server is unreachable the list is merely unknown — the banner already
+      says so, so only claim "not in ProPresenter" when actually connected. */
+  function updateMissingCard(card) {
+    card.nameEl.textContent = lastSoloName || 'Timer';
+    card.timeEl.textContent = '—';
+    if (state?.reachable) {
+      card.stateEl.textContent = 'Not in ProPresenter';
+      card.el.className = 'tm-card is-missing';
+    } else {
+      card.stateEl.textContent = '—';
+      card.el.className = 'tm-card is-stopped';
+    }
   }
 
   function updateTimerCard(card, timer) {
@@ -254,6 +293,7 @@ export default function create({ root, moduleApi }) {
         structureChanged = true;
       }
       if (item.ltc) updateLtcCard(card, item.ltc);
+      else if (item.missing) updateMissingCard(card);
       else updateTimerCard(card, item.timer);
     }
     // Keep DOM order in step with the state's order (config-list order).
