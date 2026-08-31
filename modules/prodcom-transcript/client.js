@@ -296,11 +296,17 @@ export default function create({ root, moduleApi }) {
       const text = document.createElement('span');
       text.className = 'text';
 
+      // channel name with its timestamp to the right; the clock button
+      // only toggles the timestamp's visibility
+      const chLine = document.createElement('span');
+      chLine.className = 'channel-line';
+      chLine.append(ch, time);
+
       const body = document.createElement('div');
       body.className = 'body';
-      body.append(ch, text);
+      body.append(chLine, text);
 
-      el.append(time, avatar, body);
+      el.append(avatar, body);
       entryEls.set(id, el);
       applyFilter(el);
       entriesEl.appendChild(el);

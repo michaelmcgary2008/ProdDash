@@ -39,12 +39,50 @@ button { font-family: inherit; }
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 12px;
+  height: 46px;
+  padding: 0 12px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   user-select: none;
   -webkit-user-select: none;
+  transition: height 0.22s ease, border-bottom-width 0.22s ease;
 }
+/* collapsed by its notch (and automatically in fullscreen) */
+body.menu-hidden #topbar {
+  height: 0;
+  border-bottom-width: 0;
+  overflow: hidden;
+}
+
+/* the menubar's own show/hide tab, same as the tile notches */
+#topbar-notch {
+  position: fixed;
+  top: var(--topbar-h, 46px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 54px;
+  height: 14px;
+  padding: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 10px 10px;
+  cursor: pointer;
+  z-index: 60;
+  opacity: 0.35;
+  transition: opacity 0.15s ease, top 0.22s ease;
+}
+#topbar-notch:hover { opacity: 1; }
+#topbar-notch::after {
+  content: "";
+  display: block;
+  width: 20px;
+  height: 3px;
+  margin: 4px auto 0;
+  border-radius: 999px;
+  background: var(--muted);
+}
+#topbar-notch:hover::after { background: var(--text); }
 
 #brand {
   font-weight: 800;
@@ -207,9 +245,15 @@ button { font-family: inherit; }
   user-select: none;
   -webkit-user-select: none;
   touch-action: none;
+  transition: height 0.22s ease, border-bottom-width 0.22s ease;
 }
 .tile.dragging .tile-head { cursor: grabbing; }
-.tile.head-hidden .tile-head { display: none; }
+/* hidden = collapsed, not removed, so the notch toggle animates */
+.tile.head-hidden .tile-head {
+  height: 0;
+  border-bottom-width: 0;
+  overflow: hidden;
+}
 
 .tile-head .dot {
   flex: none;
@@ -305,7 +349,7 @@ button { font-family: inherit; }
   cursor: pointer;
   z-index: 6;
   opacity: 0;
-  transition: opacity 0.15s ease, top 0.15s ease;
+  transition: opacity 0.15s ease, top 0.22s ease;
 }
 .tile:hover .tile-notch { opacity: 0.6; }
 .tile .tile-notch:hover { opacity: 1; }
@@ -329,29 +373,42 @@ button { font-family: inherit; }
   overflow: hidden;
 }
 
-.tile-resize {
+.tile-resize,
+.tile-resize-left {
   position: absolute;
-  right: 0;
   bottom: 0;
   width: 20px;
   height: 20px;
-  cursor: nwse-resize;
   touch-action: none;
   z-index: 5;
   color: var(--muted);
-  opacity: 0.6;
+  opacity: 0; /* corner indicators only show while hovering the tile */
+  transition: opacity 0.15s ease;
 }
-.tile-resize:hover { opacity: 1; color: var(--text); }
-.tile-resize::after {
+.tile-resize { right: 0; cursor: nwse-resize; }
+.tile-resize-left { left: 0; cursor: nesw-resize; }
+.tile:hover .tile-resize,
+.tile:hover .tile-resize-left { opacity: 0.6; }
+.tile .tile-resize:hover,
+.tile .tile-resize-left:hover { opacity: 1; color: var(--text); }
+.tile-resize::after,
+.tile-resize-left::after {
   content: "";
   position: absolute;
-  right: 4px;
   bottom: 4px;
   width: 9px;
   height: 9px;
-  border-right: 2px solid currentColor;
   border-bottom: 2px solid currentColor;
+}
+.tile-resize::after {
+  right: 4px;
+  border-right: 2px solid currentColor;
   border-radius: 0 0 3px 0;
+}
+.tile-resize-left::after {
+  left: 4px;
+  border-left: 2px solid currentColor;
+  border-radius: 0 0 0 3px;
 }
 
 /* ── seam divider between adjacent tiles ───────────────────────────── */
@@ -388,6 +445,16 @@ button { font-family: inherit; }
 /* Hide the pills while a tile itself is being moved or corner-resized —
    they're rebuilt for the new geometry on release. */
 #grid.no-dividers .tile-divider { display: none; }
+
+/* ── fullscreen mode ───────────────────────────────────────────────── */
+
+/* Fullscreen is a viewing mode: the layout auto-fits the screen, so the
+   editing affordances (corner handles, seam pills) are parked. */
+body.fullscreen .tile-resize,
+body.fullscreen .tile-resize-left,
+body.fullscreen .tile-divider { display: none; }
+body.fullscreen #grid { padding-bottom: 0; }
+#gridwrap.no-scroll { overflow-y: hidden; }
 
 /* status message a module can show while degraded (also used by the shell
    when a module fails to load) */
@@ -544,5 +611,5 @@ button { font-family: inherit; }
 }
 
 @media (max-width: 560px) {
-  #topbar { padding: 6px 8px; flex-wrap: wrap; }
+  #topbar { padding: 0 8px; gap: 6px; }
 }

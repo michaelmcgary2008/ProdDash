@@ -19,6 +19,13 @@
 
     <span class="spacer"></span>
 
+    <button class="tb-btn icon" id="fs-btn" title="Fullscreen — auto-fits the layout to the screen" aria-label="Fullscreen">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 9V5a1 1 0 0 1 1-1h4"/><path d="M20 9V5a1 1 0 0 0-1-1h-4"/>
+        <path d="M4 15v4a1 1 0 0 0 1 1h4"/><path d="M20 15v4a1 1 0 0 1-1 1h-4"/>
+      </svg>
+    </button>
+
     <div class="dropdown" id="add-dd">
       <button class="tb-btn icon" id="add-btn" title="Add a module tile" aria-label="Add tile">＋</button>
       <div class="menu" id="add-menu" hidden></div>
@@ -42,6 +49,8 @@
       Admin
     </a>
   </header>
+
+  <button id="topbar-notch" title="Hide / show the menu bar" aria-label="Hide or show the menu bar"></button>
 
   <main id="gridwrap">
     <div id="grid">
