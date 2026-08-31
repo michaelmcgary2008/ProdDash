@@ -59,6 +59,7 @@ shell code changes, ever.
 | `minSize`, `defaultSize` | no | Tile size in grid cells (12 columns wide; rows are ~72 px). Defaults: min 1×1, default 4×3. |
 | `configSchema` | no | **Admin config** — server-wide settings (URLs, ports, keys) edited once at `/admin` for everyone. |
 | `instanceSchema` | no | **Per-tile settings** — chosen in each tile's gear menu and stored with that browser's layout (filters, text sizes, display options). |
+| `tiles` | no | Fixed multi-tile list for client-only modules; server modules export a dynamic `tiles()` instead. See **Presenting multiple tiles**. |
 
 Both schemas map field names to specs:
 
@@ -107,6 +108,7 @@ export default function create({ root, moduleApi }) {
 | --- | --- |
 | `id` | Your module id. |
 | `instanceId` | Unique per tile — two tiles of the same module get different ids. Handy for keying anything per-tile. |
+| `variant` | For multi-tile modules: the id of the tile-list entry this tile was added as, `''` otherwise (see **Presenting multiple tiles**). |
 | `config` | Admin (server-wide) config, read-only, always current. Password fields are absent — they never reach the client. |
 | `instanceSettings` | This tile's settings: your `instanceSchema` defaults overlaid with whatever this tile has saved. Read it fresh whenever you render — don't cache it. |
 | `saveInstanceSettings(patch)` | Merge `patch` into this tile's settings and persist them with the layout. No restart happens — you made the change, you already know. Use it for state the user sets *inside* your tile (a toggled filter, a chosen tab). |
@@ -259,6 +261,50 @@ module.exports = {
 - A throw from `init()`/`routes()` marks the module as failed: the error
   shows in `/admin`, and API calls answer 502 until a config fix re-inits
   it. Validate config early so bad input fails loudly there.
+
+### Presenting multiple tiles
+
+By default a module is one entry in the ＋ Add-tile picker. A module can
+instead present a **list of tiles** — one picker entry each, grouped under
+the module's name. This is how a module whose content is naturally plural
+works: one tile per ProPresenter timer, one tile per admin-configured page.
+
+Export `tiles` from your server entry (sync or async):
+
+```js
+module.exports = {
+  init({ config, log }) { … },
+  routes({ config, log }) { … },
+
+  tiles({ config, log }) {
+    // e.g. derived from admin config, or discovered from your upstream
+    return config.pages.map((page) => ({
+      id: page.name,                    // stable id, stored with the tile
+      name: page.name,                  // picker label AND the tile's title
+      description: page.url,            // optional line under the label
+      settings: { page: page.name },    // preset instance settings
+      defaultSize: { w: 4, h: 3 },      // optional per-entry size overrides
+      minSize: { w: 2, h: 2 },
+    }));
+  },
+};
+```
+
+- `tiles()` runs on **every picker load**, so the list may be live data —
+  keep it fast (answer from state you already hold; don't fetch upstream on
+  demand). A throw or a hang (>2 s) falls back to the classic single entry,
+  so a dead upstream can't break the picker.
+- When the user adds an entry, its `settings` overlay your `instanceSchema`
+  defaults in that tile's instance settings, the entry's `name` becomes the
+  tile's title, and `moduleApi.variant` carries its `id`.
+- The tile keeps its variant id and title even if the entry later vanishes
+  from your list (a timer deleted in ProPresenter, a page removed in admin).
+  **Your client decides what that means** — show a clear "no longer
+  configured" state rather than erroring.
+- A client-only module can declare a fixed list as a `tiles` array in
+  `module.json` instead (same entry shape).
+- An empty list (or no `tiles` at all) keeps today's behavior: one picker
+  entry, no preset.
 
 ### Server-Sent Events from a module
 
