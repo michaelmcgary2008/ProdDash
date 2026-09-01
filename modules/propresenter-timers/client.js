@@ -207,11 +207,15 @@ export default function create({ root, moduleApi }) {
 
   function updateLtcCard(card, ltc) {
     let mode;
+    // Only the reader source knows the frame rate (decoded from the LTC
+    // bits); a set drop-frame flag implies 29.97 whatever fps rounds to.
+    const rate = ltc.df ? '29.97 DF' : ltc.fps ? `${ltc.fps} fps` : '';
     if (ltc.supported === false) {
       mode = 'unavailable';
       card.timeEl.textContent = '—';
       // The server says why when it knows (stage password rejected, no
-      // stage field labeled LTC, …) — surface that over the generic line.
+      // stage field labeled LTC, reader offline, …) — surface that over
+      // the generic line.
       card.stateEl.textContent = ltc.note || 'Timecode not available on this ProPresenter';
     } else if (ltc.supported === null) {
       mode = 'waiting';
@@ -220,19 +224,30 @@ export default function create({ root, moduleApi }) {
     } else if (ltc.receiving) {
       mode = 'receiving';
       card.timeEl.textContent = displayTime(ltc.time);
-      card.stateEl.textContent = 'Receiving';
+      card.stateEl.textContent = rate ? `Running · ${rate}` : 'Running';
+    } else if (ltc.status === 'stopped' || ltc.time) {
+      // LTC ceased but we know where it stopped — hold the last frame.
+      mode = 'stopped';
+      card.timeEl.textContent = displayTime(ltc.time);
+      card.stateEl.textContent = 'Stopped';
     } else {
       mode = 'nosignal';
-      card.timeEl.textContent = displayTime(ltc.time);
+      card.timeEl.textContent = '—';
       card.stateEl.textContent = 'No signal';
     }
-    card.el.className = `tm-card tm-card-ltc is-ltc-${mode}`;
+    // The reader posts independently of ProPresenter, so its card must not
+    // gray out with the rest when only ProPresenter is unreachable.
+    const live = ltc.source === 'reader' ? ' src-reader' : '';
+    card.el.className = `tm-card tm-card-ltc is-ltc-${mode}${live}`;
   }
 
   /* ── status dot + degraded banners ──────────────────────────────── */
 
   function renderStatus() {
     wrap.classList.toggle('is-stale', feedOffline || (state ? !state.reachable && state.enabled : false));
+    // The stale gray-out spares the reader-fed LTC card — unless the feed
+    // from the ProdDash server itself is down, when everything is stale.
+    wrap.classList.toggle('is-feed-down', feedOffline);
     if (feedOffline) {
       bannerEl.hidden = false;
       bannerEl.textContent = 'Not receiving updates from the ProdDash server.';
@@ -246,7 +261,10 @@ export default function create({ root, moduleApi }) {
     }
     if (!state.enabled) {
       bannerEl.hidden = true;
-      moduleApi.setStatus('error', 'No ProPresenter host configured — set one in Admin');
+      // The LTC reader feeds us with or without ProPresenter — an LTC-only
+      // setup is working, not broken.
+      if (state.ltc?.supported) moduleApi.setStatus('ok', 'LTC via reader — no ProPresenter host configured');
+      else moduleApi.setStatus('error', 'No ProPresenter host configured — set one in Admin');
       return;
     }
     if (!state.reachable) {
@@ -266,7 +284,7 @@ export default function create({ root, moduleApi }) {
     rebuildMenu();
 
     let hint = '';
-    if (state && !state.enabled) {
+    if (state && !state.enabled && !state.ltc?.supported) {
       hint = 'No ProPresenter connection — set the host and port in Admin.';
     }
     const items = hint ? [] : visibleItems();

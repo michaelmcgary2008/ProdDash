@@ -1,7 +1,7 @@
 {
   "id": "propresenter-timers",
   "name": "Timers",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Live ProPresenter timers and LTC timecode",
   "client": "client.js",
   "server": "server.js",
@@ -22,6 +22,11 @@
     "stagePassword": {
       "type": "password",
       "label": "Stage display password (for LTC — ProPresenter Settings → Network)",
+      "default": ""
+    },
+    "ingestToken": {
+      "type": "password",
+      "label": "LTC reader token (optional — must match tools/ltc-reader.js --token)",
       "default": ""
     }
   }

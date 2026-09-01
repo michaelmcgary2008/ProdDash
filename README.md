@@ -91,10 +91,20 @@ are written by the app itself.
   elapsed) and LTC timecode as auto-sized cards. The ＋ picker lists every
   discovered timer (and the LTC card) as its own tile, or add "All timers"
   and pick a selection via the tile's "Timers ▾" menu; overruns are
-  unmistakably red. LTC is read from a stage-display layout field labeled
-  "LTC" over ProPresenter's stage websocket (its HTTP API has no timecode
-  route). Read-only — no start/stop controls. Admin config: ProPresenter
-  endpoint (host : port), API password, stage display password.
+  unmistakably red. Read-only — no start/stop controls. Admin config:
+  ProPresenter endpoint (host : port), API password, stage display
+  password, LTC reader token.
+
+  LTC sources, best first (ProPresenter's HTTP API has no timecode route):
+  1. **The LTC audio feed itself** — run `tools/ltc-reader.js` on any
+     machine that can hear the LTC signal; it decodes the SMPTE frames from
+     a PCM pipe (ffmpeg/sox one-liners in its header) and POSTs
+     running/stopped/no-signal, the timecode, and the frame rate (incl.
+     29.97 drop-frame) to the module's `/ltc` ingest route. `--selftest`
+     checks the decoder; `--demo` feeds synthetic LTC end-to-end with no
+     audio hardware.
+  2. A stage-display layout field labeled "LTC", read over ProPresenter's
+     stage websocket — value and freshness only, no frame rate.
 - **Clock** — a big booth clock; also the smallest possible module and the
   reference for module authors.
 

@@ -10,6 +10,8 @@
  *
  *   GET /state   → { state: <state> }   (instant paint for new tiles)
  *   GET /stream  → SSE, `state` events  (change-detected, heartbeated)
+ *   POST /ltc    → LTC ingest: tools/ltc-reader.js decodes the actual LTC
+ *                  audio signal and reports { state, time, fps, df } here.
  *
  * Endpoints used, verified against openapi.propresenter.com (API v1):
  *   GET /v1/timers          → [ { id:{uuid,name,index}, allows_overrun,
@@ -28,10 +30,13 @@
  *     once per connection anyway so a future ProPresenter that adds it
  *     lights up without a module update.
  *
- * Because the HTTP API has no timecode, LTC actually comes from the classic
- * stage-display websocket (see stage-ws.js): a stage layout field labeled
- * "LTC" streams its text to us. Source precedence: the HTTP route if it ever
- * answers (authoritative), else the stage field, else "not available".
+ * Because the HTTP API has no timecode, LTC comes from two real sources:
+ * the external reader (POST /ltc — tools/ltc-reader.js decoding the LTC
+ * audio feed itself, ground truth while its reports are fresh) and the
+ * classic stage-display websocket (see stage-ws.js): a stage layout field
+ * labeled "LTC" streams its text to us. Source precedence: fresh reader
+ * ingest, else the HTTP route if it ever answers, else the stage field,
+ * else "not available".
  *
  * ProPresenter's built-in HTTP server is easily overwhelmed (see the hot-path
  * notes in ../propresenter-now-next/propresenter-core). So: requests run
@@ -51,6 +56,9 @@ const SLOW_EVERY = 4;
 const REQUEST_TIMEOUT_MS = 4000;
 /** SSE comment ping cadence — keeps idle connections alive through sleepy Wi-Fi. */
 const HEARTBEAT_MS = 15000;
+/** A reader report older than this no longer speaks for the LTC feed —
+    the reader posts at least 1×/s, so 6s of silence means it died. */
+const INGEST_STALE_MS = 6000;
 
 const { createStageLtcClient } = require('./stage-ws');
 
@@ -64,9 +72,11 @@ function clearedState(enabled) {
     lastError: '',
     timers: [],
     // supported: null = no verdict yet (probing, or ProPresenter
-    // unreachable); true once a timecode source is live; false when both
-    // sources came up empty (note says why, when we know).
-    ltc: { supported: null, time: '', receiving: false, source: '', note: '' },
+    // unreachable); true once a timecode source is live; false when every
+    // source came up empty (note says why, when we know). status is the
+    // richer verdict (running|stopped|nosignal); fps/df only when the
+    // source knows them (the reader decodes both from the LTC bits).
+    ltc: { supported: null, time: '', receiving: false, status: '', fps: 0, df: false, source: '', note: '' },
   };
 }
 
@@ -95,20 +105,72 @@ module.exports = {
     let ltcLast = { time: '', receiving: false };
     /** Live view of the stage-display websocket's LTC field (stage-ws.js). */
     let stageLtc = { bound: false, time: '', receiving: false, note: '' };
+    /** Latest POST /ltc report from the external reader, null until one lands. */
+    let ingest = null; // { state, time, fps, df, source, at }
+    let ingestExpiry = null;
 
-    /** One LTC verdict from both sources: HTTP route wins if it ever
-        answers (authoritative), else the stage-display field. */
+    /** One LTC verdict from all three sources. The external reader decodes
+        the LTC audio itself, so a fresh report from it is ground truth;
+        then the HTTP route if it ever answers; then the stage-display
+        field. Text sources don't know fps — receiving/frozen/empty maps
+        onto the same status vocabulary the reader uses. */
     function composeLtc() {
+      if (ingest && Date.now() - ingest.at < INGEST_STALE_MS) {
+        return {
+          supported: true,
+          source: 'reader',
+          time: ingest.time,
+          receiving: ingest.state === 'running',
+          status: ingest.state,
+          fps: ingest.fps,
+          df: ingest.df,
+          note: '',
+        };
+      }
+      const textStatus = (src) => (src.receiving ? 'running' : src.time ? 'stopped' : 'nosignal');
       if (ltcSupported === true) {
-        return { supported: true, source: 'api', time: ltcLast.time, receiving: ltcLast.receiving, note: '' };
+        return { supported: true, source: 'api', time: ltcLast.time, receiving: ltcLast.receiving, status: textStatus(ltcLast), fps: 0, df: false, note: '' };
       }
       if (stageLtc.bound) {
-        return { supported: true, source: 'stage', time: stageLtc.time, receiving: stageLtc.receiving, note: '' };
+        return { supported: true, source: 'stage', time: stageLtc.time, receiving: stageLtc.receiving, status: textStatus(stageLtc), fps: 0, df: false, note: '' };
       }
-      if (ltcSupported === null && !stageLtc.note) {
-        return { supported: null, source: '', time: '', receiving: false, note: '' };
+      if (ingest) {
+        // A reader reported once but went silent — likelier to be the
+        // story than anything the stage feed has to say.
+        return { supported: false, source: '', time: '', receiving: false, status: '', fps: 0, df: false, note: 'LTC reader offline' };
       }
-      return { supported: false, source: '', time: '', receiving: false, note: stageLtc.note || '' };
+      if (ltcSupported === null && !stageLtc.note && enabled) {
+        return { supported: null, source: '', time: '', receiving: false, status: '', fps: 0, df: false, note: '' };
+      }
+      return { supported: false, source: '', time: '', receiving: false, status: '', fps: 0, df: false, note: stageLtc.note || '' };
+    }
+
+    /** Timecode-shaped text — same shape rule as the other sources. */
+    const TC_SHAPE = /^-?\d{1,2}:\d{2}:\d{2}[:;.]\d{1,3}$/;
+    const INGEST_STATES = new Set(['running', 'stopped', 'nosignal']);
+
+    /** Validated apply of one POST /ltc body. Returns '' or a client error. */
+    function applyIngest(body) {
+      if (!body || typeof body !== 'object') return 'body must be a JSON object';
+      const state = INGEST_STATES.has(body.state) ? body.state : '';
+      if (!state) return 'state must be one of running|stopped|nosignal';
+      const time = typeof body.time === 'string' && TC_SHAPE.test(body.time.trim()) ? body.time.trim() : '';
+      if (state === 'running' && !time) return 'a running report needs a timecode-shaped time';
+      ingest = {
+        state,
+        time,
+        fps: Number.isFinite(body.fps) && body.fps > 0 && body.fps <= 120 ? Number(body.fps) : 0,
+        df: body.df === true,
+        source: String(body.source || '').slice(0, 60),
+        at: Date.now(),
+      };
+      // When the reader dies mid-run the card must not stay green forever —
+      // re-broadcast once this report goes stale so the fallbacks take over.
+      clearTimeout(ingestExpiry);
+      ingestExpiry = setTimeout(broadcast, INGEST_STALE_MS + 100);
+      ingestExpiry.unref?.();
+      broadcast();
+      return '';
     }
 
     function url(target) {
@@ -331,12 +393,13 @@ module.exports = {
     }, HEARTBEAT_MS);
     heartbeat.unref?.();
 
-    current = { streams, getLatest: () => latest };
+    current = { streams, getLatest: () => latest, ingest: applyIngest };
 
     return {
       stop() {
         stopped = true;
         clearTimeout(pollTimer);
+        clearTimeout(ingestExpiry);
         clearInterval(heartbeat);
         stageClient?.stop();
         for (const res of streams) {
@@ -346,11 +409,17 @@ module.exports = {
         if (current && current.streams === streams) current = null;
       },
       health() {
-        if (!enabled) return { status: 'error', message: 'No ProPresenter host configured' };
+        const ltcSource = { reader: ', LTC via reader', api: ', LTC via API', stage: ', LTC via stage display' };
+        if (!enabled) {
+          // The LTC reader posts to us regardless of ProPresenter — an
+          // LTC-only setup is half-configured but working.
+          if (latest.ltc.source === 'reader') return { status: 'ok', message: 'No ProPresenter host configured — LTC via reader only' };
+          return { status: 'error', message: 'No ProPresenter host configured' };
+        }
         if (latest.reachable) {
           const ltc = latest.ltc;
           const ltcNote = ltc.supported
-            ? (ltc.source === 'stage' ? ', LTC via stage display' : ', LTC via API')
+            ? (ltcSource[ltc.source] || '')
             : (ltc.note ? ` (${ltc.note})` : '');
           return { status: 'ok', message: `Polling ${host}:${port}, ${latest.timers.length} timer(s)${ltcNote}` };
         }
@@ -393,11 +462,45 @@ module.exports = {
     ];
   },
 
-  routes() {
+  routes({ config }) {
+    const sendJson = (res, code, body) => {
+      res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify(body));
+    };
     return {
       'GET /state': (req, res) => {
-        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-        res.end(JSON.stringify({ state: current ? current.getLatest() : clearedState(false) }));
+        sendJson(res, 200, { state: current ? current.getLatest() : clearedState(false) });
+      },
+
+      // The external LTC reader (tools/ltc-reader.js) reports here — the
+      // one route on this module that accepts writes, so it optionally
+      // carries a shared token (Admin → "LTC reader token").
+      'POST /ltc': (req, res) => {
+        const token = String(config.ingestToken || '');
+        if (token) {
+          const given = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+          if (given !== token) return void sendJson(res, 401, { error: 'bad or missing token' });
+        }
+        let body = '';
+        req.on('data', (chunk) => {
+          body += chunk;
+          if (body.length > 4096) {
+            sendJson(res, 413, { error: 'body too large' });
+            req.destroy();
+          }
+        });
+        req.on('end', () => {
+          if (!current) return void sendJson(res, 503, { error: 'module not mounted' });
+          let parsed;
+          try {
+            parsed = JSON.parse(body);
+          } catch {
+            return void sendJson(res, 400, { error: 'invalid JSON' });
+          }
+          const problem = current.ingest(parsed);
+          if (problem) return void sendJson(res, 400, { error: problem });
+          sendJson(res, 200, { ok: true });
+        });
       },
 
       'GET /stream': (req, res) => {
