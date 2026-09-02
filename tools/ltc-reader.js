@@ -6,10 +6,10 @@
  *
  * ProPresenter's APIs expose no timecode (see modules/propresenter-timers),
  * so this tool reads LTC where it actually lives: the audio signal. Pipe
- * mono PCM (signed 16-bit little-endian) into stdin from any capture
- * front-end; the decoded state is POSTed to the Timers module's /ltc
- * ingest route — ~4×/s while running, 1×/s as a keepalive otherwise, and
- * immediately on every state change.
+ * PCM (signed 16-bit little-endian) into stdin from any capture front-end;
+ * the decoded state is POSTed to the Timers module's /ltc ingest route —
+ * ~4×/s while running, 1×/s as a keepalive otherwise, and immediately on
+ * every state change.
  *
  *   macOS (ffmpeg; list input devices with
  *          `ffmpeg -f avfoundation -list_devices true -i ""`):
@@ -21,11 +21,23 @@
  *     ffmpeg -loglevel error -f dshow -i audio="<device name>" -ac 1 \
  *       -ar 48000 -f s16le - | node tools/ltc-reader.js
  *
+ * LTC on one input of a multichannel interface (a console bus, a Dante/
+ * MADI card, input 5 of a Scarlett 18i20…): do NOT downmix with -ac 1 —
+ * summing LTC with program audio corrupts the bit transitions. Capture the
+ * channels as they are and tell the reader which one carries LTC (1-based):
+ *     ffmpeg -loglevel error -f avfoundation -i ":0" -ar 48000 -f s16le - \
+ *       | node tools/ltc-reader.js --channels 18 --ch 5
+ *   (--channels must match what the capture actually emits; ffmpeg keeps
+ *    the device's native count unless -ac says otherwise, and prints it on
+ *    stderr at startup. sox: match its -c flag.)
+ *
  * Flags:
  *   --url <base>      ProdDash base URL          (default http://127.0.0.1:24500)
  *   --module <id>     target module id           (default propresenter-timers)
  *   --token <secret>  matches the module's "LTC reader token" admin setting
  *   --sr <hz>         stdin sample rate          (default 48000)
+ *   --channels <n>    interleaved channels in the stdin stream (default 1)
+ *   --ch <n>          which channel carries LTC, 1-based (default 1)
  *   --source <label>  reader label in reports    (default this machine's hostname)
  *   --demo            no audio needed: synthesize running 30 fps LTC (with a
  *                     stop every ~30 s) through the real decoder, and POST it
@@ -280,6 +292,33 @@ class LtcEncoder {
 
 /* ══ shared bits ═══════════════════════════════════════════════════════ */
 
+/**
+ * Turns a raw s16le byte stream of interleaved channels into one channel's
+ * samples. Chunks arrive split anywhere — mid-sample, mid-frame — so the
+ * tail that doesn't fill a whole frame (channels × 2 bytes) carries over;
+ * losing frame alignment would silently decode the wrong channel.
+ */
+class ChannelExtractor {
+  /** @param {number} channels interleaved channel count @param {number} ch 1-based pick */
+  constructor(channels, ch) {
+    this.frameBytes = channels * 2;
+    this.offset = (ch - 1) * 2;
+    this.carry = null;
+  }
+
+  /** @param {Buffer} buf @returns {Int16Array} the picked channel's samples */
+  push(buf) {
+    if (this.carry) buf = Buffer.concat([this.carry, buf]);
+    const usable = buf.length - (buf.length % this.frameBytes);
+    this.carry = buf.length > usable ? buf.subarray(usable) : null;
+    const out = new Int16Array(usable / this.frameBytes);
+    for (let i = 0, off = this.offset; i < out.length; i += 1, off += this.frameBytes) {
+      out[i] = buf.readInt16LE(off);
+    }
+    return out;
+  }
+}
+
 const pad2 = (v) => String(v).padStart(2, '0');
 const fmtTc = (tc) => `${pad2(tc.h)}:${pad2(tc.m)}:${pad2(tc.s)}:${pad2(tc.f)}`;
 
@@ -293,6 +332,8 @@ function parseArgs(argv) {
     module: 'propresenter-timers',
     token: '',
     sr: 48000,
+    channels: 1,
+    ch: 1,
     source: os.hostname(),
     demo: false,
     selftest: false,
@@ -305,11 +346,22 @@ function parseArgs(argv) {
     else if (a === '--module') args.module = String(argv[++i] || args.module);
     else if (a === '--token') args.token = String(argv[++i] || '');
     else if (a === '--sr') args.sr = Number(argv[++i]) || args.sr;
+    else if (a === '--channels') args.channels = Number(argv[++i]);
+    else if (a === '--ch') args.ch = Number(argv[++i]);
     else if (a === '--source') args.source = String(argv[++i] || args.source);
     else {
       console.error(`Unknown flag ${a} — see the header of tools/ltc-reader.js`);
       process.exit(2);
     }
+  }
+  // No upper bound on the channel count beyond sanity — MADI streams carry 64.
+  if (!Number.isInteger(args.channels) || args.channels < 1 || args.channels > 1024) {
+    console.error(`--channels must be a whole number of interleaved channels (got ${args.channels})`);
+    process.exit(2);
+  }
+  if (!Number.isInteger(args.ch) || args.ch < 1 || args.ch > args.channels) {
+    console.error(`--ch must be between 1 and ${args.channels} (the --channels count; got ${args.ch})`);
+    process.exit(2);
   }
   return args;
 }
@@ -422,6 +474,34 @@ function selftest() {
     check('decodes before the gap', before >= 25, `${before}`);
     check('recovers after the gap', after >= 25, `${after}`);
     check('no signal during the gap detected via signalPresent', !dec.signalPresent() || true); // informational
+  }
+
+  console.log('multichannel extraction (LTC on channel 5 of 8):');
+  {
+    // Interleave LTC into one channel of eight, with hot program audio on
+    // every other channel, and feed the byte stream in 997-byte chunks —
+    // odd on purpose, so chunk splits land mid-sample and mid-frame and
+    // the extractor's carry has to keep frame alignment.
+    const CH = 8;
+    const PICK = 5;
+    const enc = new LtcEncoder(SR, 30, false, { h: 4, m: 0, s: 0, f: 0 });
+    const ltc = enc.render(SR * 2); // 2 s ≈ 60 frames
+    const bytes = Buffer.alloc(ltc.length * CH * 2);
+    for (let i = 0; i < ltc.length; i += 1) {
+      for (let c = 0; c < CH; c += 1) {
+        const v = c === PICK - 1 ? ltc[i] : Math.round(20000 * Math.sin(i * (0.02 + c * 0.05)));
+        bytes.writeInt16LE(v, (i * CH + c) * 2);
+      }
+    }
+    const extractor = new ChannelExtractor(CH, PICK);
+    const out = [];
+    const dec = new LtcDecoder(SR, (f) => out.push(f));
+    for (let off = 0; off < bytes.length; off += 997) {
+      dec.push(extractor.push(bytes.subarray(off, Math.min(off + 997, bytes.length))));
+    }
+    check('decodes most frames', out.length >= 55, `${out.length}/60`);
+    check('starts at 04:00:00:0x', out.length > 0 && out[0].h === 4 && out[0].m === 0 && out[0].s === 0);
+    check('frames advance', sequential(out));
   }
 
   console.log(failures ? `\n${failures} check(s) FAILED` : '\nAll checks passed');
@@ -537,21 +617,15 @@ function main(args) {
     return;
   }
 
-  /* — stdin: s16le mono PCM from ffmpeg/sox/arecord — */
+  /* — stdin: s16le PCM from ffmpeg/sox/arecord — */
   if (process.stdin.isTTY) {
-    console.error('stdin is a terminal — pipe s16le mono PCM in (see the header for ffmpeg/sox lines), or use --demo / --selftest');
+    console.error('stdin is a terminal — pipe s16le PCM in (see the header for ffmpeg/sox lines), or use --demo / --selftest');
     process.exit(2);
   }
-  log(`reading s16le mono PCM at ${args.sr} Hz from stdin`);
-  let carry = null;
-  process.stdin.on('data', (buf) => {
-    if (carry) buf = Buffer.concat([carry, buf]);
-    const usable = buf.length & ~1;
-    carry = buf.length > usable ? buf.subarray(usable) : null;
-    const samples = new Int16Array(usable / 2);
-    for (let i = 0; i < samples.length; i += 1) samples[i] = buf.readInt16LE(i * 2);
-    decoder.push(samples);
-  });
+  log(`reading s16le PCM at ${args.sr} Hz from stdin`
+    + (args.channels > 1 ? `, ${args.channels} channels — decoding channel ${args.ch}` : ' (mono)'));
+  const extractor = new ChannelExtractor(args.channels, args.ch);
+  process.stdin.on('data', (buf) => decoder.push(extractor.push(buf)));
   process.stdin.on('end', () => {
     // The capture front-end died. Tell ProdDash the feed is gone, then exit
     // nonzero so a supervisor loop restarts the whole pipe.

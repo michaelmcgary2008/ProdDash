@@ -100,9 +100,11 @@ are written by the app itself.
      machine that can hear the LTC signal; it decodes the SMPTE frames from
      a PCM pipe (ffmpeg/sox one-liners in its header) and POSTs
      running/stopped/no-signal, the timecode, and the frame rate (incl.
-     29.97 drop-frame) to the module's `/ltc` ingest route. `--selftest`
-     checks the decoder; `--demo` feeds synthetic LTC end-to-end with no
-     audio hardware.
+     29.97 drop-frame) to the module's `/ltc` ingest route. LTC on one
+     input of a multichannel interface: capture all channels and pick one
+     with `--channels 18 --ch 5` — never downmix LTC into program audio.
+     `--selftest` checks the decoder; `--demo` feeds synthetic LTC
+     end-to-end with no audio hardware.
   2. A stage-display layout field labeled "LTC", read over ProPresenter's
      stage websocket — value and freshness only, no frame rate.
 - **Clock** — a big booth clock; also the smallest possible module and the
