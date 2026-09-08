@@ -18,7 +18,8 @@ touching the shell (see [docs/MODULE-GUIDE.md](docs/MODULE-GUIDE.md)).
    that's where module servers proxy ProdCom, poll ProPresenter, and stream
    live updates over SSE, so browsers never talk to production gear
    directly (no CORS, and API keys never leave the server).
-4. Stores server-wide module config and named layouts under `config/`.
+4. Stores server-wide module config and named layouts in a per-machine data
+   directory outside the app folder, so updating ProdDash never loses them.
 
 Each browser arranges its own tiles (add, drag, resize, remove, per-tile
 settings); the layout autosaves to that browser's `localStorage`. Named
@@ -47,16 +48,43 @@ enable/disable) live in the **admin page** — open **Admin** from the
 dashboard's top bar, or go to `/admin`. Saving re-initialises the module
 immediately; open tiles reconnect on their own.
 
-Shell settings live in [config/proddash.json](config/proddash.json):
+### Where settings are kept
+
+Everything you enter in the admin page (module connection settings, API keys,
+enabled/disabled flags) and every named layout is written to a **data
+directory on the machine running the server** — not into the app folder:
+
+| OS | Data directory |
+| --- | --- |
+| Windows | `%APPDATA%\ProdDash` (e.g. `C:\Users\<you>\AppData\Roaming\ProdDash`) |
+| macOS | `~/Library/Application Support/ProdDash` |
+| Linux | `$XDG_CONFIG_HOME/proddash`, else `~/.config/proddash` |
+
+Because it lives outside the checkout, you can `git pull`, re-clone, or reset
+the app folder from `main` and start the new version with everything still
+configured. The admin page shows the exact path in use, and the server prints
+it at startup (`Settings : …`).
+
+The directory holds `modules.json` (module config) and `layouts/` (named
+layouts), both written by the app itself. It may also hold a `proddash.json`
+with this machine's shell settings — the same keys as the checked-in
+[config/proddash.json](config/proddash.json), which supplies the defaults:
 
 | Key | Meaning |
 | --- | --- |
 | `port` | Port ProdDash serves on (default `24500`) |
 | `adminPasscode` | If set, the admin page asks for this shared passcode. Leave `""` for none — it's a plain-HTTP LAN tool. |
 
-Environment variables `PORT` and `PRODDASH_PASSCODE` override the file.
-`config/modules.json` (module config) and `config/layouts/` (named layouts)
-are written by the app itself.
+Environment variables override both files: `PORT`, `PRODDASH_PASSCODE`, and
+`PRODDASH_DATA_DIR` to put the data directory somewhere else (a relative path
+is taken from the app folder; `PRODDASH_DATA_DIR=config` restores the old
+in-repo location). If the default directory can't be created, the server says
+so and falls back to the app's `config/` folder.
+
+**Upgrading from an earlier version:** the first start copies an existing
+`config/modules.json` and `config/layouts/` from the app folder into the data
+directory, so nothing has to be re-entered. The old files are left in place and
+ignored from then on.
 
 ## Using the dashboard
 
@@ -130,7 +158,8 @@ ProdDash/
 │   ├── clock/
 │   ├── prodcom-transcript/
 │   └── propresenter-now-next/ (carries its own copy of propresenter-core)
-├── config/                    proddash.json + state written by the app
+├── config/                    proddash.json defaults (runtime state lives in the
+│                              per-machine data directory — see "Configure")
 ├── docs/MODULE-GUIDE.md       how to build and install a module
 ├── tools/prodcom-mock.js      mock ProdCom API for development
 ├── prodcom-listener/          reference fork — read-only, not served

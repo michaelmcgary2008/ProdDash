@@ -3,7 +3,10 @@
 Modular production dashboard web app for Waters Church, developed in this repo.
 The app lives at the repo root and is built: zero-dependency Node server
 (`server.js`, Node 18+), dashboard shell client in `public/`, admin page at
-`/admin`, modules in `modules/`. [SPEC.md](SPEC.md) was the authority for the
+`/admin`, modules in `modules/`. Runtime state (module config, named layouts)
+is written to a per-machine data directory outside the checkout
+(`PRODDASH_DATA_DIR` overrides; see README "Where settings are kept") — never
+add code that writes runtime state into the repo folder. [SPEC.md](SPEC.md) was the authority for the
 initial build; [README.md](README.md) has run/configure/use instructions.
 
 ## Building a new module — read docs/MODULE-GUIDE.md first

@@ -382,6 +382,11 @@ async function loadState() {
   }
   loginCard.hidden = true;
   modulesSection.hidden = false;
+  const storageNote = document.getElementById('storage-note');
+  if (state.dataDir) {
+    document.getElementById('storage-path').textContent = state.dataDir;
+    storageNote.hidden = false;
+  }
   modulesList.innerHTML = '';
   liveEls.clear();
   for (const mod of state.modules || []) {

@@ -35,6 +35,18 @@ body { overflow: auto; }
   margin-bottom: 14px;
 }
 
+.admin-storage { margin-top: -6px; font-size: 12px; }
+.admin-storage code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 5px;
+  overflow-wrap: anywhere;
+}
+
 .admin-card {
   background: var(--panel);
   border: 1px solid var(--border);
