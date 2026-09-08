@@ -83,7 +83,12 @@ class LtcDecoder {
     this.bits = new Uint8Array(80); // last 80 decoded bits, newest at [79]
     this.sync = 0; // last 16 bits as an integer, newest at bit 0
     this.fresh = 0; // bits decoded since the last reset — see bit()
-    this.maxFrame = 0; // highest frame number seen → nominal fps
+    this.prev = null; // previous valid frame, for rollover observation
+    this.nominal = 0; // nominal fps locked by two agreeing rollovers
+    this.rollCandidate = 0;
+    this.df = false; // drop-frame with two-frame hysteresis
+    this.dfPending = null;
+    this.dfRun = 0;
   }
 
   /** @param {Int16Array} samples */
@@ -120,10 +125,13 @@ class LtcDecoder {
   interval(t) {
     if (t > 1.9 * this.T) {
       // Silence gap or garbage — drop bit state, keep the period estimate
-      // (the stream that resumes is usually the same deck).
+      // (the stream that resumes is usually the same deck). Frame
+      // continuity broke, so rollover observation restarts too; the locked
+      // nominal survives — two agreeing rollovers re-lock a changed rate.
       this.halfAt = 0;
       this.sync = 0;
       this.fresh = 0;
+      this.prev = null;
       return;
     }
     if (t < 0.75 * this.T) {
@@ -163,27 +171,55 @@ class LtcDecoder {
       for (let i = 0; i < len; i += 1) v |= bits[start + i] << i;
       return v;
     };
-    const f = bcd(0, 4) + bcd(8, 2) * 10;
-    const s = bcd(16, 4) + bcd(24, 3) * 10;
-    const m = bcd(32, 4) + bcd(40, 3) * 10;
-    const h = bcd(48, 4) + bcd(56, 2) * 10;
-    if (f > 59 || s > 59 || m > 59 || h > 39) return; // corrupt frame
-    if (f > this.maxFrame) this.maxFrame = f;
-    const df = bits[10] === 1;
-    this.onFrame({ h, m, s, f, df, fps: this.fps(df) });
+    // Strict validation: LTC has no parity worth the name, so a bit error
+    // can produce a frame that "parses" — every field must be a legal BCD
+    // digit AND inside its hard ceiling, or the frame is dropped whole.
+    // (A lax check here once let a corrupt frames field of 35 through, and
+    // downstream fps logic reported 36 fps to the dashboard.)
+    const fu = bcd(0, 4);
+    const su = bcd(16, 4);
+    const mu = bcd(32, 4);
+    const hu = bcd(48, 4);
+    if (fu > 9 || su > 9 || mu > 9 || hu > 9) return;
+    const f = fu + bcd(8, 2) * 10;
+    const s = su + bcd(24, 3) * 10;
+    const m = mu + bcd(40, 3) * 10;
+    const h = hu + bcd(56, 2) * 10;
+    if (f > 29 || s > 59 || m > 59 || h > 23) return;
+
+    // Drop-frame flag with two-frame hysteresis — one corrupt-but-legal
+    // frame must not flash 29.97 DF across the dashboard.
+    const dfBit = bits[10] === 1;
+    this.dfRun = dfBit === this.dfPending ? this.dfRun + 1 : 1;
+    this.dfPending = dfBit;
+    if (this.dfRun >= 2) this.df = dfBit;
+
+    // Nominal rate from observed rollovers: the frame number that precedes
+    // an f=0-with-seconds-advance IS the rate minus one. Two consecutive
+    // agreeing rollovers lock it — a single corrupt frame can't fake two
+    // valid, correctly-successive frames twice, and a genuine rate change
+    // re-locks itself within two seconds.
+    if (this.prev && f === 0 && s === (this.prev.s + 1) % 60) {
+      const cand = this.prev.f + 1;
+      if (cand === 24 || cand === 25 || cand === 30) {
+        if (cand === this.rollCandidate) this.nominal = cand;
+        this.rollCandidate = cand;
+      }
+    }
+    this.prev = { h, m, s, f };
+    this.onFrame({ h, m, s, f, df: this.df, fps: this.fps(this.df) });
   }
 
   /**
-   * Nominal rate: the highest frame number is definitive once we've seen
-   * enough of a second (24/25/30); until then snap the measured bit clock.
+   * Nominal rate: locked by rollover consensus once two second-boundaries
+   * agree; until then snap the measured bit clock to a standard rate.
    * 29.97 vs 30 non-drop differ by 0.1% — beyond the bit-clock estimate's
    * accuracy — so non-drop 29.97 reads as 30. Drop-frame is exact: the DF
    * bit means 29.97.
    */
   fps(df) {
     if (df) return 29.97;
-    const fromCount = this.maxFrame >= 20 ? this.maxFrame + 1 : 0;
-    if (fromCount) return fromCount;
+    if (this.nominal) return this.nominal;
     const measured = this.sr / (this.T * 80);
     return [24, 25, 30].reduce((a, b) => (Math.abs(b - measured) < Math.abs(a - measured) ? b : a));
   }
@@ -432,7 +468,8 @@ function selftest() {
   {
     const out = roundTrip(29.97, true, { h: 0, m: 0, s: 59, f: 20 }, 90);
     check('decodes most frames', out.length >= 80, `${out.length}/90`);
-    check('df flag set', out.length > 0 && out.every((f) => f.df));
+    // hysteresis: the very first frame legitimately reports df=false
+    check('df flag set', out.length > 1 && out.slice(1).every((f) => f.df));
     check('skips :00:00 and :00:01', !out.some((f) => f.m === 1 && f.s === 0 && f.f < 2));
     check('lands on :00:02', out.some((f) => f.m === 1 && f.s === 0 && f.f === 2));
     check('fps reads 29.97', out.length > 0 && out[out.length - 1].fps === 29.97);
@@ -474,6 +511,41 @@ function selftest() {
     check('decodes before the gap', before >= 25, `${before}`);
     check('recovers after the gap', after >= 25, `${after}`);
     check('no signal during the gap detected via signalPresent', !dec.signalPresent() || true); // informational
+  }
+
+  console.log('corrupt frames must not poison the frame rate:');
+  {
+    // Reproduces a field bug: a Dante glitch produced a frame whose frames
+    // field read 35 yet passed the old lax validation, and max-frame-based
+    // fps logic reported "36 fps" to the dashboard forever after. Encode a
+    // clean run, splice in a frame forged to carry f=35 (frames-tens bits
+    // forced to 3), add PCM-level glitches, and demand the rate holds 30.
+    const enc = new LtcEncoder(SR, 30, false, { h: 6, m: 0, s: 0, f: 0 });
+    const clean1 = enc.render(SR); // ~30 valid frames
+    enc.bits = frameBits({ h: 6, m: 0, s: 1, f: 5 }, false);
+    enc.bits[8] = 1; // frames-tens bit 0
+    enc.bits[9] = 1; // frames-tens bit 1 → tens=3 → frames field reads 35
+    enc.bitIdx = 0;
+    const forged = enc.render(Math.ceil(SR / 30)); // one poisoned frame
+    const clean2 = enc.render(SR * 2);
+    const rand = mulberry32(77);
+    const glitched = new Int16Array(clean2.length);
+    glitched.set(clean2);
+    for (let at = SR / 4; at < glitched.length - 100; at += Math.floor(SR / 3)) {
+      for (let i = 0; i < 90; i += 1) glitched[at + i] = Math.round((rand() - 0.5) * 24000);
+    }
+    const out = [];
+    const dec = new LtcDecoder(SR, (fr) => out.push(fr));
+    for (const part of [clean1, forged, glitched]) {
+      for (let off = 0; off < part.length; off += 997) {
+        dec.push(part.subarray(off, Math.min(off + 997, part.length)));
+      }
+    }
+    check('still decodes through the damage', out.length >= 70, `${out.length}`);
+    check('no frame number above 29 survives', out.every((fr) => fr.f <= 29));
+    check('fps never exceeds 30', out.every((fr) => fr.fps <= 30), `saw ${Math.max(...out.map((fr) => fr.fps))}`);
+    check('fps ends locked at 30', out.length > 0 && out[out.length - 1].fps === 30);
+    check('df never flashes on', out.every((fr) => !fr.df));
   }
 
   console.log('multichannel extraction (LTC on channel 5 of 8):');
