@@ -90,10 +90,21 @@ ignored from then on.
 
 - **＋** — add any enabled module; multiple tiles of the same module are
   fine (e.g. two transcripts filtered to different channels).
-- Drag a tile by its **title bar** to move it; drag the **corner handle**
-  to resize; **✕** removes it. Tiles sit flush — when two share an edge,
-  hover the seam and a small grab pill appears; drag it to trade width
-  between the two tiles (macOS split-view style).
+- Drag a tile by its **title bar** to move it; drag either **bottom
+  corner** to resize; **✕** removes it. Hover a tile and a small pill
+  appears on its **bottom edge** — drag it to change just the height. If
+  another tile sits directly below, the pill moves the shared edge instead,
+  trading rows between the two so the column keeps its total height. Tiles
+  sit flush — when two share a vertical edge, hover the seam and the same
+  kind of pill appears; drag it to trade width (macOS split-view style).
+- **Fullscreen** (the ⛶ button) is a viewing mode: the menu bar hides, the
+  occupied columns stretch to the full width, and every column runs to the
+  bottom of the screen — the last tile in each column is stretched to end
+  there. A short tile like the clock is never stretched into a ribbon: under
+  another tile it slides to the bottom edge and the tile above grows into the
+  gap; alone in its columns it stays as it is. Nothing is saved — the layout
+  reverts when you leave fullscreen. A layout deeper than the screen keeps
+  its normal row height and scrolls.
 - A tile's actions (menus, text size, clear…) live in its **title bar**;
   the small **notch** on the bar's bottom edge hides/shows the whole bar
   for a clean wall-display look.

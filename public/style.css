@@ -411,6 +411,39 @@ body.menu-hidden #topbar {
   border-radius: 0 0 0 3px;
 }
 
+/* bottom-edge pill: drag to move the tile's bottom edge (height only);
+   sits between the two corner handles */
+.tile-resize-bottom {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  bottom: 0;
+  height: 10px;
+  z-index: 5;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  cursor: ns-resize;
+  touch-action: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.tile-resize-bottom::after {
+  content: "";
+  width: 44px;
+  max-width: 60%;
+  height: 5px;
+  margin-bottom: 2px;
+  border-radius: 999px;
+  background: var(--muted);
+  transition: background 0.15s ease;
+}
+.tile:hover .tile-resize-bottom { opacity: 0.6; }
+.tile .tile-resize-bottom:hover,
+.tile.resizing .tile-resize-bottom { opacity: 1; }
+.tile .tile-resize-bottom:hover::after,
+.tile.resizing .tile-resize-bottom::after { background: var(--text); }
+
 /* ── seam divider between adjacent tiles ───────────────────────────── */
 
 /* When two tiles share a vertical edge, an invisible strip sits on the seam;
@@ -452,6 +485,7 @@ body.menu-hidden #topbar {
    editing affordances (corner handles, seam pills) are parked. */
 body.fullscreen .tile-resize,
 body.fullscreen .tile-resize-left,
+body.fullscreen .tile-resize-bottom,
 body.fullscreen .tile-divider { display: none; }
 body.fullscreen #grid { padding-bottom: 0; }
 #gridwrap.no-scroll { overflow-y: hidden; }
