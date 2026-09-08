@@ -1,19 +1,23 @@
-// ltc-capture — minimal CoreAudio input capture for the LTC reader.
+// ltc-capture — minimal CoreAudio input capture for the Timers module's
+// LTC listener.
 //
-// ProdDash's LTC reader (tools/ltc-reader.js) eats raw PCM on stdin and is
-// normally fed by ffmpeg or sox — but production machines rarely have
-// either, and shipping a third-party binary just to move samples from an
-// input device to a pipe is overkill. This is the whole job, natively:
+// The module decodes LTC in-process (ltc.js) and spawns this to move
+// samples from an input device to a pipe. Production machines rarely have
+// ffmpeg/sox, and shipping a third-party binary for that one job is
+// overkill — this is the whole job, natively. The module compiles it on
+// first use when swiftc is available; otherwise build it once on any
+// same-architecture Mac and copy the binary next to this source:
 //
-//   swiftc -O -o tools/ltc-capture tools/ltc-capture.swift    (once, ~5 s)
+//   swiftc -O -o modules/propresenter-timers/ltc-capture \
+//     modules/propresenter-timers/ltc-capture.swift          (once, ~5 s)
 //
-//   tools/ltc-capture --list
+//   ltc-capture --list
 //       every input-capable device: name, input channels, sample rate
-//   tools/ltc-capture --device "Dante Via 16" \
-//       | node tools/ltc-reader.js --sr 48000 --channels 16 --ch 5 ...
+//   ltc-capture --device "Dante Via 16 Channel"
 //       streams the device's inputs as interleaved s16le to stdout, at the
 //       device's own sample rate and channel count (both printed to stderr
-//       at start — pass them to the reader as --sr / --channels).
+//       at start). The name matches exactly first, then as a substring.
+//       The remote reader (tools/ltc-reader.js) pipes from it the same way.
 //
 // --device matches case-insensitively on a substring of the device name or
 // UID; ambiguity is an error listing the candidates. Capture uses an
@@ -144,7 +148,12 @@ if wantList || wantDevice == nil {
 }
 
 let query = wantDevice!.lowercased()
-let matches = devices.filter { $0.name.lowercased().contains(query) || $0.uid.lowercased().contains(query) }
+// An exact name/uid match wins outright — device lists like "Media",
+// "Media 2", "Media Key" make substring-only matching ambiguous for the
+// very names a picker hands us verbatim.
+let exact = devices.filter { $0.name.lowercased() == query || $0.uid.lowercased() == query }
+let matches = exact.count == 1 ? exact
+    : devices.filter { $0.name.lowercased().contains(query) || $0.uid.lowercased().contains(query) }
 guard matches.count == 1 else {
     if matches.isEmpty { fail("no input device matches \"\(wantDevice!)\" — see --list") }
     fail("\"\(wantDevice!)\" is ambiguous: " + matches.map { $0.name }.joined(separator: ", "))

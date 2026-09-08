@@ -1,7 +1,7 @@
 {
   "id": "propresenter-timers",
   "name": "Timers",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Live ProPresenter timers and LTC timecode",
   "client": "client.js",
   "server": "server.js",
@@ -19,14 +19,30 @@
       "label": "API password (only if set in ProPresenter)",
       "default": ""
     },
-    "stagePassword": {
-      "type": "password",
-      "label": "Stage display password (for LTC — ProPresenter Settings → Network)",
-      "default": ""
+    "ltcEnabled": {
+      "type": "boolean",
+      "label": "LTC listener — decode timecode from an audio input on this machine",
+      "default": false
+    },
+    "ltcDevice": {
+      "type": "select",
+      "label": "LTC audio device",
+      "default": "",
+      "optionsRoute": "/ltc/devices"
+    },
+    "ltcChannel": {
+      "type": "number",
+      "label": "LTC channel on that device (1-based)",
+      "default": 1
     },
     "ingestToken": {
       "type": "password",
-      "label": "LTC reader token (optional — must match tools/ltc-reader.js --token)",
+      "label": "LTC reader token (optional — for tools/ltc-reader.js on another machine)",
+      "default": ""
+    },
+    "stagePassword": {
+      "type": "password",
+      "label": "Stage display password (LTC fallback via a stage field labeled \"LTC\")",
       "default": ""
     }
   }

@@ -83,7 +83,7 @@ function healthText(mod) {
   return mod.hasServer ? 'Mounted.' : 'Client-only module (no server part).';
 }
 
-function fieldFor(key, spec, value, passwordSet) {
+function fieldFor(key, spec, value, passwordSet, moduleId) {
   const type = spec?.type || 'string';
   const label = spec?.label || key;
   const field = document.createElement('label');
@@ -122,17 +122,38 @@ function fieldFor(key, spec, value, passwordSet) {
     row.append(host, sep, port);
     field.append(span, row);
     read = () => ({ host: host.value.trim(), port: Number(port.value) || 0 });
-  } else if (type === 'select' && Array.isArray(spec.options)) {
+  } else if (type === 'select' && (Array.isArray(spec.options) || spec.optionsRoute)) {
     const span = document.createElement('span');
     span.textContent = label;
     const select = document.createElement('select');
-    for (const opt of spec.options) {
-      const o = document.createElement('option');
-      o.value = String(typeof opt === 'object' ? opt.value : opt);
-      o.textContent = String(typeof opt === 'object' ? (opt.label ?? opt.value) : opt);
-      select.appendChild(o);
+    const fill = (options) => {
+      select.innerHTML = '';
+      // The saved value must stay selectable even when it isn't among the
+      // live options (device unplugged, module route down).
+      const saved = String(value ?? '');
+      if (saved && !options.some((opt) => String(typeof opt === 'object' ? opt.value : opt) === saved)) {
+        options = [{ value: saved, label: `${saved} (saved)` }, ...options];
+      }
+      if (!saved) options = [{ value: '', label: '— choose —' }, ...options];
+      for (const opt of options) {
+        const o = document.createElement('option');
+        o.value = String(typeof opt === 'object' ? opt.value : opt);
+        o.textContent = String(typeof opt === 'object' ? (opt.label ?? opt.value) : opt);
+        select.appendChild(o);
+      }
+      select.value = saved;
+    };
+    fill(Array.isArray(spec.options) ? spec.options : []);
+    if (spec.optionsRoute && moduleId) {
+      // Options discovered at runtime (audio devices, ports, sources…):
+      // the module serves them from one of its own routes.
+      fetch(`/api/modules/${encodeURIComponent(moduleId)}${spec.optionsRoute}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((body) => {
+          if (Array.isArray(body?.options)) fill(body.options);
+        })
+        .catch(() => { /* keep the static/saved options */ });
     }
-    select.value = String(value ?? '');
     field.append(span, select);
     read = () => select.value;
   } else {
@@ -227,7 +248,7 @@ function buildModuleCard(mod) {
     form.className = 'module-form';
     const readers = new Map();
     for (const [key, spec] of schemaKeys) {
-      const { field, read } = fieldFor(key, spec, mod.config[key], mod.passwordSet[key]);
+      const { field, read } = fieldFor(key, spec, mod.config[key], mod.passwordSet[key], mod.id);
       readers.set(key, read);
       form.appendChild(field);
     }

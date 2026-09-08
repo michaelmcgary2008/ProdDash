@@ -61,7 +61,9 @@ export default function create({ root, moduleApi }) {
 
   function menuRows() {
     const rows = (state?.timers || []).map((t) => ({ key: t.uuid, name: t.name }));
-    rows.push({ key: LTC_KEY, name: 'LTC timecode' });
+    // No LTC row while the listener is off in Admin — the item shouldn't
+    // even be offerable.
+    if (state?.ltcEnabled) rows.push({ key: LTC_KEY, name: 'LTC timecode' });
     return rows;
   }
 
@@ -159,7 +161,7 @@ export default function create({ root, moduleApi }) {
     for (const t of state?.timers || []) {
       if (!hiddenItems.has(t.uuid)) items.push({ key: t.uuid, timer: t });
     }
-    if (!hiddenItems.has(LTC_KEY)) items.push({ key: LTC_KEY, ltc: ltcState });
+    if (state?.ltcEnabled && !hiddenItems.has(LTC_KEY)) items.push({ key: LTC_KEY, ltc: ltcState });
     return items;
   }
 
@@ -235,9 +237,10 @@ export default function create({ root, moduleApi }) {
       card.timeEl.textContent = '—';
       card.stateEl.textContent = 'No signal';
     }
-    // The reader posts independently of ProPresenter, so its card must not
-    // gray out with the rest when only ProPresenter is unreachable.
-    const live = ltc.source === 'reader' ? ' src-reader' : '';
+    // The built-in listener and the remote reader are independent of
+    // ProPresenter, so their card must not gray out with the rest when
+    // only ProPresenter is unreachable.
+    const live = ltc.source === 'reader' || ltc.source === 'listener' ? ' src-reader' : '';
     card.el.className = `tm-card tm-card-ltc is-ltc-${mode}${live}`;
   }
 
@@ -261,9 +264,9 @@ export default function create({ root, moduleApi }) {
     }
     if (!state.enabled) {
       bannerEl.hidden = true;
-      // The LTC reader feeds us with or without ProPresenter — an LTC-only
-      // setup is working, not broken.
-      if (state.ltc?.supported) moduleApi.setStatus('ok', 'LTC via reader — no ProPresenter host configured');
+      // The LTC listener/reader feed us with or without ProPresenter — an
+      // LTC-only setup is working, not broken.
+      if (state.ltc?.supported) moduleApi.setStatus('ok', 'LTC only — no ProPresenter host configured');
       else moduleApi.setStatus('error', 'No ProPresenter host configured — set one in Admin');
       return;
     }

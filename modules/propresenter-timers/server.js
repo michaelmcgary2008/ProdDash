@@ -8,10 +8,12 @@
  * fans one merged state object out to every tile over SSE. Browsers never
  * talk to ProPresenter directly.
  *
- *   GET /state   → { state: <state> }   (instant paint for new tiles)
- *   GET /stream  → SSE, `state` events  (change-detected, heartbeated)
- *   POST /ltc    → LTC ingest: tools/ltc-reader.js decodes the actual LTC
- *                  audio signal and reports { state, time, fps, df } here.
+ *   GET /state        → { state: <state> }   (instant paint for new tiles)
+ *   GET /stream       → SSE, `state` events  (change-detected, heartbeated)
+ *   POST /ltc         → remote LTC ingest: tools/ltc-reader.js on another
+ *                       machine reports { state, time, fps, df } here.
+ *   GET /ltc/devices  → this machine's audio input devices, for the admin
+ *                       page's device picker (select + optionsRoute).
  *
  * Endpoints used, verified against openapi.propresenter.com (API v1):
  *   GET /v1/timers          → [ { id:{uuid,name,index}, allows_overrun,
@@ -30,13 +32,19 @@
  *     once per connection anyway so a future ProPresenter that adds it
  *     lights up without a module update.
  *
- * Because the HTTP API has no timecode, LTC comes from two real sources:
- * the external reader (POST /ltc — tools/ltc-reader.js decoding the LTC
- * audio feed itself, ground truth while its reports are fresh) and the
- * classic stage-display websocket (see stage-ws.js): a stage layout field
- * labeled "LTC" streams its text to us. Source precedence: fresh reader
- * ingest, else the HTTP route if it ever answers, else the stage field,
- * else "not available".
+ * Because the HTTP API has no timecode, LTC comes from the audio signal
+ * itself. The whole LTC feature sits behind the admin "LTC listener"
+ * switch — off means no LTC tile in the picker, no probes, and the ingest
+ * route answers 409. When on, the sources in precedence order:
+ *   1. the built-in listener (ltc-listener.js — this machine captures the
+ *      admin-selected device/channel and decodes in-process) while it has
+ *      actual data;
+ *   2. a fresh remote reader report (POST /ltc, tools/ltc-reader.js on the
+ *      machine that can hear the LTC when this one can't);
+ *   3. the listener's own "no signal" verdict (healthy capture, silent
+ *      feed — believed over the indirect sources below);
+ *   4. the HTTP timecode route if some future ProPresenter answers it;
+ *   5. a stage-display field labeled "LTC" (see stage-ws.js).
  *
  * ProPresenter's built-in HTTP server is easily overwhelmed (see the hot-path
  * notes in ../propresenter-now-next/propresenter-core). So: requests run
@@ -60,14 +68,17 @@ const HEARTBEAT_MS = 15000;
     the reader posts at least 1×/s, so 6s of silence means it died. */
 const INGEST_STALE_MS = 6000;
 
+const { spawn } = require('child_process');
 const { createStageLtcClient } = require('./stage-ws');
+const { createLtcListener } = require('./ltc-listener');
 
 /** Set by init(), read by the routes — both are rebuilt together on remount. */
 let current = null;
 
-function clearedState(enabled) {
+function clearedState(enabled, ltcEnabled = false) {
   return {
     enabled,
+    ltcEnabled,
     reachable: false,
     lastError: '',
     timers: [],
@@ -91,8 +102,11 @@ module.exports = {
     const port = Number(config.port ?? ep.port) || 1025;
     const password = String(config.password || '');
     const enabled = Boolean(host && port);
+    const ltcEnabled = Boolean(config.ltcEnabled);
+    const ltcDevice = String(config.ltcDevice || '');
+    const ltcChannel = Math.max(1, Math.trunc(Number(config.ltcChannel)) || 1);
 
-    let latest = clearedState(enabled);
+    let latest = clearedState(enabled, ltcEnabled);
     let lastFrame = '';
     let stopped = false;
     let pollTimer = null;
@@ -105,27 +119,42 @@ module.exports = {
     let ltcLast = { time: '', receiving: false };
     /** Live view of the stage-display websocket's LTC field (stage-ws.js). */
     let stageLtc = { bound: false, time: '', receiving: false, note: '' };
-    /** Latest POST /ltc report from the external reader, null until one lands. */
+    /** Latest POST /ltc report from a remote reader, null until one lands. */
     let ingest = null; // { state, time, fps, df, source, at }
     let ingestExpiry = null;
+    /** Built-in listener's latest word: { state, time, fps, df } | { error }. */
+    let listenerLtc = null;
 
-    /** One LTC verdict from all three sources. The external reader decodes
-        the LTC audio itself, so a fresh report from it is ground truth;
-        then the HTTP route if it ever answers; then the stage-display
-        field. Text sources don't know fps — receiving/frozen/empty maps
-        onto the same status vocabulary the reader uses. */
+    /** One LTC verdict from every source, in the precedence the header
+        comment explains. Text sources don't know fps — receiving/frozen/
+        empty maps onto the same status vocabulary the audio decode uses. */
     function composeLtc() {
+      if (!ltcEnabled) {
+        return { supported: false, source: '', time: '', receiving: false, status: '', fps: 0, df: false, note: 'LTC listener disabled' };
+      }
+      const audioVerdict = (src, tag) => ({
+        supported: true,
+        source: tag,
+        time: src.time,
+        receiving: src.state === 'running',
+        status: src.state,
+        fps: src.fps,
+        df: src.df,
+        note: '',
+      });
+      // The built-in listener while it has actual data …
+      if (listenerLtc && !listenerLtc.error && listenerLtc.state !== 'nosignal') {
+        return audioVerdict(listenerLtc, 'listener');
+      }
+      // … else a fresh remote reader (during migrations both may run —
+      // real data beats no data) …
       if (ingest && Date.now() - ingest.at < INGEST_STALE_MS) {
-        return {
-          supported: true,
-          source: 'reader',
-          time: ingest.time,
-          receiving: ingest.state === 'running',
-          status: ingest.state,
-          fps: ingest.fps,
-          df: ingest.df,
-          note: '',
-        };
+        return audioVerdict(ingest, 'reader');
+      }
+      // … else a healthy-but-silent listener is believed over the indirect
+      // sources: no audio means the LTC really stopped.
+      if (listenerLtc && !listenerLtc.error) {
+        return audioVerdict(listenerLtc, 'listener');
       }
       const textStatus = (src) => (src.receiving ? 'running' : src.time ? 'stopped' : 'nosignal');
       if (ltcSupported === true) {
@@ -139,10 +168,10 @@ module.exports = {
         // story than anything the stage feed has to say.
         return { supported: false, source: '', time: '', receiving: false, status: '', fps: 0, df: false, note: 'LTC reader offline' };
       }
-      if (ltcSupported === null && !stageLtc.note && enabled) {
+      if (!listenerLtc?.error && ltcSupported === null && !stageLtc.note && enabled) {
         return { supported: null, source: '', time: '', receiving: false, status: '', fps: 0, df: false, note: '' };
       }
-      return { supported: false, source: '', time: '', receiving: false, status: '', fps: 0, df: false, note: stageLtc.note || '' };
+      return { supported: false, source: '', time: '', receiving: false, status: '', fps: 0, df: false, note: listenerLtc?.error || stageLtc.note || '' };
     }
 
     /** Timecode-shaped text — same shape rule as the other sources. */
@@ -284,6 +313,7 @@ module.exports = {
     }
 
     async function pollLtc() {
+      if (!ltcEnabled) return;
       // A 404 verdict is retried once a minute — an endpoint appearing
       // without an unreachable spell (ProPresenter hot-swapped in testing,
       // or some future in-place upgrade) must not stay invisible forever.
@@ -308,6 +338,7 @@ module.exports = {
     function broadcast() {
       latest = {
         enabled,
+        ltcEnabled,
         reachable: latest.reachable,
         lastError: latest.lastError,
         timers: latest.timers,
@@ -365,21 +396,44 @@ module.exports = {
     if (enabled) {
       pollTick();
       log(`polling timers on ${host}:${port}`);
-      stageClient = createStageLtcClient({
-        host,
-        port,
-        password: String(config.stagePassword || ''),
-        log,
-        // The HTTP poller knows every configured timer's uuid — anything
-        // else streaming timecode-shaped text can be heuristically bound.
-        isTimerUid: (uid) => timerConfigs.has(uid),
-        onUpdate(update) {
-          stageLtc = update;
-          broadcast();
-        },
-      });
+      if (ltcEnabled) {
+        stageClient = createStageLtcClient({
+          host,
+          port,
+          password: String(config.stagePassword || ''),
+          log,
+          // The HTTP poller knows every configured timer's uuid — anything
+          // else streaming timecode-shaped text can be heuristically bound.
+          isTimerUid: (uid) => timerConfigs.has(uid),
+          onUpdate(update) {
+            stageLtc = update;
+            broadcast();
+          },
+        });
+      }
     } else {
       log('no ProPresenter host configured — set one in /admin');
+    }
+
+    // The built-in listener is independent of ProPresenter — LTC-only
+    // setups (no host configured) still get the LTC card.
+    let ltcListener = null;
+    if (ltcEnabled) {
+      if (ltcDevice) {
+        ltcListener = createLtcListener({
+          device: ltcDevice,
+          channel: ltcChannel,
+          moduleDir: __dirname,
+          log,
+          onUpdate(update) {
+            listenerLtc = update;
+            broadcast();
+          },
+        });
+      } else {
+        listenerLtc = { error: 'LTC listener is on but no audio device is selected — pick one in Admin' };
+        broadcast();
+      }
     }
 
     const heartbeat = setInterval(() => {
@@ -402,6 +456,7 @@ module.exports = {
         clearTimeout(ingestExpiry);
         clearInterval(heartbeat);
         stageClient?.stop();
+        ltcListener?.stop();
         for (const res of streams) {
           try { res.end(); } catch { /* already gone */ }
         }
@@ -409,18 +464,20 @@ module.exports = {
         if (current && current.streams === streams) current = null;
       },
       health() {
-        const ltcSource = { reader: ', LTC via reader', api: ', LTC via API', stage: ', LTC via stage display' };
+        const ltcSource = { listener: ', LTC via listener', reader: ', LTC via remote reader', api: ', LTC via API', stage: ', LTC via stage display' };
         if (!enabled) {
-          // The LTC reader posts to us regardless of ProPresenter — an
+          // The LTC listener/reader work regardless of ProPresenter — an
           // LTC-only setup is half-configured but working.
-          if (latest.ltc.source === 'reader') return { status: 'ok', message: 'No ProPresenter host configured — LTC via reader only' };
+          if (latest.ltc.supported) return { status: 'ok', message: `No ProPresenter host configured — LTC only${ltcSource[latest.ltc.source] || ''}` };
           return { status: 'error', message: 'No ProPresenter host configured' };
         }
         if (latest.reachable) {
           const ltc = latest.ltc;
-          const ltcNote = ltc.supported
-            ? (ltcSource[ltc.source] || '')
-            : (ltc.note ? ` (${ltc.note})` : '');
+          const ltcNote = !ltcEnabled
+            ? ''
+            : ltc.supported
+              ? (ltcSource[ltc.source] || '')
+              : (ltc.note ? ` (LTC: ${ltc.note})` : '');
           return { status: 'ok', message: `Polling ${host}:${port}, ${latest.timers.length} timer(s)${ltcNote}` };
         }
         return {
@@ -442,7 +499,7 @@ module.exports = {
    */
   tiles() {
     const state = current ? current.getLatest() : null;
-    if (!state || !state.enabled) return []; // unconfigured → classic single entry
+    if (!state || (!state.enabled && !state.ltcEnabled)) return []; // unconfigured → classic single entry
     const TYPE_LABEL = {
       countdown: 'Countdown timer',
       countdown_to_time: 'Countdown to a time of day',
@@ -451,14 +508,23 @@ module.exports = {
     };
     const oneCard = { defaultSize: { w: 3, h: 2 }, minSize: { w: 2, h: 1 } };
     return [
-      { id: 'all', name: 'All timers', description: 'Every timer and the LTC timecode, selectable per tile' },
+      {
+        id: 'all',
+        name: 'All timers',
+        description: state.ltcEnabled
+          ? 'Every timer and the LTC timecode, selectable per tile'
+          : 'Every timer, selectable per tile',
+      },
       ...state.timers.map((t) => ({
         id: `timer:${t.uuid}`,
         name: t.name,
         description: TYPE_LABEL[t.type] || 'Timer',
         ...oneCard,
       })),
-      { id: 'ltc', name: 'LTC timecode', description: 'Incoming timecode (HH:MM:SS:FF)', ...oneCard },
+      // The LTC entry exists only while the admin switch is on.
+      ...(state.ltcEnabled
+        ? [{ id: 'ltc', name: 'LTC timecode', description: 'Incoming timecode (HH:MM:SS:FF)', ...oneCard }]
+        : []),
     ];
   },
 
@@ -472,10 +538,36 @@ module.exports = {
         sendJson(res, 200, { state: current ? current.getLatest() : clearedState(false) });
       },
 
-      // The external LTC reader (tools/ltc-reader.js) reports here — the
-      // one route on this module that accepts writes, so it optionally
-      // carries a shared token (Admin → "LTC reader token").
+      // The admin device picker asks this machine what it can hear. The
+      // options shape matches the admin select's optionsRoute contract.
+      'GET /ltc/devices': (req, res) => {
+        const bin = require('path').join(__dirname, 'ltc-capture');
+        const child = spawn(bin, ['--list'], { stdio: ['ignore', 'ignore', 'pipe'], timeout: 4000 });
+        let err = '';
+        child.stderr.setEncoding('utf8');
+        child.stderr.on('data', (t) => { err += t; });
+        child.on('error', () => {
+          sendJson(res, 200, { options: [], error: 'LTC capture tool missing — see modules/propresenter-timers/ltc-capture.swift' });
+        });
+        child.on('exit', () => {
+          if (res.writableEnded) return;
+          const options = [];
+          for (const line of err.split('\n')) {
+            const m = line.match(/^ltc-capture:\s+(.*?)\s+(\d+) ch\s+(\d+) Hz\s+uid=/);
+            if (m) options.push({ value: m[1], label: `${m[1]} — ${m[2]} ch @ ${(Number(m[3]) / 1000)} kHz` });
+          }
+          sendJson(res, 200, { options });
+        });
+      },
+
+      // A remote LTC reader (tools/ltc-reader.js, on the machine that can
+      // hear the LTC when this one can't) reports here — the one route on
+      // this module that accepts writes, so it optionally carries a shared
+      // token (Admin → "LTC reader token").
       'POST /ltc': (req, res) => {
+        if (!config.ltcEnabled) {
+          return void sendJson(res, 409, { error: 'LTC listener is disabled in Admin — enable it to accept reader reports' });
+        }
         const token = String(config.ingestToken || '');
         if (token) {
           const given = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
