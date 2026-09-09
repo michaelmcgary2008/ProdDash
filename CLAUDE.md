@@ -16,8 +16,16 @@ contract** (manifest, client factory + moduleApi, optional server entry,
 title-bar controls). The rules that matter most:
 
 - A module is one self-contained folder in `modules/` — **never modify the
-  shell** (`server.js`, `public/`) to add one. Installation = drop the folder,
-  restart, configure in `/admin`.
+  shell** (`server.js`, `public/`) to add one. Installation = the admin page's
+  Available modules (downloads from the repo into the data directory), or
+  drop the folder and restart; configure in `/admin`.
+- **All settings in the admin page** (`configSchema` / `instanceSchema`) —
+  never a separate setup page, hand-edited file or env var. **Dependencies
+  ship inside the module folder** (zero deps is the norm). **Everything the
+  module does runs inside its server entry** — no helper scripts, companion
+  programs or daemons the operator starts by hand; a listener or decoder is
+  started in `init()` and stopped in `stop()`. Declare `"proddash": ">=x.y.z"`
+  and bump the module's `version` on every change.
 - Browsers never call upstream services directly; the module's server routes
   proxy everything (no CORS, secrets stay server-side).
 - Style with the shell's CSS variables only, scoped under

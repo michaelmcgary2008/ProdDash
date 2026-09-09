@@ -1,4 +1,6 @@
 {
   "port": 24500,
-  "adminPasscode": ""
+  "adminPasscode": "",
+  "repo": "michaelmcgary2008/ProdDash",
+  "branch": "main"
 }
