@@ -26,7 +26,9 @@
  * second time, this module reads the propresenter-now-next module's own SSE
  * feed over loopback (/api/modules/propresenter-now-next/stream) and matches
  * the live presentation name to a plan item. Item start/end timestamps are
- * tracked here, once, so every tile agrees on the runtime.
+ * tracked here, once, so every tile agrees on the runtime. The shell's port
+ * is guessed the way the shell decides it and then confirmed from the Host
+ * header of the first tile request.
  *
  * PCO_PLAN_API_BASE=http://127.0.0.1:24700 points the module at
  * tools/pco-mock.js for development.
@@ -34,6 +36,7 @@
 
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const DEFAULT_API_BASE = 'https://api.planningcenteronline.com';
@@ -91,15 +94,40 @@ function clearedLive() {
   };
 }
 
-/** The shell's port, so the loopback Now/Next feed lands on this ProdDash. */
-function shellPort() {
+/**
+ * First guess at the shell's port, so the loopback Now/Next feed lands on this
+ * ProdDash before any browser has talked to us. Mirrors how the shell decides:
+ * PORT env, then this machine's proddash.json in the data directory, then the
+ * checked-in config/proddash.json, then 24500. The guess is corrected from the
+ * Host header of the first request that reaches a route (see learnPort).
+ */
+function guessShellPort() {
   const env = Number(process.env.PORT);
   if (env) return env;
-  try {
-    const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'config', 'proddash.json'), 'utf8'));
-    if (Number(cfg.port)) return Number(cfg.port);
-  } catch { /* fall through */ }
+  const home = os.homedir();
+  const fromEnv = String(process.env.PRODDASH_DATA_DIR || '').trim();
+  const root = path.join(__dirname, '..', '..');
+  const dataDir = fromEnv
+    ? path.resolve(root, fromEnv)
+    : process.platform === 'win32'
+      ? path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'ProdDash')
+      : process.platform === 'darwin'
+        ? path.join(home, 'Library', 'Application Support', 'ProdDash')
+        : path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'proddash');
+  for (const file of [path.join(dataDir, 'proddash.json'), path.join(root, 'config', 'proddash.json')]) {
+    try {
+      const port = Number(JSON.parse(fs.readFileSync(file, 'utf8')).port);
+      if (port) return port;
+    } catch { /* try the next one */ }
+  }
   return 24500;
+}
+
+/** Port a browser used to reach us, from a Host header ("10.3.8.41:24500"). */
+function portFromHost(hostHeader) {
+  const m = /:(\d+)$/.exec(String(hostHeader || '').trim());
+  if (m) return Number(m[1]) || 0;
+  return hostHeader ? 80 : 0;
 }
 
 function localYmd(d) {
@@ -500,6 +528,23 @@ module.exports = {
     let nnRequest = null;
     let nnRetryTimer = null;
     let lastLiveName = null;
+    const guessedPort = guessShellPort();
+    let nnPort = guessedPort;
+    /** Learned ports that refused the loopback connection (a reverse proxy's port, say). */
+    const badPorts = new Set();
+
+    /** A browser reached us on this Host — normally the port the shell really serves on. */
+    function learnPort(hostHeader) {
+      const port = portFromHost(hostHeader);
+      if (!port || port === nnPort || badPorts.has(port)) return;
+      log(`ProdDash is on port ${port} (guessed ${nnPort}) — reconnecting the ProPresenter feed there`);
+      nnPort = port;
+      if (!follow || stopped) return;
+      clearTimeout(nnRetryTimer);
+      try { nnRequest?.destroy(); } catch { /* gone */ }
+      nnRequest = null;
+      connectNowNext();
+    }
 
     function resetLiveTracking() {
       const keep = state.live;
@@ -593,7 +638,7 @@ module.exports = {
 
     function connectNowNext() {
       if (stopped || !follow) return;
-      const port = shellPort();
+      const port = nnPort;
       const req = http.get(
         { host: '127.0.0.1', port, path: `/api/modules/${NOW_NEXT_ID}/stream`, headers: { Accept: 'text/event-stream' } },
         (res) => {
@@ -628,7 +673,17 @@ module.exports = {
           res.on('error', () => nowNextUnavailable('ProPresenter module feed dropped — reconnecting', NOW_NEXT_RETRY_MS));
         }
       );
-      req.on('error', (err) => nowNextUnavailable(`ProdDash loopback failed: ${err.message}`, NOW_NEXT_RETRY_MS));
+      req.on('error', (err) => {
+        if (req !== nnRequest) return; // superseded by a reconnect on the learned port
+        if (port !== guessedPort) {
+          // The Host header lied (reverse proxy, port forward) — that port is
+          // not this ProdDash. Go back to the guess and never trust it again.
+          badPorts.add(port);
+          nnPort = guessedPort;
+          log(`port ${port} refused the loopback (${err.message}) — back to port ${guessedPort}`);
+        }
+        nowNextUnavailable(`ProdDash loopback failed: ${err.message}`, NOW_NEXT_RETRY_MS);
+      });
       req.setTimeout(45000, () => req.destroy(new Error('feed went silent')));
       nnRequest = req;
     }
@@ -665,6 +720,7 @@ module.exports = {
       streams,
       pco,
       getState: () => state,
+      learnPort,
       refresh() {
         clearTimeout(pollTimer);
         return poll();
@@ -707,10 +763,12 @@ module.exports = {
 
     return {
       'GET /state': (req, res) => {
+        current?.learnPort(req.headers.host);
         json(res, 200, { state: current ? current.getState() : clearedState(), now: Date.now() });
       },
 
       'GET /stream': (req, res) => {
+        current?.learnPort(req.headers.host);
         res.writeHead(200, {
           'Content-Type': 'text/event-stream; charset=utf-8',
           'Cache-Control': 'no-cache, no-transform',
