@@ -1,0 +1,67 @@
+{
+  "id": "pco-plan",
+  "name": "PCO Plan",
+  "version": "1.0.0",
+  "description": "Order of service from Planning Center Services, following ProPresenter live. Pick the service type at /modules/pco-plan/setup.html",
+  "client": "client.js",
+  "server": "server.js",
+  "style": "style.css",
+  "minSize": { "w": 3, "h": 3 },
+  "defaultSize": { "w": 5, "h": 6 },
+  "configSchema": {
+    "appId": {
+      "type": "string",
+      "label": "Planning Center Application ID (Personal Access Token)",
+      "default": ""
+    },
+    "secret": {
+      "type": "password",
+      "label": "Planning Center Secret (Personal Access Token)",
+      "default": ""
+    },
+    "accessToken": {
+      "type": "password",
+      "label": "OAuth 2.0 access token (alternative to App ID + Secret)",
+      "default": ""
+    },
+    "serviceTypeId": {
+      "type": "string",
+      "label": "Service type ID — browse folders and pick one at /modules/pco-plan/setup.html",
+      "default": ""
+    },
+    "planId": {
+      "type": "string",
+      "label": "Pin a plan ID (blank = today's plan, else the next upcoming)",
+      "default": ""
+    },
+    "pollSeconds": {
+      "type": "number",
+      "label": "Re-read the plan every N seconds",
+      "default": 30
+    },
+    "followProPresenter": {
+      "type": "boolean",
+      "label": "Follow the ProPresenter module's live item to highlight the current plan item",
+      "default": true
+    }
+  },
+  "instanceSchema": {
+    "showPlanHeader": { "type": "boolean", "label": "Show plan title, date and service time", "default": true },
+    "showStartTimes": { "type": "boolean", "label": "Show scheduled start time of each item", "default": true },
+    "showLength": { "type": "boolean", "label": "Show planned length of each item", "default": true },
+    "showItemType": { "type": "boolean", "label": "Show item type badge (song / media)", "default": true },
+    "showKey": { "type": "boolean", "label": "Show song key", "default": true },
+    "showArrangement": { "type": "boolean", "label": "Show song arrangement", "default": false },
+    "showDescription": { "type": "boolean", "label": "Show item description", "default": true },
+    "showNotes": { "type": "boolean", "label": "Show item notes", "default": true },
+    "noteCategories": { "type": "string", "label": "Only these note categories (comma-separated, blank = all)", "default": "" },
+    "showHeaders": { "type": "boolean", "label": "Show section headers", "default": true },
+    "showPreService": { "type": "boolean", "label": "Show pre-service items", "default": true },
+    "showPostService": { "type": "boolean", "label": "Show post-service items", "default": true },
+    "showRuntime": { "type": "boolean", "label": "Show live runtime (elapsed vs planned) when following ProPresenter", "default": true },
+    "showLiveFooter": { "type": "boolean", "label": "Show the ProPresenter match line at the bottom", "default": true },
+    "dimCompleted": { "type": "boolean", "label": "Dim items that are already done", "default": true },
+    "autoScroll": { "type": "boolean", "label": "Keep the current item in view", "default": true },
+    "textSize": { "type": "number", "label": "Text size (px)", "default": 14 }
+  }
+}

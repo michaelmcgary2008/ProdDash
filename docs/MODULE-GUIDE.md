@@ -462,6 +462,15 @@ client-side failures (a tile that fails to start says so in the tile).
   overrunning, stopped and elapsed timers plus an LTC timecode that
   periodically drops to no-signal (`--no-ltc` serves a ProPresenter without
   a timecode API). Point the Timers module at host `127.0.0.1`, port `1600`.
+- Planning Center: `node tools/pco-mock.js` (port 24700) — folders, service
+  types, plans (last week / today / next week), plan times and items with
+  songs, keys and item notes, behind a Basic/Bearer auth check. Planning
+  Center is a cloud API, so the module reads its base URL from the
+  environment instead of admin config: run ProdDash with
+  `PCO_PLAN_API_BASE=http://127.0.0.1:24700 node server.js`, enter any
+  Application ID + Secret in `/admin`, and pick "Sunday Service" in
+  `/modules/pco-plan/setup.html`. Its item titles match `pp-mock.js`, so
+  running both mocks exercises the ProPresenter matching.
 
 **The resilience checklist** — every module must pass this before it's done:
 
