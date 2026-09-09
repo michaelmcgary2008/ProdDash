@@ -4,13 +4,16 @@
  *
  * Shell server: serves the dashboard client from public/, discovers modules
  * in modules/, mounts each enabled module's server routes under
- * /api/modules/<id>/, and stores server-side config + named layouts under
- * config/.
+ * /api/modules/<id>/, and stores server-side module config + named layouts
+ * in a per-machine data directory (see DATA_DIR below) so that updating the
+ * checkout never loses them.
  *
  * Zero dependencies — Node built-ins only (Node 18+ for global fetch).
- * Configure via config/proddash.json or env vars:
- *   PORT              (default: value in proddash.json, else 24500)
- *   PRODDASH_PASSCODE (overrides adminPasscode in proddash.json)
+ * Configure via config/proddash.json (defaults, in the repo), an optional
+ * proddash.json in the data directory (this machine's overrides), or env vars:
+ *   PORT               (default: value in proddash.json, else 24500)
+ *   PRODDASH_PASSCODE  (overrides adminPasscode in proddash.json)
+ *   PRODDASH_DATA_DIR  (where module config + layouts are kept; see below)
  */
 'use strict';
 
@@ -22,9 +25,54 @@ const crypto = require('crypto');
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
-const CONFIG_DIR = path.join(ROOT, 'config');
 const MODULES_DIR = path.join(ROOT, 'modules');
-const MODULES_CONFIG_PATH = path.join(CONFIG_DIR, 'modules.json');
+/** Checked-in defaults (proddash.json) — and where runtime state used to live. */
+const REPO_CONFIG_DIR = path.join(ROOT, 'config');
+
+/* ── data directory ─────────────────────────────────────────────────── */
+
+/**
+ * Everything the app writes — module config (connection settings, API keys,
+ * enabled flags) and named layouts — lives in a per-machine data directory
+ * OUTSIDE the checkout. Pulling, re-cloning or resetting the app folder from
+ * main therefore never touches it, and nothing has to be re-entered in /admin.
+ *
+ *   PRODDASH_DATA_DIR   overrides the location. A relative path resolves
+ *                       against the app folder ("config" = the old in-repo spot).
+ *   default             Windows  %APPDATA%\ProdDash
+ *                       macOS    ~/Library/Application Support/ProdDash
+ *                       other    $XDG_CONFIG_HOME/proddash, else ~/.config/proddash
+ *
+ * If the directory cannot be created or written, the server says so and
+ * falls back to the in-repo config/ folder rather than refusing to start.
+ */
+function defaultDataDir() {
+  const home = os.homedir();
+  if (process.platform === 'win32') {
+    return path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'ProdDash');
+  }
+  if (process.platform === 'darwin') {
+    return path.join(home, 'Library', 'Application Support', 'ProdDash');
+  }
+  return path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'proddash');
+}
+
+function resolveDataDir() {
+  const fromEnv = String(process.env.PRODDASH_DATA_DIR || '').trim();
+  const dir = fromEnv ? path.resolve(ROOT, fromEnv) : defaultDataDir();
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.accessSync(dir, fs.constants.W_OK);
+    return dir;
+  } catch (err) {
+    console.warn(`[proddash] cannot use data directory ${dir} (${err.message}) — falling back to ${REPO_CONFIG_DIR}`);
+    return REPO_CONFIG_DIR;
+  }
+}
+
+const DATA_DIR = resolveDataDir();
+const MODULES_CONFIG_PATH = path.join(DATA_DIR, 'modules.json');
+const LAYOUTS_DIR = path.join(DATA_DIR, 'layouts');
 
 /* ── config files ───────────────────────────────────────────────────── */
 
@@ -43,7 +91,52 @@ function writeJson(file, value) {
   fs.renameSync(tmp, file); // atomic-ish: never leave a half-written config
 }
 
-const shellConfig = readJson(path.join(CONFIG_DIR, 'proddash.json'), {});
+/**
+ * One-time move-in. Earlier versions kept modules.json and layouts/ inside the
+ * repo's config/ folder; if the data directory has none yet and those files
+ * exist, copy them across (the originals are left alone).
+ */
+function migrateLegacyState() {
+  if (DATA_DIR === REPO_CONFIG_DIR) return;
+  const moved = [];
+  const oldModules = path.join(REPO_CONFIG_DIR, 'modules.json');
+  if (!fs.existsSync(MODULES_CONFIG_PATH) && fs.existsSync(oldModules)) {
+    try {
+      fs.copyFileSync(oldModules, MODULES_CONFIG_PATH);
+      moved.push('modules.json');
+    } catch (err) {
+      console.warn(`[proddash] could not copy ${oldModules} into the data directory: ${err.message}`);
+    }
+  }
+  const oldLayouts = path.join(REPO_CONFIG_DIR, 'layouts');
+  let oldFiles = [];
+  try {
+    oldFiles = fs.readdirSync(oldLayouts).filter((f) => f.endsWith('.json'));
+  } catch { /* none to move */ }
+  let haveLayouts = false;
+  try {
+    haveLayouts = fs.readdirSync(LAYOUTS_DIR).some((f) => f.endsWith('.json'));
+  } catch { /* no layouts dir yet */ }
+  if (oldFiles.length && !haveLayouts) {
+    try {
+      fs.mkdirSync(LAYOUTS_DIR, { recursive: true });
+      for (const f of oldFiles) fs.copyFileSync(path.join(oldLayouts, f), path.join(LAYOUTS_DIR, f));
+      moved.push(`${oldFiles.length} layout${oldFiles.length === 1 ? '' : 's'}`);
+    } catch (err) {
+      console.warn(`[proddash] could not copy layouts into the data directory: ${err.message}`);
+    }
+  }
+  if (moved.length) {
+    console.log(`[proddash] moved ${moved.join(' and ')} from ${REPO_CONFIG_DIR} into ${DATA_DIR}`);
+  }
+}
+migrateLegacyState();
+
+/** Shell settings: checked-in defaults, then this machine's overrides on top. */
+const shellConfig = {
+  ...readJson(path.join(REPO_CONFIG_DIR, 'proddash.json'), {}),
+  ...readJson(path.join(DATA_DIR, 'proddash.json'), {}),
+};
 const PORT = Number(process.env.PORT || shellConfig.port || 24500);
 
 /** Per-module server-wide state: { "<id>": { enabled: bool, config: {…} } } */
@@ -453,6 +546,7 @@ async function handleAdminApi(req, res, urlPath) {
     return sendJson(res, 200, {
       authRequired: Boolean(ADMIN_PASSCODE),
       authed: true,
+      dataDir: DATA_DIR,
       modules: [...manifests.keys()].sort().map(adminModuleView),
     });
   }
@@ -468,15 +562,19 @@ async function handleAdminApi(req, res, urlPath) {
     } catch {
       return sendJson(res, 400, { error: 'Malformed request.' });
     }
-    if (m[2] === 'config') {
-      applyConfigPatch(id, body.config);
-      remountModule(id); // config changes take effect without a manual restart
-    } else {
-      const enabled = Boolean(body.enabled);
-      modulesConfig[id] = { ...moduleState(id), enabled };
-      writeJson(MODULES_CONFIG_PATH, modulesConfig);
-      remountModule(id); // mounts when enabled, unmounts (only) otherwise
+    try {
+      if (m[2] === 'config') {
+        applyConfigPatch(id, body.config);
+      } else {
+        modulesConfig[id] = { ...moduleState(id), enabled: Boolean(body.enabled) };
+        writeJson(MODULES_CONFIG_PATH, modulesConfig);
+      }
+    } catch (err) {
+      return sendJson(res, 500, { error: `Could not save ${MODULES_CONFIG_PATH}: ${err?.message || err}` });
     }
+    // Config changes take effect without a manual restart; a toggle mounts when
+    // enabled and unmounts (only) otherwise.
+    remountModule(id);
     broadcastShellEvent('modules-changed', { id });
     return sendJson(res, 200, { ok: true, module: adminModuleView(id) });
   }
@@ -484,9 +582,7 @@ async function handleAdminApi(req, res, urlPath) {
   sendJson(res, 404, { error: 'Unknown admin endpoint.' });
 }
 
-/* ── named layouts (JSON files under config/layouts/) ───────────────── */
-
-const LAYOUTS_DIR = path.join(CONFIG_DIR, 'layouts');
+/* ── named layouts (JSON files under <data dir>/layouts/) ───────────── */
 
 /** Names double as file names — keep them boring on purpose. */
 function layoutNameOk(name) {
@@ -564,7 +660,11 @@ async function handleLayoutsApi(req, res, urlPath) {
     }
     const layout = sanitizeLayout(body.layout);
     if (!layout.tiles.length) return sendJson(res, 400, { error: 'Refusing to save an empty layout.' });
-    writeJson(layoutPath(name), layout);
+    try {
+      writeJson(layoutPath(name), layout);
+    } catch (err) {
+      return sendJson(res, 500, { error: `Could not save ${layoutPath(name)}: ${err?.message || err}` });
+    }
     return sendJson(res, 200, { ok: true, name });
   }
 
@@ -824,6 +924,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(ids.length
     ? '  Modules     : ' + ids.map((id) => id + (isEnabled(id) ? '' : ' (disabled)')).join(', ')
     : '  Modules     : none installed');
+  console.log('  Settings    : ' + DATA_DIR + (DATA_DIR === REPO_CONFIG_DIR ? '  (inside the app folder)' : ''));
 });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {

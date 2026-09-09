@@ -54,25 +54,30 @@ body.menu-hidden #topbar {
   overflow: hidden;
 }
 
-/* the menubar's own show/hide tab, same as the tile notches */
+/* The menubar's own show/hide tab. It sits under the ProdDash brand at the
+   left — not screen-centre, where a tile's own (centred) tab would land
+   right under it once both bars are hidden — and wears the accent colour
+   so it never reads as a tile tab. */
 #topbar-notch {
   position: fixed;
-  top: var(--topbar-h, 46px);
-  left: 50%;
-  transform: translateX(-50%);
+  /* straddles the bar's bottom edge — mostly on the bar, a short lip below
+     it — so it never covers a top-row tile's status dot or title */
+  top: calc(var(--topbar-h, 46px) - 8px);
+  left: 12px;
   width: 54px;
   height: 14px;
   padding: 0;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-top: none;
+  background: var(--accent);
+  border: none;
   border-radius: 0 0 10px 10px;
   cursor: pointer;
   z-index: 60;
-  opacity: 0.35;
-  transition: opacity 0.15s ease, top 0.22s ease;
+  opacity: 0.55;
+  transition: opacity 0.15s ease, top 0.22s ease, height 0.22s ease;
 }
 #topbar-notch:hover { opacity: 1; }
+/* bar hidden: a slim tab at the very top edge, clear of a top-row tile's dot and title */
+body.menu-hidden #topbar-notch { top: 0; height: 10px; }
 #topbar-notch::after {
   content: "";
   display: block;
@@ -80,9 +85,8 @@ body.menu-hidden #topbar {
   height: 3px;
   margin: 4px auto 0;
   border-radius: 999px;
-  background: var(--muted);
+  background: var(--bg);
 }
-#topbar-notch:hover::after { background: var(--text); }
 
 #brand {
   font-weight: 800;
@@ -411,6 +415,39 @@ body.menu-hidden #topbar {
   border-radius: 0 0 0 3px;
 }
 
+/* bottom-edge pill: drag to move the tile's bottom edge (height only);
+   sits between the two corner handles */
+.tile-resize-bottom {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  bottom: 0;
+  height: 10px;
+  z-index: 5;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  cursor: ns-resize;
+  touch-action: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.tile-resize-bottom::after {
+  content: "";
+  width: 44px;
+  max-width: 60%;
+  height: 5px;
+  margin-bottom: 2px;
+  border-radius: 999px;
+  background: var(--muted);
+  transition: background 0.15s ease;
+}
+.tile:hover .tile-resize-bottom { opacity: 0.6; }
+.tile .tile-resize-bottom:hover,
+.tile.resizing .tile-resize-bottom { opacity: 1; }
+.tile .tile-resize-bottom:hover::after,
+.tile.resizing .tile-resize-bottom::after { background: var(--text); }
+
 /* ── seam divider between adjacent tiles ───────────────────────────── */
 
 /* When two tiles share a vertical edge, an invisible strip sits on the seam;
@@ -452,7 +489,9 @@ body.menu-hidden #topbar {
    editing affordances (corner handles, seam pills) are parked. */
 body.fullscreen .tile-resize,
 body.fullscreen .tile-resize-left,
-body.fullscreen .tile-divider { display: none; }
+body.fullscreen .tile-resize-bottom,
+body.fullscreen .tile-divider,
+body.fullscreen #admin-link { display: none; }
 body.fullscreen #grid { padding-bottom: 0; }
 #gridwrap.no-scroll { overflow-y: hidden; }
 

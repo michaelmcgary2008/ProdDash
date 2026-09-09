@@ -72,8 +72,8 @@ Both schemas map field names to specs:
 ```
 
 `password` fields are admin-config only in practice: their values are stored
-in `config/modules.json`, handed to your *server* entry, and **never sent to
-browsers** — not in `/api/modules`, and never echoed back into the admin
+in the server's `modules.json` (in the per-machine data directory, see the
+README), handed to your *server* entry, and **never sent to browsers** — not in `/api/modules`, and never echoed back into the admin
 form. Anything upstream that needs the secret must go through your server
 routes.
 
@@ -105,8 +105,9 @@ web address where protocol or path matter (a page to embed, a webhook).
 Endpoints belong in admin config, not per-tile settings — connections are
 server-wide by design.
 
-Admin config lives in `config/modules.json` (written by the admin page —
-your module never touches that file). Per-tile settings live inside each
+Admin config lives in `modules.json` inside the server's data directory
+(written by the admin page — your module never touches that file, and it
+survives updates of the app folder). Per-tile settings live inside each
 browser's layout.
 
 ## Client entry (`client.js`)

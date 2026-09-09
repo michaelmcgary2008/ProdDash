@@ -18,7 +18,8 @@ touching the shell (see [docs/MODULE-GUIDE.md](docs/MODULE-GUIDE.md)).
    that's where module servers proxy ProdCom, poll ProPresenter, and stream
    live updates over SSE, so browsers never talk to production gear
    directly (no CORS, and API keys never leave the server).
-4. Stores server-wide module config and named layouts under `config/`.
+4. Stores server-wide module config and named layouts in a per-machine data
+   directory outside the app folder, so updating ProdDash never loses them.
 
 Each browser arranges its own tiles (add, drag, resize, remove, per-tile
 settings); the layout autosaves to that browser's `localStorage`. Named
@@ -47,28 +48,69 @@ enable/disable) live in the **admin page** — open **Admin** from the
 dashboard's top bar, or go to `/admin`. Saving re-initialises the module
 immediately; open tiles reconnect on their own.
 
-Shell settings live in [config/proddash.json](config/proddash.json):
+### Where settings are kept
+
+Everything you enter in the admin page (module connection settings, API keys,
+enabled/disabled flags) and every named layout is written to a **data
+directory on the machine running the server** — not into the app folder:
+
+| OS | Data directory |
+| --- | --- |
+| Windows | `%APPDATA%\ProdDash` (e.g. `C:\Users\<you>\AppData\Roaming\ProdDash`) |
+| macOS | `~/Library/Application Support/ProdDash` |
+| Linux | `$XDG_CONFIG_HOME/proddash`, else `~/.config/proddash` |
+
+Because it lives outside the checkout, you can `git pull`, re-clone, or reset
+the app folder from `main` and start the new version with everything still
+configured. The admin page shows the exact path in use, and the server prints
+it at startup (`Settings : …`).
+
+The directory holds `modules.json` (module config) and `layouts/` (named
+layouts), both written by the app itself. It may also hold a `proddash.json`
+with this machine's shell settings — the same keys as the checked-in
+[config/proddash.json](config/proddash.json), which supplies the defaults:
 
 | Key | Meaning |
 | --- | --- |
 | `port` | Port ProdDash serves on (default `24500`) |
 | `adminPasscode` | If set, the admin page asks for this shared passcode. Leave `""` for none — it's a plain-HTTP LAN tool. |
 
-Environment variables `PORT` and `PRODDASH_PASSCODE` override the file.
-`config/modules.json` (module config) and `config/layouts/` (named layouts)
-are written by the app itself.
+Environment variables override both files: `PORT`, `PRODDASH_PASSCODE`, and
+`PRODDASH_DATA_DIR` to put the data directory somewhere else (a relative path
+is taken from the app folder; `PRODDASH_DATA_DIR=config` restores the old
+in-repo location). If the default directory can't be created, the server says
+so and falls back to the app's `config/` folder.
+
+**Upgrading from an earlier version:** the first start copies an existing
+`config/modules.json` and `config/layouts/` from the app folder into the data
+directory, so nothing has to be re-entered. The old files are left in place and
+ignored from then on.
 
 ## Using the dashboard
 
 - **＋** — add any enabled module; multiple tiles of the same module are
   fine (e.g. two transcripts filtered to different channels).
-- Drag a tile by its **title bar** to move it; drag the **corner handle**
-  to resize; **✕** removes it. Tiles sit flush — when two share an edge,
-  hover the seam and a small grab pill appears; drag it to trade width
-  between the two tiles (macOS split-view style).
+- Drag a tile by its **title bar** to move it; drag either **bottom
+  corner** to resize; **✕** removes it. Hover a tile and a small pill
+  appears on its **bottom edge** — drag it to change just the height. If
+  another tile sits directly below, the pill moves the shared edge instead,
+  trading rows between the two so the column keeps its total height. Tiles
+  sit flush — when two share a vertical edge, hover the seam and the same
+  kind of pill appears; drag it to trade width (macOS split-view style).
+- **Fullscreen** (the ⛶ button) is a viewing mode: the menu bar hides (its
+  green tab brings it back, minus the Admin button), the occupied columns
+  stretch to the full width, and every column runs to the
+  bottom of the screen — the last tile in each column is stretched to end
+  there. A short tile like the clock is never stretched into a ribbon: under
+  another tile it slides to the bottom edge and the tile above grows into the
+  gap; alone in its columns it stays as it is. Nothing is saved — the layout
+  reverts when you leave fullscreen. A layout deeper than the screen keeps
+  its normal row height and scrolls.
 - A tile's actions (menus, text size, clear…) live in its **title bar**;
   the small **notch** on the bar's bottom edge hides/shows the whole bar
-  for a clean wall-display look.
+  for a clean wall-display look. The menu bar has the same kind of tab —
+  the green one under the ProdDash name, kept at the left so it never sits
+  on top of a tile's own tab.
 - The **gear** on a tile holds per-tile settings (filters, text size,
   display options) — these belong to this browser's layout, not the server.
 - The **grid icon** — save the current arrangement to the server under a
@@ -130,7 +172,8 @@ ProdDash/
 │   ├── clock/
 │   ├── prodcom-transcript/
 │   └── propresenter-now-next/ (carries its own copy of propresenter-core)
-├── config/                    proddash.json + state written by the app
+├── config/                    proddash.json defaults (runtime state lives in the
+│                              per-machine data directory — see "Configure")
 ├── docs/MODULE-GUIDE.md       how to build and install a module
 ├── tools/prodcom-mock.js      mock ProdCom API for development
 ├── prodcom-listener/          reference fork — read-only, not served
