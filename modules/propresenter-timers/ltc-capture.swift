@@ -17,7 +17,6 @@
 //       streams the device's inputs as interleaved s16le to stdout, at the
 //       device's own sample rate and channel count (both printed to stderr
 //       at start). The name matches exactly first, then as a substring.
-//       The remote reader (tools/ltc-reader.js) pipes from it the same way.
 //
 // --device matches case-insensitively on a substring of the device name or
 // UID; ambiguity is an error listing the candidates. Capture uses an

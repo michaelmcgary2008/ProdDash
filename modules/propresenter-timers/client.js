@@ -262,9 +262,8 @@ export default function create({ root, moduleApi }) {
 
   function updateLtcAnchor() {
     const l = state?.ltc;
-    // Only the audio sources are extrapolatable — they know the frame rate.
-    const live = l && l.status === 'running' && l.fps > 0
-      && (l.source === 'listener' || l.source === 'reader');
+    // The listener is extrapolatable — it knows the frame rate.
+    const live = l && l.status === 'running' && l.fps > 0 && l.source === 'listener';
     const tc = live ? parseTc(l.time) : null;
     if (!tc) {
       ltcAnchor = null;
@@ -323,14 +322,9 @@ export default function create({ root, moduleApi }) {
     if (ltc.supported === false) {
       mode = 'unavailable';
       card.timeEl.textContent = '—';
-      // The server says why when it knows (stage password rejected, no
-      // stage field labeled LTC, reader offline, …) — surface that over
-      // the generic line.
-      card.stateEl.textContent = ltc.note || 'Timecode not available on this ProPresenter';
-    } else if (ltc.supported === null) {
-      mode = 'waiting';
-      card.timeEl.textContent = displayTime(ltc.time);
-      card.stateEl.textContent = 'Waiting for ProPresenter…';
+      // The server says why when it knows (listener disabled, no device
+      // selected, capture failed, starting up…) — surface that.
+      card.stateEl.textContent = ltc.note || 'LTC not available';
     } else if (ltc.receiving) {
       mode = 'receiving';
       // With an anchor active, paint the frame it implies for now (this
@@ -350,10 +344,9 @@ export default function create({ root, moduleApi }) {
       card.timeEl.textContent = '—';
       card.stateEl.textContent = 'No signal';
     }
-    // The built-in listener and the remote reader are independent of
-    // ProPresenter, so their card must not gray out with the rest when
-    // only ProPresenter is unreachable.
-    const live = ltc.source === 'reader' || ltc.source === 'listener' ? ' src-reader' : '';
+    // The built-in listener is independent of ProPresenter, so its card
+    // must not gray out with the rest when only ProPresenter is unreachable.
+    const live = ltc.source === 'listener' ? ' src-reader' : '';
     card.el.className = `tm-card tm-card-ltc is-ltc-${mode}${live}`;
   }
 
@@ -377,7 +370,7 @@ export default function create({ root, moduleApi }) {
     }
     if (!state.enabled) {
       bannerEl.hidden = true;
-      // The LTC listener/reader feed us with or without ProPresenter — an
+      // The LTC listener feeds us with or without ProPresenter — an
       // LTC-only setup is working, not broken.
       if (state.ltc?.supported) moduleApi.setStatus('ok', 'LTC only — no ProPresenter host configured');
       else moduleApi.setStatus('error', 'No ProPresenter host configured — set one in Admin');

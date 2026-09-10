@@ -215,8 +215,6 @@
   text-align: center;
 }
 
-[data-module="propresenter-timers"] .tm-card-ltc.is-ltc-waiting .tm-time { color: var(--muted); }
-
 /* ── the "Timers ▾" menu (container styled/positioned by the shell) ── */
 
 [data-module="propresenter-timers"] .tm-menu-item {

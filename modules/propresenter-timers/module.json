@@ -7,53 +7,41 @@
   "client": "client.js",
   "server": "server.js",
   "style": "style.css",
-  "minSize": {
-    "w": 2,
-    "h": 1
-  },
-  "defaultSize": {
-    "w": 4,
-    "h": 2
-  },
+  "minSize": { "w": 2, "h": 1 },
+  "defaultSize": { "w": 4, "h": 2 },
   "configSchema": {
     "propresenter": {
       "type": "endpoint",
       "label": "ProPresenter",
-      "default": {
-        "host": "",
-        "port": 1025
-      }
+      "group": "ProPresenter",
+      "default": { "host": "", "port": 1025 }
     },
     "password": {
       "type": "password",
       "label": "API password (only if set in ProPresenter)",
+      "group": "ProPresenter",
       "default": ""
     },
     "ltcEnabled": {
-      "type": "boolean",
+      "type": "switch",
       "label": "LTC listener — decode timecode from an audio input on this machine",
+      "group": "LTC Timecode",
       "default": false
     },
     "ltcDevice": {
       "type": "select",
-      "label": "LTC audio device",
+      "label": "Audio device",
+      "group": "LTC Timecode",
+      "showWhen": "ltcEnabled",
       "default": "",
       "optionsRoute": "/ltc/devices"
     },
     "ltcChannel": {
       "type": "number",
-      "label": "LTC channel on that device (1-based)",
+      "label": "Channel on that device (1-based)",
+      "group": "LTC Timecode",
+      "showWhen": "ltcEnabled",
       "default": 1
-    },
-    "ingestToken": {
-      "type": "password",
-      "label": "LTC reader token (optional — for tools/ltc-reader.js on another machine)",
-      "default": ""
-    },
-    "stagePassword": {
-      "type": "password",
-      "label": "Stage display password (LTC fallback via a stage field labeled \"LTC\")",
-      "default": ""
     }
   }
 }

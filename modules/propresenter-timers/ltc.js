@@ -2,14 +2,12 @@
 
 /**
  * LTC engine for the propresenter-timers module — SMPTE LTC decode from PCM,
- * interleaved-channel extraction, and an encoder for tests and demos.
+ * interleaved-channel extraction, and an encoder for tests.
  *
- * Used in-process by the module's built-in LTC listener (ltc-listener.js),
- * and by the standalone remote reader (tools/ltc-reader.js) for machines
- * other than the ProdDash server. All design notes and the full protocol
- * commentary live with the classes below; the encoder exists so the decode
- * path can be proven end-to-end without timecode hardware (see the reader's
- * --selftest).
+ * Used in-process by the module's built-in LTC listener (ltc-listener.js).
+ * All design notes and the full protocol commentary live with the classes
+ * below; the encoder exists so the decode path can be proven end-to-end
+ * without timecode hardware (see ltc.selftest.js).
  */
 
 /* ══ decoder ═══════════════════════════════════════════════════════════ */

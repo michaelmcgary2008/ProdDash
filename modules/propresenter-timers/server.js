@@ -3,15 +3,13 @@
 /**
  * ProPresenter Timers — server part.
  *
- * Polls the ProPresenter openAPI for the configured timer list, the live
- * timer values, and (when the connected build exposes it) LTC timecode, and
- * fans one merged state object out to every tile over SSE. Browsers never
- * talk to ProPresenter directly.
+ * Polls the ProPresenter openAPI for the configured timer list and the live
+ * timer values, decodes LTC timecode from an audio input, and fans one
+ * merged state object out to every tile over SSE. Browsers never talk to
+ * ProPresenter or the audio hardware directly.
  *
  *   GET /state        → { state: <state> }   (instant paint for new tiles)
  *   GET /stream       → SSE, `state` events  (change-detected, heartbeated)
- *   POST /ltc         → remote LTC ingest: tools/ltc-reader.js on another
- *                       machine reports { state, time, fps, df } here.
  *   GET /ltc/devices  → this machine's audio input devices, for the admin
  *                       page's device picker (select + optionsRoute).
  *
@@ -25,26 +23,14 @@
  *     `state` enum is stopped|running|complete|overrunning|overran — but the
  *     spec's own response example says "overrun", so treat anything containing
  *     "overr" as overrun. The API exposes NO per-timer color anywhere.
- *   GET /v1/timecode/status → NOT in the published spec. The spec (fetched
- *     2026-08, 0 mentions of "timecode", not in the /v1/status/updates
- *     allowlist either) documents no timecode/LTC route at all — verified
- *     live: ProPresenter 21.4 returns 404. We probe this candidate route
- *     once per connection anyway so a future ProPresenter that adds it
- *     lights up without a module update.
  *
- * Because the HTTP API has no timecode, LTC comes from the audio signal
- * itself. The whole LTC feature sits behind the admin "LTC listener"
- * switch — off means no LTC tile in the picker, no probes, and the ingest
- * route answers 409. When on, the sources in precedence order:
- *   1. the built-in listener (ltc-listener.js — this machine captures the
- *      admin-selected device/channel and decodes in-process) while it has
- *      actual data;
- *   2. a fresh remote reader report (POST /ltc, tools/ltc-reader.js on the
- *      machine that can hear the LTC when this one can't);
- *   3. the listener's own "no signal" verdict (healthy capture, silent
- *      feed — believed over the indirect sources below);
- *   4. the HTTP timecode route if some future ProPresenter answers it;
- *   5. a stage-display field labeled "LTC" (see stage-ws.js).
+ * LTC: ProPresenter exposes no timecode over any API (the HTTP openAPI has
+ * no timecode route, and the classic stage-display websocket drops the
+ * field — both verified dead on ProPresenter 21.4), so LTC is read from the
+ * audio signal itself. Behind the admin "LTC listener" switch: off means no
+ * LTC tile in the picker and nothing captured; on, the built-in listener
+ * (ltc-listener.js) captures the admin-selected device/channel and decodes
+ * in-process. It is the module's one and only LTC source.
  *
  * ProPresenter's built-in HTTP server is easily overwhelmed (see the hot-path
  * notes in ../propresenter-now-next/propresenter-core). So: requests run
@@ -64,12 +50,8 @@ const SLOW_EVERY = 4;
 const REQUEST_TIMEOUT_MS = 4000;
 /** SSE comment ping cadence — keeps idle connections alive through sleepy Wi-Fi. */
 const HEARTBEAT_MS = 15000;
-/** A reader report older than this no longer speaks for the LTC feed —
-    the reader posts at least 1×/s, so 6s of silence means it died. */
-const INGEST_STALE_MS = 6000;
 
 const { spawn } = require('child_process');
-const { createStageLtcClient } = require('./stage-ws');
 const { createLtcListener } = require('./ltc-listener');
 
 /** Set by init(), read by the routes — both are rebuilt together on remount. */
@@ -82,12 +64,11 @@ function clearedState(enabled, ltcEnabled = false) {
     reachable: false,
     lastError: '',
     timers: [],
-    // supported: null = no verdict yet (probing, or ProPresenter
-    // unreachable); true once a timecode source is live; false when every
-    // source came up empty (note says why, when we know). status is the
-    // richer verdict (running|stopped|nosignal); fps/df only when the
-    // source knows them (the reader decodes both from the LTC bits).
-    ltc: { supported: null, time: '', receiving: false, status: '', fps: 0, df: false, source: '', note: '' },
+    // supported true once the listener has a verdict; false when the
+    // listener is off, has no device, or its capture failed (note says
+    // why). status is running|stopped|nosignal; while running, ageMs lets
+    // clients count frames locally between updates.
+    ltc: { supported: false, time: '', receiving: false, status: '', fps: 0, df: false, source: '', note: '' },
   };
 }
 
@@ -114,95 +95,34 @@ module.exports = {
 
     /** uuid → { name, index, type, allowsOverrun } from /v1/timers, in list order. */
     let timerConfigs = new Map();
-    /** null = probe /v1/timecode/status on the next reachable tick. */
-    let ltcSupported = null;
-    let ltcLast = { time: '', receiving: false };
-    /** Live view of the stage-display websocket's LTC field (stage-ws.js). */
-    let stageLtc = { bound: false, time: '', receiving: false, note: '' };
-    /** Latest POST /ltc report from a remote reader, null until one lands. */
-    let ingest = null; // { state, time, fps, df, source, at }
-    let ingestExpiry = null;
-    /** Built-in listener's latest word: { state, time, fps, df } | { error }. */
+    /** Built-in listener's latest word: { state, time, fps, df, ageMs } | { error }. */
     let listenerLtc = null;
 
-    /** One LTC verdict from every source, in the precedence the header
-        comment explains. Text sources don't know fps — receiving/frozen/
-        empty maps onto the same status vocabulary the audio decode uses. */
+    /** The LTC verdict — the built-in listener is the only source. */
     function composeLtc() {
       if (!ltcEnabled) {
         return { supported: false, source: '', time: '', receiving: false, status: '', fps: 0, df: false, note: 'LTC listener disabled' };
       }
-      const audioVerdict = (src, tag, ageMs) => ({
+      if (!listenerLtc) {
+        return { supported: false, source: '', time: '', receiving: false, status: '', fps: 0, df: false, note: 'Starting LTC listener…' };
+      }
+      if (listenerLtc.error) {
+        return { supported: false, source: '', time: '', receiving: false, status: '', fps: 0, df: false, note: listenerLtc.error };
+      }
+      const running = listenerLtc.state === 'running';
+      return {
         supported: true,
-        source: tag,
-        time: src.time,
-        receiving: src.state === 'running',
-        status: src.state,
-        fps: src.fps,
-        df: src.df,
+        source: 'listener',
+        time: listenerLtc.time,
+        receiving: running,
+        status: listenerLtc.state,
+        fps: listenerLtc.fps,
+        df: listenerLtc.df,
         // While running: how old this timecode is, so clients can pin the
         // anchor to their own clock and count frames between updates.
-        ...(src.state === 'running' && Number.isFinite(ageMs) ? { ageMs: Math.max(0, ageMs) } : {}),
+        ...(running && Number.isFinite(listenerLtc.ageMs) ? { ageMs: Math.max(0, listenerLtc.ageMs) } : {}),
         note: '',
-      });
-      // The built-in listener while it has actual data …
-      if (listenerLtc && !listenerLtc.error && listenerLtc.state !== 'nosignal') {
-        return audioVerdict(listenerLtc, 'listener', listenerLtc.ageMs);
-      }
-      // … else a fresh remote reader (during migrations both may run —
-      // real data beats no data) …
-      if (ingest && Date.now() - ingest.at < INGEST_STALE_MS) {
-        return audioVerdict(ingest, 'reader', Date.now() - ingest.at);
-      }
-      // … else a healthy-but-silent listener is believed over the indirect
-      // sources: no audio means the LTC really stopped.
-      if (listenerLtc && !listenerLtc.error) {
-        return audioVerdict(listenerLtc, 'listener');
-      }
-      const textStatus = (src) => (src.receiving ? 'running' : src.time ? 'stopped' : 'nosignal');
-      if (ltcSupported === true) {
-        return { supported: true, source: 'api', time: ltcLast.time, receiving: ltcLast.receiving, status: textStatus(ltcLast), fps: 0, df: false, note: '' };
-      }
-      if (stageLtc.bound) {
-        return { supported: true, source: 'stage', time: stageLtc.time, receiving: stageLtc.receiving, status: textStatus(stageLtc), fps: 0, df: false, note: '' };
-      }
-      if (ingest) {
-        // A reader reported once but went silent — likelier to be the
-        // story than anything the stage feed has to say.
-        return { supported: false, source: '', time: '', receiving: false, status: '', fps: 0, df: false, note: 'LTC reader offline' };
-      }
-      if (!listenerLtc?.error && ltcSupported === null && !stageLtc.note && enabled) {
-        return { supported: null, source: '', time: '', receiving: false, status: '', fps: 0, df: false, note: '' };
-      }
-      return { supported: false, source: '', time: '', receiving: false, status: '', fps: 0, df: false, note: listenerLtc?.error || stageLtc.note || '' };
-    }
-
-    /** Timecode-shaped text — same shape rule as the other sources. */
-    const TC_SHAPE = /^-?\d{1,2}:\d{2}:\d{2}[:;.]\d{1,3}$/;
-    const INGEST_STATES = new Set(['running', 'stopped', 'nosignal']);
-
-    /** Validated apply of one POST /ltc body. Returns '' or a client error. */
-    function applyIngest(body) {
-      if (!body || typeof body !== 'object') return 'body must be a JSON object';
-      const state = INGEST_STATES.has(body.state) ? body.state : '';
-      if (!state) return 'state must be one of running|stopped|nosignal';
-      const time = typeof body.time === 'string' && TC_SHAPE.test(body.time.trim()) ? body.time.trim() : '';
-      if (state === 'running' && !time) return 'a running report needs a timecode-shaped time';
-      ingest = {
-        state,
-        time,
-        fps: Number.isFinite(body.fps) && body.fps > 0 && body.fps <= 120 ? Number(body.fps) : 0,
-        df: body.df === true,
-        source: String(body.source || '').slice(0, 60),
-        at: Date.now(),
       };
-      // When the reader dies mid-run the card must not stay green forever —
-      // re-broadcast once this report goes stale so the fallbacks take over.
-      clearTimeout(ingestExpiry);
-      ingestExpiry = setTimeout(broadcast, INGEST_STALE_MS + 100);
-      ingestExpiry.unref?.();
-      broadcast();
-      return '';
     }
 
     function url(target) {
@@ -283,61 +203,6 @@ module.exports = {
       return out;
     }
 
-    /**
-     * Liberal parse of a hypothetical timecode-status body (no spec documents
-     * its shape — see the header comment). Looks for an "HH:MM:SS:FF"-shaped
-     * string and a receiving/running boolean under likely key names.
-     */
-    function parseLtc(body) {
-      const out = { time: '', receiving: false };
-      if (!body || typeof body !== 'object') return out;
-      const TC = /^-?\d{1,2}:\d{2}:\d{2}[:;.]\d{1,3}$/;
-      for (const key of ['time', 'timecode', 'current_time', 'value']) {
-        if (typeof body[key] === 'string' && TC.test(body[key])) {
-          out.time = body[key];
-          break;
-        }
-      }
-      if (!out.time) {
-        for (const value of Object.values(body)) {
-          if (typeof value === 'string' && TC.test(value)) {
-            out.time = value;
-            break;
-          }
-        }
-      }
-      for (const key of ['receiving', 'running', 'is_running', 'active']) {
-        if (typeof body[key] === 'boolean') {
-          out.receiving = body[key];
-          break;
-        }
-      }
-      return out;
-    }
-
-    async function pollLtc() {
-      if (!ltcEnabled) return;
-      // A 404 verdict is retried once a minute — an endpoint appearing
-      // without an unreachable spell (ProPresenter hot-swapped in testing,
-      // or some future in-place upgrade) must not stay invisible forever.
-      if (ltcSupported === false && tick % 120 !== 0) return;
-      try {
-        const body = await requestJson('/v1/timecode/status');
-        if (ltcSupported === null) log('timecode endpoint answered — LTC card is live');
-        ltcSupported = true;
-        ltcLast = parseLtc(body);
-      } catch (err) {
-        // 404 = this ProPresenter has no timecode API (the expected case, as
-        // of API v1). Anything else is a real failure — let the tick handle it.
-        if (err && err.status === 404) {
-          ltcSupported = false;
-          ltcLast = { time: '', receiving: false };
-          return;
-        }
-        throw err;
-      }
-    }
-
     function broadcast() {
       latest = {
         enabled,
@@ -377,43 +242,21 @@ module.exports = {
         }
         // THE HOT PATH — live values every tick.
         const currentTimes = await requestJson('/v1/timers/current');
-        // Probe timecode once per connection; poll it only when it exists.
-        await pollLtc();
         latest.timers = mergeTimers(currentTimes);
         latest.reachable = true;
         latest.lastError = '';
       } catch (err) {
         latest.reachable = false;
         latest.lastError = err instanceof Error ? err.message : String(err);
-        // Re-probe timecode after a reconnect — the unreachable spell may
-        // have been a ProPresenter upgrade or a different machine.
-        ltcSupported = null;
-        ltcLast = { time: '', receiving: false };
       }
       broadcast();
       if (stopped) return;
       pollTimer = setTimeout(pollTick, latest.reachable ? POLL_MS : RETRY_MS);
     }
 
-    let stageClient = null;
     if (enabled) {
       pollTick();
       log(`polling timers on ${host}:${port}`);
-      if (ltcEnabled) {
-        stageClient = createStageLtcClient({
-          host,
-          port,
-          password: String(config.stagePassword || ''),
-          log,
-          // The HTTP poller knows every configured timer's uuid — anything
-          // else streaming timecode-shaped text can be heuristically bound.
-          isTimerUid: (uid) => timerConfigs.has(uid),
-          onUpdate(update) {
-            stageLtc = update;
-            broadcast();
-          },
-        });
-      }
     } else {
       log('no ProPresenter host configured — set one in /admin');
     }
@@ -450,15 +293,13 @@ module.exports = {
     }, HEARTBEAT_MS);
     heartbeat.unref?.();
 
-    current = { streams, getLatest: () => latest, ingest: applyIngest };
+    current = { streams, getLatest: () => latest };
 
     return {
       stop() {
         stopped = true;
         clearTimeout(pollTimer);
-        clearTimeout(ingestExpiry);
         clearInterval(heartbeat);
-        stageClient?.stop();
         ltcListener?.stop();
         for (const res of streams) {
           try { res.end(); } catch { /* already gone */ }
@@ -467,20 +308,19 @@ module.exports = {
         if (current && current.streams === streams) current = null;
       },
       health() {
-        const ltcSource = { listener: ', LTC via listener', reader: ', LTC via remote reader', api: ', LTC via API', stage: ', LTC via stage display' };
+        // LTC status suffix for the admin health line.
+        const ltcNote = !ltcEnabled
+          ? ''
+          : latest.ltc.supported
+            ? `, LTC ${latest.ltc.status}`
+            : (latest.ltc.note ? ` (LTC: ${latest.ltc.note})` : '');
         if (!enabled) {
-          // The LTC listener/reader work regardless of ProPresenter — an
+          // The LTC listener works regardless of ProPresenter — an
           // LTC-only setup is half-configured but working.
-          if (latest.ltc.supported) return { status: 'ok', message: `No ProPresenter host configured — LTC only${ltcSource[latest.ltc.source] || ''}` };
+          if (latest.ltc.supported) return { status: 'ok', message: `No ProPresenter host configured — LTC only, ${latest.ltc.status}` };
           return { status: 'error', message: 'No ProPresenter host configured' };
         }
         if (latest.reachable) {
-          const ltc = latest.ltc;
-          const ltcNote = !ltcEnabled
-            ? ''
-            : ltc.supported
-              ? (ltcSource[ltc.source] || '')
-              : (ltc.note ? ` (LTC: ${ltc.note})` : '');
           return { status: 'ok', message: `Polling ${host}:${port}, ${latest.timers.length} timer(s)${ltcNote}` };
         }
         return {
@@ -531,7 +371,7 @@ module.exports = {
     ];
   },
 
-  routes({ config }) {
+  routes() {
     const sendJson = (res, code, body) => {
       res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify(body));
@@ -560,41 +400,6 @@ module.exports = {
             if (m) options.push({ value: m[1], label: `${m[1]} — ${m[2]} ch @ ${(Number(m[3]) / 1000)} kHz` });
           }
           sendJson(res, 200, { options });
-        });
-      },
-
-      // A remote LTC reader (tools/ltc-reader.js, on the machine that can
-      // hear the LTC when this one can't) reports here — the one route on
-      // this module that accepts writes, so it optionally carries a shared
-      // token (Admin → "LTC reader token").
-      'POST /ltc': (req, res) => {
-        if (!config.ltcEnabled) {
-          return void sendJson(res, 409, { error: 'LTC listener is disabled in Admin — enable it to accept reader reports' });
-        }
-        const token = String(config.ingestToken || '');
-        if (token) {
-          const given = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-          if (given !== token) return void sendJson(res, 401, { error: 'bad or missing token' });
-        }
-        let body = '';
-        req.on('data', (chunk) => {
-          body += chunk;
-          if (body.length > 4096) {
-            sendJson(res, 413, { error: 'body too large' });
-            req.destroy();
-          }
-        });
-        req.on('end', () => {
-          if (!current) return void sendJson(res, 503, { error: 'module not mounted' });
-          let parsed;
-          try {
-            parsed = JSON.parse(body);
-          } catch {
-            return void sendJson(res, 400, { error: 'invalid JSON' });
-          }
-          const problem = current.ingest(parsed);
-          if (problem) return void sendJson(res, 400, { error: problem });
-          sendJson(res, 200, { ok: true });
         });
       },
 
