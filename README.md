@@ -65,8 +65,9 @@ the app folder from `main` and start the new version with everything still
 configured. The admin page shows the exact path in use, and the server prints
 it at startup (`Settings : …`).
 
-The directory holds `modules.json` (module config) and `layouts/` (named
-layouts), both written by the app itself. It may also hold a `proddash.json`
+The directory holds `modules.json` (module config), `layouts/` (named
+layouts) and `modules/` (modules installed from the admin page), all written
+by the app itself. It may also hold a `proddash.json`
 with this machine's shell settings — the same keys as the checked-in
 [config/proddash.json](config/proddash.json), which supplies the defaults:
 
@@ -85,6 +86,47 @@ so and falls back to the app's `config/` folder.
 `config/modules.json` and `config/layouts/` from the app folder into the data
 directory, so nothing has to be re-entered. The old files are left in place and
 ignored from then on.
+
+## Installing modules and updating
+
+Everything below happens in the **admin page**; ProdDash talks to its GitHub
+repository (`michaelmcgary2008/ProdDash`, branch `main` — change with
+`repo` / `branch` in `proddash.json` or the `PRODDASH_REPO` variable,
+`owner/repo#branch`). It downloads one small archive of the branch, at most
+every few minutes, only while the admin page is open or for the update check
+below. Nothing is installed without someone clicking.
+
+- **Available modules** lists modules in the repo that aren't installed
+  here. **Install** downloads the module into the data directory's `modules/`
+  and starts it right away — nothing is written into the app folder, and no
+  restart is needed. Modules that ship with your copy of ProdDash are
+  "bundled"; ones you installed are "installed"; if both exist, the newer
+  version runs.
+- **Uninstall** on a module card removes an installed module's files. For a
+  bundled module (its folder belongs to the app) it hides the module from
+  every dashboard instead; it reappears under Available modules and can be
+  brought back without downloading. Settings are kept either way.
+- **Module updates**: when the repo has a newer version of an installed
+  module, its card shows **Update to vX**.
+- **Version requirements**: every module declares the ProdDash versions it
+  needs (`"proddash": ">=1.1.0"` in its manifest). A module that needs a
+  newer shell is listed but not loaded, and cannot be installed until
+  ProdDash is updated.
+- **ProdDash updates**: the admin page checks the repo shortly after start
+  and every six hours, and shows a banner when `main` has a newer version
+  (or new commits). **Update now** brings the app folder up to date and
+  restarts the server; dashboards reconnect on their own. A git checkout is
+  updated with `git pull --ff-only` (only when it is on the repo branch with
+  no local changes — otherwise the banner says why and you update with git).
+  A plain folder (no `.git`) has the repo archive unpacked over it; files
+  removed upstream are left behind but harmless. Settings and layouts are
+  never touched. **What changed** opens the commit comparison on GitHub.
+- **Restarting**: after an update the server exits with code 75 and starts
+  its own replacement, which waits for the port to free up. If you supervise
+  ProdDash with your own launcher, set `PRODDASH_LAUNCHER=1` so the server
+  just exits and your launcher restarts it on exit code 75.
+  `PRODDASH_NO_REMOTE_CHECK=1` turns off the periodic check (the admin page
+  still checks when opened).
 
 ## Using the dashboard
 
@@ -172,6 +214,7 @@ ProdDash/
 │   ├── clock/
 │   ├── prodcom-transcript/
 │   └── propresenter-now-next/ (carries its own copy of propresenter-core)
+├── package.json               name + version (what the update check compares)
 ├── config/                    proddash.json defaults (runtime state lives in the
 │                              per-machine data directory — see "Configure")
 ├── docs/MODULE-GUIDE.md       how to build and install a module

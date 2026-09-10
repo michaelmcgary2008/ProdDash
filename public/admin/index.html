@@ -11,7 +11,7 @@
 </head>
 <body>
   <header id="topbar">
-    <span id="brand">Prod<span class="accent">Dash</span> <span class="admin-tag">Admin</span></span>
+    <span id="brand">Prod<span class="accent">Dash</span> <span class="admin-tag">Admin</span> <span class="admin-version" id="shell-version"></span></span>
     <span class="spacer"></span>
     <a class="tb-btn" href="/">← Dashboard</a>
   </header>
@@ -27,6 +27,18 @@
       <div class="admin-status" id="login-status"></div>
     </section>
 
+    <section class="admin-card update-card" id="update-card" hidden>
+      <div class="update-head">
+        <span class="dot connecting"></span>
+        <strong id="update-title">Update available</strong>
+        <span class="spacer"></span>
+        <a class="btn small" id="update-changes" href="#" target="_blank" rel="noopener">What changed</a>
+        <button class="btn small primary" id="update-btn">Update now</button>
+      </div>
+      <p class="admin-copy" id="update-copy"></p>
+      <div class="admin-status" id="update-status"></div>
+    </section>
+
     <section id="modules-section" hidden>
       <h1 class="admin-h1">Modules</h1>
       <p class="admin-copy">Server-wide settings, shared by every dashboard. Saving re-initialises the
@@ -35,6 +47,18 @@
       <p class="admin-copy admin-storage" id="storage-note" hidden>Saved on the server at
         <code id="storage-path"></code> — outside the app folder, so updating ProdDash keeps them.</p>
       <div id="modules-list"></div>
+    </section>
+
+    <section id="available-section" hidden>
+      <h1 class="admin-h1">Available modules</h1>
+      <p class="admin-copy">Modules in the ProdDash repo that aren't installed here. Installing downloads the module
+        into the server's data directory — no restart, nothing written into the app folder. A module that needs a
+        newer ProdDash can't be installed until the shell is updated.</p>
+      <div class="catalog-toolbar">
+        <button class="btn small" id="catalog-refresh">Check again</button>
+        <span class="admin-status" id="catalog-status"></span>
+      </div>
+      <div id="available-list"></div>
     </section>
 
     <section id="layouts-section" hidden>

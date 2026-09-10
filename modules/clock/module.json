@@ -2,6 +2,7 @@
   "id": "clock",
   "name": "Clock",
   "version": "1.0.0",
+  "proddash": ">=1.1.0",
   "description": "Big booth clock — the smallest possible ProdDash module",
   "client": "client.js",
   "style": "style.css",

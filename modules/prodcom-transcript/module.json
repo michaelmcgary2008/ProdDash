@@ -2,6 +2,7 @@
   "id": "prodcom-transcript",
   "name": "ProdCom",
   "version": "1.0.0",
+  "proddash": ">=1.1.0",
   "description": "Live ProdCom transcript stream",
   "client": "client.js",
   "server": "server.js",
