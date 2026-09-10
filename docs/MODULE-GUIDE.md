@@ -9,6 +9,31 @@ their own dashboards, move and resize them, and give each tile its own
 per-tile settings. Your module renders inside the tile and talks to the
 outside world only through the small API the shell hands it.
 
+## Rules every module follows
+
+These are not style preferences — the admin page, the installer and the
+people running the booth depend on them.
+
+1. **All settings live in the ProdDash admin page.** Server-wide settings go
+   in `configSchema`, per-tile settings in `instanceSchema`. Never a separate
+   setup page, wizard, config file the operator edits by hand, or environment
+   variable.
+2. **Dependencies ship inside the module folder.** Zero dependencies is the
+   norm (the shell has none). Anything you genuinely need is vendored into
+   the module — or fetched by your own `init()` on first start, with the
+   admin health line saying what is happening. No `npm install`, no
+   installer, no "run this first".
+3. **Everything the module does runs inside the module.** No helper scripts,
+   companion programs, daemons or services the operator has to start next to
+   ProdDash. If your feature needs a listener, a decoder or a worker, your
+   server entry owns it: start it in `init()`, stop it in `stop()`, report
+   it in `health()`. A child process the module itself spawns and supervises
+   is fine; a program someone launches by hand is not.
+4. **Declare the ProdDash version you need** (`"proddash": ">=1.1.0"` in the
+   manifest) and **bump your own `version`** whenever you change the module.
+   The admin page refuses to install a module whose requirement the running
+   shell doesn't meet, and it offers updates by comparing versions.
+
 ## The shape of a module
 
 A module is one folder dropped into `modules/`:
@@ -21,9 +46,16 @@ modules/<id>/
 └── ... assets       (css, images…) served statically at /modules/<id>/
 ```
 
-**Installation is exactly this:** copy the folder into `modules/`, restart
-ProdDash (`node server.js`), then configure and enable it at `/admin`. No
-shell code changes, ever.
+**Installation is exactly this:** in the admin page, open **Available
+modules** and press **Install** — the module is downloaded from the ProdDash
+repo into the server's data directory (`<data dir>/modules/<id>/`) and starts
+immediately. Developing locally? Drop the folder into `modules/` (bundled
+with the checkout) or into the data directory's `modules/` and restart. No
+shell code changes, ever. Modules bundled with a checkout and modules
+installed from the admin page live side by side; when both have the same id
+the newer version runs. **Uninstall** in the admin page removes an installed
+module's files (a bundled one is hidden instead, since its folder belongs to
+the app); its settings are kept for a later reinstall.
 
 ## module.json
 
@@ -32,6 +64,7 @@ shell code changes, ever.
   "id": "my-module",
   "name": "My Module",
   "version": "1.0.0",
+  "proddash": ">=1.1.0",
   "description": "One line shown in the Add-tile picker and the admin page",
   "client": "client.js",
   "server": "server.js",
@@ -52,7 +85,9 @@ shell code changes, ever.
 | --- | --- | --- |
 | `id` | yes | Must equal the folder name. Lowercase, dashes. |
 | `name` | yes | Human name shown on the tile header and in menus. |
-| `version`, `description` | no | Shown in the admin page / picker. |
+| `version` | yes | Your module's version (`x.y.z`). Bump it on every change — the admin page offers updates when the repo's copy is newer than the installed one. |
+| `proddash` | yes | The ProdDash versions this module works with: `">=1.1.0"`, `"^1.1.0"`, `">=1.1.0 <2.0.0"`, or `"*"`. A module whose requirement the running shell doesn't meet is listed in the admin page but never loaded, and can't be installed from the catalog. |
+| `description` | no | Shown in the admin page / picker. |
 | `client` | yes | Client entry file, loaded as an ES module. |
 | `server` | no | Server entry file (CommonJS), loaded with `require()`. |
 | `style` | no | A stylesheet the shell injects once per module. |
@@ -81,8 +116,8 @@ stays selectable even when the route is down or the option has vanished. (See
 `propresenter-timers`' "LTC audio device" for a worked example.)
 
 `password` fields are admin-config only in practice: their values are stored
-in `config/modules.json`, handed to your *server* entry, and **never sent to
-browsers** — not in `/api/modules`, and never echoed back into the admin
+in the server's `modules.json` (in the per-machine data directory, see the
+README), handed to your *server* entry, and **never sent to browsers** — not in `/api/modules`, and never echoed back into the admin
 form. Anything upstream that needs the secret must go through your server
 routes.
 
@@ -114,8 +149,9 @@ web address where protocol or path matter (a page to embed, a webhook).
 Endpoints belong in admin config, not per-tile settings — connections are
 server-wide by design.
 
-Admin config lives in `config/modules.json` (written by the admin page —
-your module never touches that file). Per-tile settings live inside each
+Admin config lives in `modules.json` inside the server's data directory
+(written by the admin page — your module never touches that file, and it
+survives updates of the app folder). Per-tile settings live inside each
 browser's layout.
 
 ## Client entry (`client.js`)

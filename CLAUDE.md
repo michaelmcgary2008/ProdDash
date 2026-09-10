@@ -3,7 +3,10 @@
 Modular production dashboard web app for Waters Church, developed in this repo.
 The app lives at the repo root and is built: zero-dependency Node server
 (`server.js`, Node 18+), dashboard shell client in `public/`, admin page at
-`/admin`, modules in `modules/`. [SPEC.md](SPEC.md) was the authority for the
+`/admin`, modules in `modules/`. Runtime state (module config, named layouts)
+is written to a per-machine data directory outside the checkout
+(`PRODDASH_DATA_DIR` overrides; see README "Where settings are kept") — never
+add code that writes runtime state into the repo folder. [SPEC.md](SPEC.md) was the authority for the
 initial build; [README.md](README.md) has run/configure/use instructions.
 
 ## Building a new module — read docs/MODULE-GUIDE.md first
@@ -13,8 +16,16 @@ contract** (manifest, client factory + moduleApi, optional server entry,
 title-bar controls). The rules that matter most:
 
 - A module is one self-contained folder in `modules/` — **never modify the
-  shell** (`server.js`, `public/`) to add one. Installation = drop the folder,
-  restart, configure in `/admin`.
+  shell** (`server.js`, `public/`) to add one. Installation = the admin page's
+  Available modules (downloads from the repo into the data directory), or
+  drop the folder and restart; configure in `/admin`.
+- **All settings in the admin page** (`configSchema` / `instanceSchema`) —
+  never a separate setup page, hand-edited file or env var. **Dependencies
+  ship inside the module folder** (zero deps is the norm). **Everything the
+  module does runs inside its server entry** — no helper scripts, companion
+  programs or daemons the operator starts by hand; a listener or decoder is
+  started in `init()` and stopped in `stop()`. Declare `"proddash": ">=x.y.z"`
+  and bump the module's `version` on every change.
 - Browsers never call upstream services directly; the module's server routes
   proxy everything (no CORS, secrets stay server-side).
 - Style with the shell's CSS variables only, scoped under
