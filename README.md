@@ -168,8 +168,10 @@ below. Nothing is installed without someone clicking.
 
 - **ProdCom** — live transcript stream with in-place updates of in-progress
   speech, channel colors, per-tile channel visibility toggles and group
-  presets, timestamps, text size and jump-to-latest in the title bar.
+  presets, timestamps, text size, a top-down / bottom-up direction toggle
+  and jump-to-latest in the title bar.
   Admin config: ProdCom server (host : port), API key.
+  Tile settings: channel icons, direction and timestamps.
 - **ProPresenter** — what's live and what's next, with slide progress,
   driven by the shared `propresenter-core` client (ProPresenter 7/20).
   Admin config: ProPresenter endpoint (host : port), password.

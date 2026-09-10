@@ -2,9 +2,9 @@
 
    Ported from prodcom-listener/public/app.js into the ProdDash module
    contract: everything lives inside the tile's root, per-tile state
-   (hidden channels, timestamps, text size) persists in instance settings,
-   and all network traffic goes through moduleApi (the module's server
-   proxy at /prodcom/*). */
+   (hidden channels, channel icons, timestamps, text size, flow direction)
+   persists in instance settings, and all network traffic goes through
+   moduleApi (the module's server proxy at /prodcom/*). */
 
 export default function create({ root, moduleApi }) {
   /* ── per-instance state ─────────────────────────────────────────── */
@@ -12,7 +12,7 @@ export default function create({ root, moduleApi }) {
   const channels = new Map(); // channelId -> {name, color}
   const groups = new Map();   // groupId -> {name, channelIds}
   const entryEls = new Map(); // entryId -> element
-  let pinnedToBottom = true;
+  let pinnedToLatest = true;
   let hiddenChannels = new Set(moduleApi.instanceSettings.hiddenChannels || []);
   let stream = null;          // moduleApi.sse handle
   let bootTimer = null;
@@ -40,10 +40,14 @@ export default function create({ root, moduleApi }) {
   const CLOCK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
   const JUMP_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>';
   const CLEAR_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></svg>';
+  const CHANNELS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16l-6 7.4V19l-4 2v-8.6z"/></svg>';
+  // arrow shows where new messages land: down = oldest first, up = newest first
+  const FLOW_DOWN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4v14"/><path d="m3 15 3 3 3-3"/><path d="M12 5h8"/><path d="M12 12h8"/><path d="M12 19h6"/></svg>';
+  const FLOW_UP_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 20V6"/><path d="m3 9 3-3 3 3"/><path d="M12 5h8"/><path d="M12 12h8"/><path d="M12 19h6"/></svg>';
 
   let channelMenuEl = null; // the open menu's element (filled on each open)
   const channelsMenu = moduleApi.header.addMenu({
-    label: 'Channels ▾',
+    icon: CHANNELS_SVG,
     title: 'Choose visible channels',
     build(menu) {
       menu.classList.add('pt-menu');
@@ -52,6 +56,11 @@ export default function create({ root, moduleApi }) {
     },
   });
   channelsMenu.button.classList.add('pt-channels-btn');
+  // the icon carries the label; a count rides alongside it while filtering
+  const channelCountEl = document.createElement('span');
+  channelCountEl.className = 'pt-count';
+  channelCountEl.hidden = true;
+  channelsMenu.button.appendChild(channelCountEl);
 
   let timeBtn = null;
   timeBtn = moduleApi.header.addButton({
@@ -71,13 +80,24 @@ export default function create({ root, moduleApi }) {
   moduleApi.header.addButton({ label: 'A−', title: 'Smaller text', onClick: () => bumpTextSize(-2) });
   moduleApi.header.addButton({ label: 'A+', title: 'Larger text', onClick: () => bumpTextSize(2) });
 
+  // icon and tooltip track the current direction — applyInstanceSettings sets both
+  const flowBtn = moduleApi.header.addButton({
+    icon: FLOW_DOWN_SVG,
+    onClick() {
+      moduleApi.saveInstanceSettings({ newestFirst: !moduleApi.instanceSettings.newestFirst });
+      applyInstanceSettings();
+      // the two directions have opposite "latest" ends — follow the flip
+      if (pinnedToLatest) scrollToLatest();
+    },
+  });
+
   moduleApi.header.addButton({
     icon: JUMP_SVG,
     title: 'Jump to latest',
     onClick() {
-      pinnedToBottom = true;
+      pinnedToLatest = true;
       jumpBtn.hidden = true;
-      scrollToBottom();
+      scrollToLatest();
     },
   });
 
@@ -93,24 +113,19 @@ export default function create({ root, moduleApi }) {
     const size = Math.min(48, Math.max(10, Number(s.textSize) || 15));
     wrap.style.setProperty('--pt-size', size + 'px');
     wrap.classList.toggle('show-times', Boolean(s.showTimes));
+    wrap.classList.toggle('hide-avatars', s.showAvatars === false);
     timeBtn?.classList.toggle('active', Boolean(s.showTimes));
+
+    const up = newestFirst();
+    wrap.classList.toggle('newest-first', up);
+    flowBtn.innerHTML = up ? FLOW_UP_SVG : FLOW_DOWN_SVG;
+    flowBtn.classList.toggle('active', up);
+    flowBtn.title = up
+      ? 'Newest at top — click for newest at bottom'
+      : 'Newest at bottom — click for newest at top';
+    jumpBtn.textContent = (up ? '↑' : '↓') + ' New messages';
   }
   applyInstanceSettings();
-
-  /* ── channel filter (instance setting) ──────────────────────────── */
-
-  function channelFilter() {
-    return String(moduleApi.instanceSettings.channel || '').trim().toLowerCase();
-  }
-
-  /** Entry hidden by the hard per-tile filter (settings.channel)? */
-  function filteredOut(channelId, channelName) {
-    const want = channelFilter();
-    if (!want) return false;
-    const known = channels.get(channelId);
-    const name = ((known && known.name) || channelName || '').toLowerCase();
-    return name !== want && String(channelId).toLowerCase() !== want;
-  }
 
   /* ── channel visibility toggles ─────────────────────────────────── */
 
@@ -119,9 +134,7 @@ export default function create({ root, moduleApi }) {
   }
 
   function applyFilter(el) {
-    const hidden = hiddenChannels.has(el.dataset.channelId)
-      || filteredOut(el.dataset.channelId, el.dataset.channelName);
-    el.classList.toggle('hidden-by-filter', hidden);
+    el.classList.toggle('hidden-by-filter', hiddenChannels.has(el.dataset.channelId));
   }
 
   function toggleChannel(id) {
@@ -130,7 +143,7 @@ export default function create({ root, moduleApi }) {
     persistHidden();
     rebuildChannelMenu();
     entryEls.forEach((el) => applyFilter(el));
-    if (pinnedToBottom) scrollToBottom();
+    if (pinnedToLatest) scrollToLatest();
   }
 
   /** Show exactly this group's channels, hide the rest */
@@ -139,7 +152,7 @@ export default function create({ root, moduleApi }) {
     persistHidden();
     rebuildChannelMenu();
     entryEls.forEach((el) => applyFilter(el));
-    if (pinnedToBottom) scrollToBottom();
+    if (pinnedToLatest) scrollToLatest();
   }
 
   function groupIsActive(g) {
@@ -150,18 +163,24 @@ export default function create({ root, moduleApi }) {
     );
   }
 
-  function updateChannelsLabel() {
+  /* The button is an icon, so the "some channels are hidden" state shows as
+     an accent tint plus a compact count beside it. */
+  function updateChannelsButton() {
     let visibleCount = 0;
     for (const id of channels.keys()) {
       if (!hiddenChannels.has(id)) visibleCount++;
     }
-    channelsMenu.setLabel(visibleCount === channels.size
-      ? 'Channels ▾'
-      : `Channels (${visibleCount}/${channels.size}) ▾`);
+    const filtering = channels.size > 0 && visibleCount !== channels.size;
+    channelCountEl.textContent = filtering ? `${visibleCount}/${channels.size}` : '';
+    channelCountEl.hidden = !filtering;
+    channelsMenu.button.classList.toggle('active', filtering);
+    channelsMenu.button.title = filtering
+      ? `Channels — showing ${visibleCount} of ${channels.size}`
+      : 'Choose visible channels';
   }
 
   function rebuildChannelMenu() {
-    updateChannelsLabel();
+    updateChannelsButton();
     const channelMenu = channelMenuEl;
     if (!channelMenu) return; // menu not opened yet — the label is enough
     channelMenu.innerHTML = '';
@@ -225,25 +244,33 @@ export default function create({ root, moduleApi }) {
 
   /* ── scrolling ──────────────────────────────────────────────────── */
 
+  /** Newest entry at the top (bottom-up) instead of at the bottom? */
+  function newestFirst() {
+    return Boolean(moduleApi.instanceSettings.newestFirst);
+  }
+
   streamEl.addEventListener('scroll', () => {
-    const nearBottom = streamEl.scrollHeight - streamEl.scrollTop - streamEl.clientHeight < 60;
-    pinnedToBottom = nearBottom;
-    if (nearBottom) jumpBtn.hidden = true;
+    const near = newestFirst()
+      ? streamEl.scrollTop < 60
+      : streamEl.scrollHeight - streamEl.scrollTop - streamEl.clientHeight < 60;
+    pinnedToLatest = near;
+    if (near) jumpBtn.hidden = true;
   });
 
   jumpBtn.addEventListener('click', () => {
-    pinnedToBottom = true;
+    pinnedToLatest = true;
     jumpBtn.hidden = true;
-    scrollToBottom();
+    scrollToLatest();
   });
 
-  function scrollToBottom() {
-    streamEl.scrollTop = streamEl.scrollHeight;
+  /** The latest entry is at the top when flipped, at the bottom otherwise. */
+  function scrollToLatest() {
+    streamEl.scrollTop = newestFirst() ? 0 : streamEl.scrollHeight;
   }
 
   function afterInsert(el) {
     if (el.classList.contains('hidden-by-filter')) return;
-    if (pinnedToBottom) scrollToBottom();
+    if (pinnedToLatest) scrollToLatest();
     else jumpBtn.hidden = false;
   }
 
@@ -272,7 +299,6 @@ export default function create({ root, moduleApi }) {
       el = document.createElement('div');
       el.className = 'pt-entry';
       el.dataset.channelId = entry.channelId || '';
-      el.dataset.channelName = entry.channelName || '';
       const info = channelInfo(entry);
       el.style.setProperty('--ch', info.color);
 
@@ -314,7 +340,7 @@ export default function create({ root, moduleApi }) {
       afterInsert(el);
     } else {
       updateEntryEl(el, entry);
-      if (pinnedToBottom && !el.classList.contains('hidden-by-filter')) scrollToBottom();
+      if (pinnedToLatest && !el.classList.contains('hidden-by-filter')) scrollToLatest();
     }
   }
 
@@ -430,7 +456,7 @@ export default function create({ root, moduleApi }) {
       bootTimer = setTimeout(boot, 5000);
       return;
     }
-    scrollToBottom();
+    scrollToLatest();
     connect();
   }
 
@@ -445,7 +471,7 @@ export default function create({ root, moduleApi }) {
       root.innerHTML = ''; // header controls are removed by the shell
     },
     onResize() {
-      if (pinnedToBottom) scrollToBottom();
+      if (pinnedToLatest) scrollToLatest();
     },
   };
 }

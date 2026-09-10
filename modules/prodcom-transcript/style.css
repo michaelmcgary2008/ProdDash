@@ -9,6 +9,17 @@
   flex-direction: column;
 }
 
+/* ── channels button ──
+   Icon-only; the count appears next to it while some channels are hidden. */
+
+[data-module="prodcom-transcript"] .pt-channels-btn { gap: 3px; }
+[data-module="prodcom-transcript"] .pt-count {
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+[data-module="prodcom-transcript"] .pt-count[hidden] { display: none; }
+
 /* ── channels menu ──
    The menu container is created and positioned by the shell (.tile-menu);
    it lives inside the tile, so [data-module] scoping still applies. */
@@ -113,6 +124,7 @@
   background: color-mix(in srgb, var(--ch, var(--muted)) 17%, transparent);
 }
 [data-module="prodcom-transcript"] .pt-entry .avatar svg { width: 66%; height: 66%; display: block; }
+[data-module="prodcom-transcript"] .hide-avatars .pt-entry .avatar { display: none; }
 
 [data-module="prodcom-transcript"] .pt-entry .body { flex: 1; min-width: 0; }
 
@@ -143,6 +155,12 @@
 
 [data-module="prodcom-transcript"] .pt-entry.hidden-by-filter { display: none; }
 
+/* bottom-up: newest entry at the top, the stream reading upwards */
+[data-module="prodcom-transcript"] .newest-first .pt-entries {
+  display: flex;
+  flex-direction: column-reverse;
+}
+
 /* ── jump-to-latest ── */
 
 [data-module="prodcom-transcript"] .pt-jump {
@@ -163,3 +181,9 @@
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
 }
 [data-module="prodcom-transcript"] .pt-jump[hidden] { display: none; }
+
+/* flipped, "latest" is the top of the stream — so is the pill */
+[data-module="prodcom-transcript"] .newest-first .pt-jump {
+  top: 12px;
+  bottom: auto;
+}
