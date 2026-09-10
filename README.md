@@ -140,8 +140,8 @@ below. Nothing is installed without someone clicking.
   sit flush — when two share a vertical edge, hover the seam and the same
   kind of pill appears; drag it to trade width (macOS split-view style).
 - **Fullscreen** (the ⛶ button) is a viewing mode: the menu bar hides (its
-  green tab brings it back, minus the Admin button), the occupied columns
-  stretch to the full width, and every column runs to the
+  green lip at the top-left brings it back, minus the Admin button), the
+  occupied columns stretch to the full width, and every column runs to the
   bottom of the screen — the last tile in each column is stretched to end
   there. A short tile like the clock is never stretched into a ribbon: under
   another tile it slides to the bottom edge and the tile above grows into the
@@ -150,9 +150,11 @@ below. Nothing is installed without someone clicking.
   its normal row height and scrolls.
 - A tile's actions (menus, text size, clear…) live in its **title bar**;
   the small **notch** on the bar's bottom edge hides/shows the whole bar
-  for a clean wall-display look. The menu bar has the same kind of tab —
-  the green one under the ProdDash name, kept at the left so it never sits
-  on top of a tile's own tab.
+  for a clean wall-display look. The menu bar's handle is the **ProdDash
+  name itself**, wrapped in a translucent green pill at the left — click it
+  to hide the bar; the slim green lip it leaves at the top-left edge brings
+  the bar back. It stays at the left so it never sits on top of a tile's
+  own tab.
 - The **gear** on a tile holds per-tile settings (filters, text size,
   display options) — these belong to this browser's layout, not the server.
 - The **grid icon** — save the current arrangement to the server under a
