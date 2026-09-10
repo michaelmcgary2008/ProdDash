@@ -30,8 +30,12 @@
 }
 [data-module="propresenter-timers"] .tm-banner[hidden] { display: none; }
 
-/* Values still on screen while the feed is down are stale — say so visually. */
-[data-module="propresenter-timers"] .tm-wrap.is-stale .tm-grid { opacity: 0.45; }
+/* Values still on screen while the feed is down are stale — say so visually.
+   Per-card, because the reader-fed LTC card is not stale when only
+   ProPresenter is unreachable; it dims only when the ProdDash feed itself
+   is down (is-feed-down) and everything on screen really is old. */
+[data-module="propresenter-timers"] .tm-wrap.is-stale .tm-card { opacity: 0.45; }
+[data-module="propresenter-timers"] .tm-wrap.is-stale:not(.is-feed-down) .tm-card-ltc.src-reader { opacity: 1; }
 
 [data-module="propresenter-timers"] .tm-hint {
   flex: 1;
@@ -54,7 +58,6 @@
   grid-auto-rows: 1fr;
   gap: var(--tm-gap, 8px);
   padding: var(--tm-pad, 10px);
-  transition: opacity 0.3s ease;
 }
 [data-module="propresenter-timers"] .tm-grid[hidden] { display: none; }
 
@@ -80,6 +83,7 @@
   border-radius: 10px;
   background: color-mix(in srgb, var(--bg) 60%, transparent);
   overflow: hidden;
+  transition: opacity 0.3s ease;
 }
 
 [data-module="propresenter-timers"] .tm-name {
@@ -107,6 +111,13 @@
   line-height: 1.05;
   color: var(--text);
   white-space: nowrap;
+}
+
+/* Admin "Timer font: Monospace" — steadier digits as the numbers change.
+   Applies to timer and LTC values alike (both are .tm-time). */
+[data-module="propresenter-timers"] .tm-mono .tm-time {
+  font-family: ui-monospace, "SF Mono", "Menlo", "Cascadia Mono", "Consolas", monospace;
+  letter-spacing: 0;
 }
 
 [data-module="propresenter-timers"] .tm-state {
@@ -198,6 +209,10 @@
 
 @keyframes tm-nosignal-blink { 50% { opacity: 0.35; } }
 
+/* LTC ceased mid-show: hold the last frame, quietly — no alarm colors,
+   stopping the clock is usually somebody doing their job. */
+[data-module="propresenter-timers"] .tm-card-ltc.is-ltc-stopped .tm-time { color: var(--muted); }
+
 /* No timecode API on this ProPresenter: say so, quietly. */
 [data-module="propresenter-timers"] .tm-card-ltc.is-ltc-unavailable .tm-time { color: var(--muted); }
 [data-module="propresenter-timers"] .tm-card-ltc.is-ltc-unavailable .tm-state {
@@ -206,8 +221,6 @@
   white-space: normal;
   text-align: center;
 }
-
-[data-module="propresenter-timers"] .tm-card-ltc.is-ltc-waiting .tm-time { color: var(--muted); }
 
 /* ── the "Timers ▾" menu (container styled/positioned by the shell) ── */
 

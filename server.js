@@ -22,10 +22,12 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const zlib = require('zlib');
+const { spawn, execFileSync } = require('child_process');
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
-const MODULES_DIR = path.join(ROOT, 'modules');
+const BUNDLED_MODULES_DIR = path.join(ROOT, 'modules'); // modules that ship with the checkout
 /** Checked-in defaults (proddash.json) — and where runtime state used to live. */
 const REPO_CONFIG_DIR = path.join(ROOT, 'config');
 
@@ -73,6 +75,7 @@ function resolveDataDir() {
 const DATA_DIR = resolveDataDir();
 const MODULES_CONFIG_PATH = path.join(DATA_DIR, 'modules.json');
 const LAYOUTS_DIR = path.join(DATA_DIR, 'layouts');
+const INSTALLED_MODULES_DIR = path.join(DATA_DIR, 'modules'); // modules installed from the admin page
 
 /* ── config files ───────────────────────────────────────────────────── */
 
@@ -139,6 +142,59 @@ const shellConfig = {
 };
 const PORT = Number(process.env.PORT || shellConfig.port || 24500);
 
+/* ── shell version & version ranges ─────────────────────────────────── */
+
+/** The shell's own version, from package.json. Modules declare the range
+    they need in their manifest ("proddash": ">=1.1.0"). */
+const SHELL_VERSION = String(readJson(path.join(ROOT, 'package.json'), {}).version || '0.0.0');
+
+function parseVersion(v) {
+  const m = String(v || '').trim().match(/^v?(\d+)\.(\d+)(?:\.(\d+))?/);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3] || 0)] : null;
+}
+
+/** -1 / 0 / 1 like a comparator; unparseable versions sort lowest. */
+function compareVersions(a, b) {
+  const pa = parseVersion(a) || [-1, 0, 0];
+  const pb = parseVersion(b) || [-1, 0, 0];
+  for (let i = 0; i < 3; i += 1) {
+    if (pa[i] !== pb[i]) return pa[i] < pb[i] ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
+ * Does `version` satisfy `range`? Ranges are deliberately small: "" or "*"
+ * (anything), "1.2.0" (exact), ">=1.2.0", ">1.2.0", "<=…", "<…",
+ * "^1.2.0" (same major, at least that), "~1.2.0" (same minor, at least
+ * that), and space-separated combinations such as ">=1.1.0 <2.0.0".
+ */
+function satisfiesVersion(version, range) {
+  const r = String(range || '').trim();
+  if (!r || r === '*') return true;
+  const v = parseVersion(version);
+  if (!v) return false;
+  return r.split(/[\s,]+/).filter(Boolean).every((part) => {
+    const m = part.match(/^(>=|<=|>|<|=|\^|~)?v?(\d+)\.(\d+)(?:\.(\d+))?$/);
+    if (!m) return false;
+    const t = [Number(m[2]), Number(m[3]), Number(m[4] || 0)];
+    const c = compareVersions(v.join('.'), t.join('.'));
+    switch (m[1] || '=') {
+      case '>=': return c >= 0;
+      case '>': return c > 0;
+      case '<=': return c <= 0;
+      case '<': return c < 0;
+      case '^': return v[0] === t[0] && c >= 0;
+      case '~': return v[0] === t[0] && v[1] === t[1] && c >= 0;
+      default: return c === 0;
+    }
+  });
+}
+
+function requirementNote(range) {
+  return `Requires ProdDash ${range} — this is ${SHELL_VERSION}`;
+}
+
 /** Per-module server-wide state: { "<id>": { enabled: bool, config: {…} } } */
 let modulesConfig = readJson(MODULES_CONFIG_PATH, {});
 
@@ -147,18 +203,19 @@ let modulesConfig = readJson(MODULES_CONFIG_PATH, {});
 /** @type {Map<string, object>} module id -> manifest (with .dir added) */
 const manifests = new Map();
 
-function discoverModules() {
-  manifests.clear();
+/** Read every valid manifest in one modules folder. */
+function readManifests(baseDir, source) {
+  const out = [];
   let dirs = [];
   try {
-    dirs = fs.readdirSync(MODULES_DIR, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
+    dirs = fs.readdirSync(baseDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && !d.name.startsWith('.'))
       .map((d) => d.name);
   } catch {
-    return; // no modules/ folder yet — the shell still runs
+    return out; // folder missing — fine
   }
   for (const dir of dirs) {
-    const manifestPath = path.join(MODULES_DIR, dir, 'module.json');
+    const manifestPath = path.join(baseDir, dir, 'module.json');
     const man = readJson(manifestPath, null);
     if (!man || typeof man !== 'object') {
       if (fs.existsSync(manifestPath)) console.warn(`[proddash] ${dir}/module.json is invalid — skipped`);
@@ -173,9 +230,48 @@ function discoverModules() {
       console.warn(`[proddash] module "${dir}": manifest has no "client" entry — skipped`);
       continue;
     }
-    man.dir = path.join(MODULES_DIR, dir);
-    manifests.set(dir, man);
+    man.dir = path.join(baseDir, dir);
+    man.source = source;
+    man.requires = String(man.proddash || '').trim();
+    // A module built for a newer shell is listed (so admin can explain) but never loaded.
+    man.incompatible = satisfiesVersion(SHELL_VERSION, man.requires) ? '' : requirementNote(man.requires);
+    out.push(man);
   }
+  return out;
+}
+
+/**
+ * Modules come from two places: the ones bundled with this checkout
+ * (modules/) and the ones installed from the admin page (the data
+ * directory's modules/). Same id in both → the newer version runs; a
+ * downloaded copy the bundled one has since overtaken is removed. A bundled
+ * module the admin page "uninstalled" stays on disk (it belongs to the app
+ * folder) but is left out here.
+ */
+function discoverModules() {
+  manifests.clear();
+  const bundled = new Map(readManifests(BUNDLED_MODULES_DIR, 'bundled').map((m) => [m.id, m]));
+  const installed = new Map(readManifests(INSTALLED_MODULES_DIR, 'installed').map((m) => [m.id, m]));
+  for (const [id, man] of bundled) {
+    if (isUninstalled(id)) continue;
+    const copy = installed.get(id);
+    if (copy && compareVersions(copy.version, man.version) >= 0) continue; // the copy wins, below
+    if (copy) {
+      console.log(`[proddash] ${id}: bundled v${man.version} supersedes the installed v${copy.version} — removing that copy`);
+      try { fs.rmSync(copy.dir, { recursive: true, force: true }); } catch { /* it just stays unused */ }
+      installed.delete(id);
+    }
+    manifests.set(id, man);
+  }
+  for (const [id, man] of installed) {
+    if (manifests.has(id)) continue;
+    man.bundledVersion = String(bundled.get(id)?.version || '');
+    manifests.set(id, man);
+  }
+}
+
+function isUninstalled(id) {
+  return moduleState(id).uninstalled === true;
 }
 
 function moduleState(id) {
@@ -185,6 +281,12 @@ function moduleState(id) {
 
 function isEnabled(id) {
   return moduleState(id).enabled !== false; // newly dropped modules default to enabled
+}
+
+/** Enabled and runnable on this shell version — what dashboards may load. */
+function isActive(id) {
+  const man = manifests.get(id);
+  return Boolean(man) && isEnabled(id) && !man.incompatible;
 }
 
 /** Admin config for a module: schema defaults overlaid with stored values. */
@@ -260,6 +362,10 @@ function mountModule(id) {
   if (!man) return;
   const entry = { routes: [], handle: null, error: '' };
   mounted.set(id, entry);
+  if (man.incompatible) {
+    entry.error = man.incompatible;
+    return;
+  }
   if (!man.server) return;
   const log = makeLog(id);
   try {
@@ -435,6 +541,385 @@ setInterval(() => {
   }
 }, 25000).unref();
 
+/* ── the repo: module catalog and shell updates ──────────────────────── */
+
+/* The admin page installs modules from, and updates the shell against, the
+   ProdDash repository on GitHub — one small tar.gz of the branch, fetched at
+   most every few minutes, parsed here with no dependencies. Nothing is
+   contacted unless someone opens the admin page or the periodic update
+   check runs; every failure is recorded and shown, never thrown at a page. */
+
+function parseRepoSetting(value, fallbackBranch) {
+  const m = String(value || '').trim().match(/^([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:#([\w./-]+))?$/);
+  if (!m) return null;
+  return { owner: m[1], repo: m[2], branch: m[3] || fallbackBranch || 'main' };
+}
+
+const REPO = parseRepoSetting(process.env.PRODDASH_REPO || shellConfig.repo, shellConfig.branch)
+  || parseRepoSetting('michaelmcgary2008/ProdDash', 'main');
+/** Where branch archives come from; tests point this at a local mock. */
+const ARCHIVE_BASE = String(process.env.PRODDASH_ARCHIVE_BASE || 'https://codeload.github.com').replace(/\/+$/, '');
+const REMOTE_TTL_MS = 10 * 60 * 1000;
+const REMOTE_CHECK_MS = 6 * 60 * 60 * 1000;
+const MAX_ARCHIVE_BYTES = 80 * 1024 * 1024;
+
+function tarballUrl() {
+  return `${ARCHIVE_BASE}/${REPO.owner}/${REPO.repo}/tar.gz/${encodeURIComponent(REPO.branch)}`;
+}
+
+function httpError(status, message) {
+  const err = new Error(message);
+  err.status = status;
+  return err;
+}
+
+function safeJson(buf) {
+  try { return buf ? JSON.parse(buf.toString('utf8')) : null; } catch { return null; }
+}
+
+/** A relative path that can only land inside the folder it is joined to. */
+function safeRelPath(p) {
+  if (typeof p !== 'string' || !p || p.startsWith('/') || p.includes('\\') || p.includes('\0')) return false;
+  return p.split('/').every((seg) => seg !== '' && seg !== '.' && seg !== '..');
+}
+
+/* — a minimal tar reader: regular files, GNU long names, pax headers — */
+
+function cstr(buf, start, len) {
+  const s = buf.subarray(start, start + len);
+  const nul = s.indexOf(0);
+  return s.subarray(0, nul === -1 ? len : nul).toString('utf8');
+}
+
+/** pax records look like "27 path=some/long/name\n" (length counts itself). */
+function parsePaxRecords(buf) {
+  const out = {};
+  let pos = 0;
+  while (pos < buf.length) {
+    const sp = buf.indexOf(0x20, pos);
+    if (sp === -1) break;
+    const len = parseInt(buf.subarray(pos, sp).toString(), 10);
+    if (!Number.isFinite(len) || len <= 0) break;
+    const rec = buf.subarray(sp + 1, pos + len - 1).toString('utf8');
+    const eq = rec.indexOf('=');
+    if (eq > 0) out[rec.slice(0, eq)] = rec.slice(eq + 1);
+    pos += len;
+  }
+  return out;
+}
+
+function parseTar(buf) {
+  const files = new Map();
+  let comment = '';
+  let pendingName = null;
+  let off = 0;
+  while (off + 512 <= buf.length) {
+    const h = buf.subarray(off, off + 512);
+    if (h.every((b) => b === 0)) break; // end-of-archive blocks
+    const size = parseInt(cstr(h, 124, 12).trim() || '0', 8) || 0;
+    const type = h[156] === 0 ? '0' : String.fromCharCode(h[156]);
+    const prefix = cstr(h, 257, 6).startsWith('ustar') ? cstr(h, 345, 155) : '';
+    const shortName = prefix ? `${prefix}/${cstr(h, 0, 100)}` : cstr(h, 0, 100);
+    const data = buf.subarray(off + 512, off + 512 + size);
+    off += 512 + Math.ceil(size / 512) * 512;
+    if (type === 'L') { pendingName = cstr(data, 0, size); continue; }        // GNU long name
+    if (type === 'g' || type === 'x') {                                          // pax headers
+      const rec = parsePaxRecords(data);
+      if (rec.comment && !comment) comment = String(rec.comment).trim();       // GitHub: the commit sha
+      if (type === 'x' && rec.path) pendingName = rec.path;
+      continue;
+    }
+    const name = pendingName || shortName;
+    pendingName = null;
+    if (type === '0') files.set(name, Buffer.from(data));
+  }
+  return { files, comment };
+}
+
+/** Download the branch archive → { files: Map<relative path, Buffer>, sha }. */
+async function fetchArchive() {
+  const res = await fetch(tarballUrl(), {
+    redirect: 'follow',
+    signal: AbortSignal.timeout(30000),
+    headers: { 'User-Agent': `ProdDash/${SHELL_VERSION}` },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${REPO.owner}/${REPO.repo}@${REPO.branch}`);
+  const gz = Buffer.from(await res.arrayBuffer());
+  if (gz.length > MAX_ARCHIVE_BYTES) throw new Error('archive is unexpectedly large');
+  const { files, comment } = parseTar(zlib.gunzipSync(gz));
+  const stripped = new Map(); // drop the archive's single top-level folder
+  for (const [p, data] of files) {
+    const i = p.indexOf('/');
+    if (i > 0 && i < p.length - 1) stripped.set(p.slice(i + 1), data);
+  }
+  return { files: stripped, sha: /^[0-9a-f]{7,40}$/.test(comment) ? comment : '' };
+}
+
+/** What we last learned about the repo. */
+let remote = { checkedAt: 0, checking: null, error: '', sha: '', version: '', modules: new Map(), files: null };
+
+async function refreshRemote(force = false) {
+  const fresh = remote.checkedAt && Date.now() - remote.checkedAt < REMOTE_TTL_MS;
+  if (!force && fresh && !remote.error) return remote;
+  if (remote.checking) return remote.checking;
+  const job = (async () => {
+    try {
+      const { files, sha } = await fetchArchive();
+      const pkg = safeJson(files.get('package.json'));
+      const modules = new Map();
+      for (const [p, data] of files) {
+        const m = p.match(/^modules\/([^/]+)\/(.+)$/);
+        if (!m) continue;
+        const entry = modules.get(m[1]) || { id: m[1], manifest: null, files: new Map() };
+        entry.files.set(m[2], data);
+        modules.set(m[1], entry);
+      }
+      for (const [id, entry] of modules) {
+        const man = safeJson(entry.files.get('module.json'));
+        if (!man || typeof man !== 'object' || (man.id && man.id !== id) || !man.client) {
+          modules.delete(id);
+          continue;
+        }
+        entry.manifest = { ...man, id };
+      }
+      remote = { checkedAt: Date.now(), checking: null, error: '', sha, version: String(pkg?.version || ''), modules, files };
+    } catch (err) {
+      remote = { ...remote, checkedAt: Date.now(), checking: null, error: err?.message || String(err) };
+    }
+    return remote;
+  })();
+  remote.checking = job;
+  return job;
+}
+
+/* — this checkout — */
+
+function git(args, timeout = 15000) {
+  // fileMode=false: a chmod (e.g. making the launcher executable) is not a local change
+  return execFileSync('git', ['-c', 'core.fileMode=false', ...args], { cwd: ROOT, encoding: 'utf8', timeout, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+}
+
+function localGitInfo() {
+  if (!fs.existsSync(path.join(ROOT, '.git'))) return { isGit: false, sha: '', branch: '', dirty: false, error: '' };
+  try {
+    const porcelain = git(['status', '--porcelain']).split('\n').filter((l) => l && !l.startsWith('??'));
+    return { isGit: true, sha: git(['rev-parse', 'HEAD']), branch: git(['rev-parse', '--abbrev-ref', 'HEAD']), dirty: porcelain.length > 0, error: '' };
+  } catch (err) {
+    return { isGit: true, sha: '', branch: '', dirty: false, error: (err?.message || String(err)).split('\n')[0] };
+  }
+}
+
+function shellStatus() {
+  const local = localGitInfo();
+  const versionCmp = remote.version ? compareVersions(remote.version, SHELL_VERSION) : 0;
+  const versionBehind = versionCmp > 0;
+  const sameCommit = !local.sha || !remote.sha || local.sha.startsWith(remote.sha) || remote.sha.startsWith(local.sha);
+  const commitsBehind = !sameCommit && versionCmp >= 0;
+  let blocker = '';
+  if (local.isGit) {
+    if (local.error) blocker = `git is not usable here (${local.error})`;
+    else if (local.branch !== REPO.branch) blocker = `this checkout is on branch "${local.branch}", not "${REPO.branch}"`;
+    else if (local.dirty) blocker = 'this checkout has local changes — commit or discard them first';
+  }
+  const gh = `https://github.com/${REPO.owner}/${REPO.repo}`;
+  return {
+    version: SHELL_VERSION,
+    repo: `${REPO.owner}/${REPO.repo}`,
+    branch: REPO.branch,
+    local: { isGit: local.isGit, sha: local.sha, branch: local.branch, dirty: local.dirty },
+    remote: { version: remote.version, sha: remote.sha, checkedAt: remote.checkedAt, error: remote.error },
+    updateAvailable: versionBehind || commitsBehind,
+    versionBehind,
+    method: local.isGit ? 'git' : 'archive',
+    updateBlocker: blocker,
+    changesUrl: local.sha && remote.sha
+      ? `${gh}/compare/${local.sha.slice(0, 12)}...${remote.sha.slice(0, 12)}`
+      : `${gh}/commits/${REPO.branch}`,
+  };
+}
+
+/* — the catalog: what could be installed or updated — */
+
+function catalogView() {
+  const available = [];
+  const updates = [];
+  const hiddenBundled = readManifests(BUNDLED_MODULES_DIR, 'bundled').filter((m) => isUninstalled(m.id));
+  const seen = new Set();
+  for (const [id, entry] of remote.modules) {
+    const man = entry.manifest;
+    seen.add(id);
+    const requires = String(man.proddash || '').trim();
+    const compatible = satisfiesVersion(SHELL_VERSION, requires);
+    const base = {
+      id,
+      name: String(man.name || id),
+      version: String(man.version || ''),
+      description: String(man.description || ''),
+      requires,
+      compatible,
+      reason: compatible ? '' : requirementNote(requires),
+    };
+    const installed = manifests.get(id);
+    if (installed) {
+      if (compareVersions(man.version, installed.version) > 0) {
+        updates.push({ ...base, installedVersion: String(installed.version || ''), source: 'repo' });
+      }
+    } else {
+      const hidden = hiddenBundled.find((m) => m.id === id);
+      const useBundled = hidden && compareVersions(hidden.version, man.version) >= 0;
+      available.push({ ...base, source: useBundled ? 'bundled' : 'repo' });
+    }
+  }
+  for (const m of hiddenBundled) {
+    if (seen.has(m.id)) continue;
+    available.push({
+      id: m.id, name: String(m.name || m.id), version: String(m.version || ''), description: String(m.description || ''),
+      requires: m.requires, compatible: !m.incompatible, reason: m.incompatible, source: 'bundled',
+    });
+  }
+  const byName = (a, b) => a.name.localeCompare(b.name);
+  return { available: available.sort(byName), updates: updates.sort(byName) };
+}
+
+/** Install (or update) a module from the repo, or bring back a bundled one. */
+async function installModule(id) {
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) throw httpError(400, 'Bad module id.');
+  await refreshRemote(false);
+  const remoteEntry = remote.modules.get(id) || null;
+  const bundledMan = readManifests(BUNDLED_MODULES_DIR, 'bundled').find((m) => m.id === id) || null;
+  const installedMan = readManifests(INSTALLED_MODULES_DIR, 'installed').find((m) => m.id === id) || null;
+  if (!remoteEntry && !bundledMan && !installedMan) {
+    throw httpError(404, remote.error
+      ? `"${id}" is not here and the repo could not be reached: ${remote.error}`
+      : `"${id}" is not in ${REPO.owner}/${REPO.repo}.`);
+  }
+  // End up with the newest copy: what the repo offers vs what is already here.
+  const haveVersion = installedMan?.version || bundledMan?.version || '';
+  const download = Boolean(remoteEntry) && (!(bundledMan || installedMan) || compareVersions(remoteEntry.manifest.version, haveVersion) > 0);
+  const man = download ? remoteEntry.manifest : (installedMan || bundledMan);
+  const requires = String(man.proddash || '').trim();
+  if (!satisfiesVersion(SHELL_VERSION, requires)) {
+    throw httpError(409, `${man.name || id} ${requirementNote(requires).replace('Requires', 'requires')}. Update ProdDash first.`);
+  }
+  if (download) {
+    const staging = path.join(INSTALLED_MODULES_DIR, `.${id}.installing`);
+    fs.rmSync(staging, { recursive: true, force: true });
+    for (const [rel, data] of remoteEntry.files) {
+      if (!safeRelPath(rel)) continue;
+      const target = path.join(staging, rel);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, data);
+    }
+    const dest = path.join(INSTALLED_MODULES_DIR, id);
+    unmountModule(id);
+    fs.rmSync(dest, { recursive: true, force: true });
+    fs.renameSync(staging, dest);
+  }
+  const state = { ...moduleState(id) };
+  delete state.uninstalled;
+  modulesConfig[id] = state;
+  writeJson(MODULES_CONFIG_PATH, modulesConfig);
+  discoverModules();
+  remountModule(id);
+  broadcastShellEvent('modules-changed', { id });
+  const now = manifests.get(id);
+  console.log(`[proddash] ${download ? 'installed' : 'restored'} module "${id}" v${now?.version || '?'} (${now?.source || 'unknown'})`);
+  return { id, version: String(now?.version || ''), source: now?.source || '', downloaded: download };
+}
+
+/** Remove a module: an installed copy is deleted; a bundled one is switched
+    off and hidden (its folder belongs to the app). Settings are kept so a
+    later reinstall picks them up again. */
+function uninstallModule(id) {
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) throw httpError(400, 'Bad module id.');
+  const installedDir = path.join(INSTALLED_MODULES_DIR, id);
+  const hadInstalled = fs.existsSync(path.join(installedDir, 'module.json'));
+  const hasBundled = fs.existsSync(path.join(BUNDLED_MODULES_DIR, id, 'module.json'));
+  if (!manifests.has(id) && !hadInstalled && !hasBundled) throw httpError(404, `No module "${id}" is installed.`);
+  unmountModule(id);
+  if (hadInstalled) fs.rmSync(installedDir, { recursive: true, force: true });
+  modulesConfig[id] = { ...moduleState(id), uninstalled: true };
+  writeJson(MODULES_CONFIG_PATH, modulesConfig);
+  discoverModules();
+  broadcastShellEvent('modules-changed', { id });
+  console.log(`[proddash] uninstalled module "${id}"${hadInstalled ? ' (files removed)' : ''}${hasBundled ? ' (bundled copy hidden)' : ''}`);
+  return { id, removedFiles: hadInstalled, bundled: hasBundled };
+}
+
+/* — updating the shell itself — */
+
+function copyTree(src, dst) {
+  fs.mkdirSync(dst, { recursive: true });
+  for (const e of fs.readdirSync(src, { withFileTypes: true })) {
+    const s = path.join(src, e.name);
+    const d = path.join(dst, e.name);
+    if (e.isDirectory()) copyTree(s, d);
+    else fs.copyFileSync(s, d);
+  }
+}
+
+/**
+ * Bring the app folder up to the repo's branch. A git checkout gets
+ * `git pull --ff-only`; anything else has the archive unpacked over it
+ * (runtime state and .git are never touched). The caller restarts.
+ */
+async function updateShell() {
+  await refreshRemote(true);
+  if (remote.error) throw httpError(502, `Couldn't reach ${REPO.owner}/${REPO.repo}: ${remote.error}`);
+  const status = shellStatus();
+  if (status.updateBlocker) throw httpError(409, `Can't update from here: ${status.updateBlocker}.`);
+  if (!status.updateAvailable) throw httpError(409, 'Already up to date.');
+  if (status.local.isGit) {
+    const out = git(['pull', '--ff-only', 'origin', REPO.branch], 120000);
+    console.log('[proddash] git pull:', out.split('\n').filter(Boolean).slice(-2).join(' | '));
+  } else {
+    const keep = (rel) => rel === 'config/modules.json' || rel.startsWith('config/layouts/') || rel.startsWith('.git/');
+    const staging = path.join(ROOT, '.proddash-update');
+    fs.rmSync(staging, { recursive: true, force: true });
+    for (const [rel, data] of remote.files) {
+      if (!safeRelPath(rel) || keep(rel)) continue;
+      const target = path.join(staging, rel);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, data);
+    }
+    if (!fs.existsSync(path.join(staging, 'server.js'))) {
+      fs.rmSync(staging, { recursive: true, force: true });
+      throw httpError(502, 'The downloaded archive does not look like ProdDash (no server.js).');
+    }
+    copyTree(staging, ROOT);
+    fs.rmSync(staging, { recursive: true, force: true });
+  }
+  return { from: SHELL_VERSION, to: remote.version || '', method: status.method };
+}
+
+/**
+ * Exit so the new code runs. Exit code 75 tells a launcher loop to start us
+ * again; when nothing is supervising (PRODDASH_LAUNCHER unset) we start our
+ * own replacement, which waits for this port to free up.
+ */
+function restartServer(reason) {
+  console.log(`[proddash] ${reason} — restarting ProdDash`);
+  for (const id of [...mounted.keys()]) unmountModule(id);
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    if (!process.env.PRODDASH_LAUNCHER) {
+      try {
+        const child = spawn(process.execPath, process.argv.slice(1), {
+          cwd: process.cwd(), env: process.env, detached: true, stdio: 'inherit',
+        });
+        child.unref();
+      } catch (err) {
+        console.error('[proddash] could not start the new ProdDash — start it by hand:', err?.message || err);
+      }
+    }
+    process.exit(75);
+  };
+  server.close(finish);
+  setTimeout(finish, 1500).unref();
+}
+
 /* ── admin API ──────────────────────────────────────────────────────── */
 
 const ADMIN_PASSCODE = String(process.env.PRODDASH_PASSCODE || shellConfig.adminPasscode || '');
@@ -484,6 +969,9 @@ function adminModuleView(id) {
     version: String(man.version || ''),
     description: String(man.description || ''),
     hasServer: Boolean(man.server),
+    source: man.source || 'bundled',
+    requires: man.requires || '',
+    incompatible: man.incompatible || '',
     enabled: isEnabled(id),
     configSchema: man.configSchema || {},
     configGroups: man.configGroups && typeof man.configGroups === 'object' ? man.configGroups : {},
@@ -548,9 +1036,49 @@ async function handleAdminApi(req, res, urlPath) {
     return sendJson(res, 200, {
       authRequired: Boolean(ADMIN_PASSCODE),
       authed: true,
+      version: SHELL_VERSION,
       dataDir: DATA_DIR,
       modules: [...manifests.keys()].sort().map(adminModuleView),
     });
+  }
+
+  if (urlPath === '/api/admin/catalog' && req.method === 'GET') {
+    if (!isAuthed(req)) return sendJson(res, 401, { authRequired: true, authed: false });
+    const refresh = new URL(req.url, 'http://proddash.invalid').searchParams.get('refresh') === '1';
+    await refreshRemote(refresh);
+    return sendJson(res, 200, { shell: shellStatus(), ...catalogView() });
+  }
+
+  if (urlPath === '/api/admin/update' && req.method === 'POST') {
+    if (refuseAdminWrite(req, res)) return;
+    try {
+      const result = await updateShell();
+      sendJson(res, 200, { ok: true, ...result, restarting: true });
+      setTimeout(() => restartServer(`updated ${result.from} → ${result.to || 'latest'} via ${result.method}`), 400);
+    } catch (err) {
+      sendJson(res, err.status || 500, { error: err.message || String(err) });
+    }
+    return;
+  }
+
+  const install = urlPath.match(/^\/api\/admin\/modules\/([^/]+)\/install$/);
+  if (install && req.method === 'POST') {
+    if (refuseAdminWrite(req, res)) return;
+    try {
+      return sendJson(res, 200, { ok: true, ...(await installModule(decodeURIComponent(install[1]))) });
+    } catch (err) {
+      return sendJson(res, err.status || 500, { error: err.message || String(err) });
+    }
+  }
+
+  const remove = urlPath.match(/^\/api\/admin\/modules\/([^/]+)$/);
+  if (remove && req.method === 'DELETE') {
+    if (refuseAdminWrite(req, res)) return;
+    try {
+      return sendJson(res, 200, { ok: true, ...uninstallModule(decodeURIComponent(remove[1])) });
+    } catch (err) {
+      return sendJson(res, err.status || 500, { error: err.message || String(err) });
+    }
   }
 
   const m = urlPath.match(/^\/api\/admin\/modules\/([^/]+)\/(config|enabled)$/);
@@ -712,6 +1240,7 @@ async function handleLayoutsApi(req, res, urlPath) {
 function dispatchModuleApi(req, res, id, subPath, search) {
   if (!manifests.has(id)) return sendJson(res, 404, { error: `No module "${id}" is installed.` });
   if (!isEnabled(id)) return sendJson(res, 404, { error: `Module "${id}" is disabled.` });
+  if (manifests.get(id).incompatible) return sendJson(res, 409, { error: manifests.get(id).incompatible });
   const entry = mounted.get(id);
   if (!entry) return sendJson(res, 503, { error: `Module "${id}" is not mounted.` });
   if (entry.error) return sendJson(res, 502, { error: `Module "${id}" failed to start: ${entry.error}` });
@@ -814,7 +1343,7 @@ function handleRequest(req, res) {
 
   /* — shell API — */
   if (urlPath === '/api/modules' && req.method === 'GET') {
-    Promise.all([...manifests.keys()].filter(isEnabled).map(clientManifest))
+    Promise.all([...manifests.keys()].filter(isActive).map(clientManifest))
       .then((list) => sendJson(res, 200, { modules: list }))
       .catch((err) => {
         console.error('[proddash] /api/modules failed:', err);
@@ -881,7 +1410,7 @@ function handleRequest(req, res) {
   if (assetMatch) {
     const id = decodeURIComponent(assetMatch[1]);
     const man = manifests.get(id);
-    if (!man || !isEnabled(id)) {
+    if (!man || !isActive(id)) {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       return res.end('Not found');
     }
@@ -912,8 +1441,8 @@ server.requestTimeout = 0;
 discoverModules();
 mountAllModules();
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log('ProdDash running');
+server.on('listening', () => {
+  console.log('ProdDash ' + SHELL_VERSION);
   console.log('  Local       : http://localhost:' + PORT);
   for (const ifaces of Object.values(os.networkInterfaces())) {
     for (const iface of ifaces || []) {
@@ -924,10 +1453,33 @@ server.listen(PORT, '0.0.0.0', () => {
   }
   const ids = [...manifests.keys()];
   console.log(ids.length
-    ? '  Modules     : ' + ids.map((id) => id + (isEnabled(id) ? '' : ' (disabled)')).join(', ')
+    ? '  Modules     : ' + ids.map((id) => id + (isEnabled(id) ? '' : ' (disabled)') + (manifests.get(id).incompatible ? ' (needs newer ProdDash)' : '')).join(', ')
     : '  Modules     : none installed');
   console.log('  Settings    : ' + DATA_DIR + (DATA_DIR === REPO_CONFIG_DIR ? '  (inside the app folder)' : ''));
+  console.log('  Repo        : ' + REPO.owner + '/' + REPO.repo + '@' + REPO.branch);
 });
+
+// A restart hands the port over from the exiting ProdDash: wait for it.
+let listenTries = 0;
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE' && listenTries < 30) {
+    listenTries += 1;
+    if (listenTries === 1) console.log(`[proddash] port ${PORT} is busy — waiting for it (a previous ProdDash may still be shutting down)`);
+    setTimeout(() => server.listen(PORT, '0.0.0.0'), 500);
+    return;
+  }
+  console.error('[proddash] cannot start:', err.message || err);
+  process.exit(1);
+});
+
+server.listen(PORT, '0.0.0.0');
+
+// Update check: shortly after boot, then every few hours (the admin page
+// shows the result; nothing is installed without someone clicking).
+if (!process.env.PRODDASH_NO_REMOTE_CHECK) {
+  setTimeout(() => refreshRemote(false).catch(() => {}), 20000).unref();
+  setInterval(() => refreshRemote(true).catch(() => {}), REMOTE_CHECK_MS).unref();
+}
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {

@@ -11,6 +11,45 @@
 
 const LTC_KEY = '__ltc__';
 
+/* ── SMPTE timecode math (module-scope, exported for tests) ─────────
+   The server anchors us ~4×/s with { time, fps, df, ageMs }; the card
+   counts every frame in between locally. That needs exact frame↔timecode
+   conversion, including 29.97 drop-frame (frames 00 and 01 don't exist at
+   the top of a minute, except every tenth minute). */
+
+export function parseTc(str) {
+  const m = /^(\d{1,2}):(\d{2}):(\d{2})[:;.](\d{1,2})$/.exec(String(str || '').trim());
+  if (!m) return null;
+  return { h: Number(m[1]), m: Number(m[2]), s: Number(m[3]), f: Number(m[4]) };
+}
+
+export function tcToFrames(tc, nominal, df) {
+  let n = (tc.h * 3600 + tc.m * 60 + tc.s) * nominal + tc.f;
+  if (df) {
+    const mins = tc.h * 60 + tc.m;
+    n -= 2 * (mins - Math.floor(mins / 10));
+  }
+  return n;
+}
+
+export function framesToTc(n, nominal, df) {
+  // 10 DF minutes hold 17982 frames (the first minute 1800, the rest 1798).
+  const perDay = df ? 24 * 6 * 17982 : 24 * 3600 * nominal;
+  n = ((n % perDay) + perDay) % perDay;
+  if (df) {
+    const d = Math.floor(n / 17982);
+    const m10 = n % 17982;
+    const extra = m10 < 1800 ? 0 : Math.floor((m10 - 1800) / 1798) + 1;
+    const totalMin = d * 10 + extra;
+    // Re-add the two dropped frames per dropped minute, then read as 30fps.
+    n += 2 * (totalMin - Math.floor(totalMin / 10));
+  }
+  const f = n % nominal;
+  const secs = Math.floor(n / nominal);
+  const pad = (v) => String(v).padStart(2, '0');
+  return `${pad(Math.floor(secs / 3600))}:${pad(Math.floor(secs / 60) % 60)}:${pad(secs % 60)}:${pad(f)}`;
+}
+
 export default function create({ root, moduleApi }) {
   let state = null;
   let feedOffline = false;
@@ -61,7 +100,9 @@ export default function create({ root, moduleApi }) {
 
   function menuRows() {
     const rows = (state?.timers || []).map((t) => ({ key: t.uuid, name: t.name }));
-    rows.push({ key: LTC_KEY, name: 'LTC timecode' });
+    // No LTC row while the listener is off in Admin — the item shouldn't
+    // even be offerable.
+    if (state?.ltcEnabled) rows.push({ key: LTC_KEY, name: 'LTC timecode' });
     return rows;
   }
 
@@ -159,7 +200,7 @@ export default function create({ root, moduleApi }) {
     for (const t of state?.timers || []) {
       if (!hiddenItems.has(t.uuid)) items.push({ key: t.uuid, timer: t });
     }
-    if (!hiddenItems.has(LTC_KEY)) items.push({ key: LTC_KEY, ltc: ltcState });
+    if (state?.ltcEnabled && !hiddenItems.has(LTC_KEY)) items.push({ key: LTC_KEY, ltc: ltcState });
     return items;
   }
 
@@ -205,32 +246,117 @@ export default function create({ root, moduleApi }) {
     card.el.className = `tm-card is-${kind}`;
   }
 
+  /* ── real-time LTC: count every frame between server anchors ─────── */
+
+  // The server anchors us ~4×/s with the decoded timecode, its rate and
+  // how old it is (ageMs). Between anchors a requestAnimationFrame loop
+  // advances the display at the LTC's own rate, so every frame paints —
+  // without pushing 30 SSE messages a second at every dashboard.
+  let ltcAnchor = null; // { frames, at, recvAt, rate, nominal, df }
+  let ltcRaf = 0;
+  let ltcShownFrames = -1;
+  /** Anchors arrive ~every 250 ms while running. None for this long means
+      the feed state is changing — hold rather than freewheel into phantom
+      frames the next update would visibly rewind. */
+  const ANCHOR_FRESH_MS = 350;
+
+  function updateLtcAnchor() {
+    const l = state?.ltc;
+    // The listener is extrapolatable — it knows the frame rate.
+    const live = l && l.status === 'running' && l.fps > 0 && l.source === 'listener';
+    const tc = live ? parseTc(l.time) : null;
+    if (!tc) {
+      ltcAnchor = null;
+      ltcShownFrames = -1;
+      if (ltcRaf) {
+        cancelAnimationFrame(ltcRaf);
+        ltcRaf = 0;
+      }
+      return;
+    }
+    const nominal = l.df ? 30 : Math.round(l.fps);
+    ltcAnchor = {
+      frames: tcToFrames(tc, nominal, l.df),
+      at: performance.now() - (Number(l.ageMs) || 0),
+      recvAt: performance.now(),
+      rate: l.df ? 30000 / 1001 : nominal,
+      nominal,
+      df: l.df,
+    };
+    if (!ltcRaf) ltcRaf = requestAnimationFrame(ltcTick);
+  }
+
+  /** Paint the frame the anchor implies for right now. Called both by the
+      rAF loop (smooth, per-frame, on visible tabs) and by render() at the
+      4×/s anchor rate — so a throttled/backgrounded tab, where rAF is
+      paused, still advances at the anchor rate instead of freezing. */
+  function paintLtcFrame() {
+    const a = ltcAnchor;
+    const card = cards.get(LTC_KEY);
+    if (!a || !card) return;
+    const limit = Math.min(performance.now(), a.recvAt + ANCHOR_FRESH_MS);
+    let n = a.frames + Math.round(((limit - a.at) / 1000) * a.rate);
+    // Anchor jitter (±1 frame) must never tick the display backwards;
+    // a genuine jump back (re-strike, seek) is far larger and passes.
+    if (ltcShownFrames >= 0 && n < ltcShownFrames && ltcShownFrames - n <= 2) n = ltcShownFrames;
+    if (n !== ltcShownFrames) {
+      ltcShownFrames = n;
+      card.timeEl.textContent = framesToTc(n, a.nominal, a.df);
+    }
+  }
+
+  function ltcTick() {
+    ltcRaf = 0;
+    // No anchor, or the LTC card is hidden in this tile: stop — the next
+    // server anchor (4×/s while running) re-arms the loop via render().
+    if (!ltcAnchor || !cards.get(LTC_KEY)) return;
+    paintLtcFrame();
+    ltcRaf = requestAnimationFrame(ltcTick);
+  }
+
   function updateLtcCard(card, ltc) {
     let mode;
+    // Only the audio sources know the frame rate (decoded from the LTC
+    // bits); a set drop-frame flag implies 29.97 whatever fps rounds to.
+    const rate = ltc.df ? '29.97 DF' : ltc.fps ? `${ltc.fps} fps` : '';
     if (ltc.supported === false) {
       mode = 'unavailable';
       card.timeEl.textContent = '—';
-      card.stateEl.textContent = 'Timecode not available on this ProPresenter';
-    } else if (ltc.supported === null) {
-      mode = 'waiting';
-      card.timeEl.textContent = displayTime(ltc.time);
-      card.stateEl.textContent = 'Waiting for ProPresenter…';
+      // The server says why when it knows (listener disabled, no device
+      // selected, capture failed, starting up…) — surface that.
+      card.stateEl.textContent = ltc.note || 'LTC not available';
     } else if (ltc.receiving) {
       mode = 'receiving';
+      // With an anchor active, paint the frame it implies for now (this
+      // keeps a throttled tab advancing at the 4×/s anchor rate); the rAF
+      // loop refines it to every frame when the tab is visible. Without an
+      // anchor (rate unknown), fall back to the raw anchor timecode.
+      if (ltcAnchor) paintLtcFrame();
+      else card.timeEl.textContent = displayTime(ltc.time);
+      card.stateEl.textContent = rate ? `Running · ${rate}` : 'Running';
+    } else if (ltc.status === 'stopped' || ltc.time) {
+      // LTC ceased but we know where it stopped — hold the last frame.
+      mode = 'stopped';
       card.timeEl.textContent = displayTime(ltc.time);
-      card.stateEl.textContent = 'Receiving';
+      card.stateEl.textContent = 'Stopped';
     } else {
       mode = 'nosignal';
-      card.timeEl.textContent = displayTime(ltc.time);
+      card.timeEl.textContent = '—';
       card.stateEl.textContent = 'No signal';
     }
-    card.el.className = `tm-card tm-card-ltc is-ltc-${mode}`;
+    // The built-in listener is independent of ProPresenter, so its card
+    // must not gray out with the rest when only ProPresenter is unreachable.
+    const live = ltc.source === 'listener' ? ' src-reader' : '';
+    card.el.className = `tm-card tm-card-ltc is-ltc-${mode}${live}`;
   }
 
   /* ── status dot + degraded banners ──────────────────────────────── */
 
   function renderStatus() {
     wrap.classList.toggle('is-stale', feedOffline || (state ? !state.reachable && state.enabled : false));
+    // The stale gray-out spares the reader-fed LTC card — unless the feed
+    // from the ProdDash server itself is down, when everything is stale.
+    wrap.classList.toggle('is-feed-down', feedOffline);
     if (feedOffline) {
       bannerEl.hidden = false;
       bannerEl.textContent = 'Not receiving updates from the ProdDash server.';
@@ -244,7 +370,10 @@ export default function create({ root, moduleApi }) {
     }
     if (!state.enabled) {
       bannerEl.hidden = true;
-      moduleApi.setStatus('error', 'No ProPresenter host configured — set one in Admin');
+      // The LTC listener feeds us with or without ProPresenter — an
+      // LTC-only setup is working, not broken.
+      if (state.ltc?.supported) moduleApi.setStatus('ok', 'LTC only — no ProPresenter host configured');
+      else moduleApi.setStatus('error', 'No ProPresenter host configured — set one in Admin');
       return;
     }
     if (!state.reachable) {
@@ -262,9 +391,18 @@ export default function create({ root, moduleApi }) {
   function render() {
     renderStatus();
     rebuildMenu();
+    updateLtcAnchor();
+
+    // Admin-chosen digit font. A font swap changes glyph metrics, so re-fit
+    // the digit sizing when it actually changes.
+    const mono = state?.timerFont === 'monospace';
+    if (mono !== wrap.classList.contains('tm-mono')) {
+      wrap.classList.toggle('tm-mono', mono);
+      fit();
+    }
 
     let hint = '';
-    if (state && !state.enabled) {
+    if (state && !state.enabled && !state.ltc?.supported) {
       hint = 'No ProPresenter connection — set the host and port in Admin.';
     }
     const items = hint ? [] : visibleItems();
@@ -411,6 +549,10 @@ export default function create({ root, moduleApi }) {
       stream = null;
       resizeObserver?.disconnect();
       resizeObserver = null;
+      if (ltcRaf) {
+        cancelAnimationFrame(ltcRaf);
+        ltcRaf = 0;
+      }
       root.innerHTML = ''; // header controls are removed by the shell
     },
     onResize() {

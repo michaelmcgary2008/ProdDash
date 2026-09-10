@@ -65,8 +65,9 @@ the app folder from `main` and start the new version with everything still
 configured. The admin page shows the exact path in use, and the server prints
 it at startup (`Settings : …`).
 
-The directory holds `modules.json` (module config) and `layouts/` (named
-layouts), both written by the app itself. It may also hold a `proddash.json`
+The directory holds `modules.json` (module config), `layouts/` (named
+layouts) and `modules/` (modules installed from the admin page), all written
+by the app itself. It may also hold a `proddash.json`
 with this machine's shell settings — the same keys as the checked-in
 [config/proddash.json](config/proddash.json), which supplies the defaults:
 
@@ -86,6 +87,47 @@ so and falls back to the app's `config/` folder.
 directory, so nothing has to be re-entered. The old files are left in place and
 ignored from then on.
 
+## Installing modules and updating
+
+Everything below happens in the **admin page**; ProdDash talks to its GitHub
+repository (`michaelmcgary2008/ProdDash`, branch `main` — change with
+`repo` / `branch` in `proddash.json` or the `PRODDASH_REPO` variable,
+`owner/repo#branch`). It downloads one small archive of the branch, at most
+every few minutes, only while the admin page is open or for the update check
+below. Nothing is installed without someone clicking.
+
+- **Available modules** lists modules in the repo that aren't installed
+  here. **Install** downloads the module into the data directory's `modules/`
+  and starts it right away — nothing is written into the app folder, and no
+  restart is needed. Modules that ship with your copy of ProdDash are
+  "bundled"; ones you installed are "installed"; if both exist, the newer
+  version runs.
+- **Uninstall** on a module card removes an installed module's files. For a
+  bundled module (its folder belongs to the app) it hides the module from
+  every dashboard instead; it reappears under Available modules and can be
+  brought back without downloading. Settings are kept either way.
+- **Module updates**: when the repo has a newer version of an installed
+  module, its card shows **Update to vX**.
+- **Version requirements**: every module declares the ProdDash versions it
+  needs (`"proddash": ">=1.1.0"` in its manifest). A module that needs a
+  newer shell is listed but not loaded, and cannot be installed until
+  ProdDash is updated.
+- **ProdDash updates**: the admin page checks the repo shortly after start
+  and every six hours, and shows a banner when `main` has a newer version
+  (or new commits). **Update now** brings the app folder up to date and
+  restarts the server; dashboards reconnect on their own. A git checkout is
+  updated with `git pull --ff-only` (only when it is on the repo branch with
+  no local changes — otherwise the banner says why and you update with git).
+  A plain folder (no `.git`) has the repo archive unpacked over it; files
+  removed upstream are left behind but harmless. Settings and layouts are
+  never touched. **What changed** opens the commit comparison on GitHub.
+- **Restarting**: after an update the server exits with code 75 and starts
+  its own replacement, which waits for the port to free up. If you supervise
+  ProdDash with your own launcher, set `PRODDASH_LAUNCHER=1` so the server
+  just exits and your launcher restarts it on exit code 75.
+  `PRODDASH_NO_REMOTE_CHECK=1` turns off the periodic check (the admin page
+  still checks when opened).
+
 ## Using the dashboard
 
 - **＋** — add any enabled module; multiple tiles of the same module are
@@ -98,8 +140,8 @@ ignored from then on.
   sit flush — when two share a vertical edge, hover the seam and the same
   kind of pill appears; drag it to trade width (macOS split-view style).
 - **Fullscreen** (the ⛶ button) is a viewing mode: the menu bar hides (its
-  green tab brings it back, minus the Admin button), the occupied columns
-  stretch to the full width, and every column runs to the
+  green lip at the top-left brings it back, minus the Admin button), the
+  occupied columns stretch to the full width, and every column runs to the
   bottom of the screen — the last tile in each column is stretched to end
   there. A short tile like the clock is never stretched into a ribbon: under
   another tile it slides to the bottom edge and the tile above grows into the
@@ -108,9 +150,11 @@ ignored from then on.
   its normal row height and scrolls.
 - A tile's actions (menus, text size, clear…) live in its **title bar**;
   the small **notch** on the bar's bottom edge hides/shows the whole bar
-  for a clean wall-display look. The menu bar has the same kind of tab —
-  the green one under the ProdDash name, kept at the left so it never sits
-  on top of a tile's own tab.
+  for a clean wall-display look. The menu bar's handle is the **ProdDash
+  name itself**, wrapped in a translucent green pill at the left — click it
+  to hide the bar; the slim green lip it leaves at the top-left edge brings
+  the bar back. It stays at the left so it never sits on top of a tile's
+  own tab.
 - The **gear** on a tile holds per-tile settings (filters, text size,
   display options) — these belong to this browser's layout, not the server.
 - The **grid icon** — save the current arrangement to the server under a
@@ -133,8 +177,23 @@ ignored from then on.
   elapsed) and LTC timecode as auto-sized cards. The ＋ picker lists every
   discovered timer (and the LTC card) as its own tile, or add "All timers"
   and pick a selection via the tile's "Timers ▾" menu; overruns are
-  unmistakably red. Read-only — no start/stop controls. Admin config:
-  ProPresenter endpoint (host : port), password.
+  unmistakably red. Read-only — no start/stop controls. Admin config is in
+  three groups: **ProPresenter** (endpoint host : port, API password),
+  **LTC Timecode** (the listener switch, and — when it's on — the audio
+  device and channel), and **Display** (Timer font — Default or Monospace,
+  which keeps the digits from shifting as the numbers change).
+
+  ProPresenter exposes no timecode over any API, so LTC is decoded from the
+  audio signal, behind the admin **LTC listener** switch (off ⇒ no LTC tile
+  in the picker at all). On, the module captures the selected audio input
+  device/channel on the ProdDash machine — a native `ltc-capture` helper,
+  compiled on first use — and decodes the SMPTE frames in-process:
+  running/stopped/no-signal, the timecode counting frame-accurately in real
+  time, and the frame rate (incl. 29.97 drop-frame). macOS note: the
+  ProdDash server needs microphone permission — launch it from a logged-in
+  session (Start ProdDash.command) and approve the one-time prompt; a server
+  started over SSH or by bare launchd silently captures zeros. (Engine
+  self-test: `node modules/propresenter-timers/ltc.selftest.js`.)
 - **PCO Plan** — the order of service from Planning Center Services: every
   plan item with its scheduled start time, length, type, song key,
   description and item notes. When the ProPresenter module is running it
@@ -186,6 +245,7 @@ ProdDash/
 │   ├── clock/
 │   ├── prodcom-transcript/
 │   └── propresenter-now-next/ (carries its own copy of propresenter-core)
+├── package.json               name + version (what the update check compares)
 ├── config/                    proddash.json defaults (runtime state lives in the
 │                              per-machine data directory — see "Configure")
 ├── docs/MODULE-GUIDE.md       how to build and install a module
