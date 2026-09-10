@@ -64,35 +64,33 @@ body.menu-hidden #topbar {
 
 #topbar-notch {
   position: fixed;
-  /* vertically centred in the 46px bar: (46 - 24) / 2 = 11px from its top */
-  top: calc(var(--topbar-h, 46px) - 35px);
-  left: 4px; /* the logo text starts at the bar's 12px padding; the pill adds 8px each side */
-  height: 24px;
+  /* a tab hung from the top of the bar: square top, rounded bottom, hanging
+     8px past the bar's bottom edge; the logo sits centred in the bar part */
+  top: 0;
+  left: 2px; /* the logo text starts at the bar's 12px padding; the tab adds 10px each side */
+  height: calc(var(--topbar-h, 46px) + 8px);
   min-width: 60px;
-  padding: 0 8px;
+  padding: 0 10px;
   font: inherit;
   font-weight: 800;
   font-size: 15px;
   letter-spacing: 0.02em;
-  line-height: 24px;
+  line-height: var(--topbar-h, 46px);
   color: var(--text);
-  background: color-mix(in srgb, var(--accent) 38%, transparent);
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
   border: none;
-  border-radius: 12px;
+  border-radius: 0 0 12px 12px;
   cursor: pointer;
   z-index: 60;
-  transition: top 0.22s ease, height 0.22s ease, line-height 0.22s ease, font-size 0.22s ease,
-    border-radius 0.22s ease, background 0.15s ease;
+  transition: height 0.22s ease, line-height 0.22s ease, font-size 0.22s ease, background 0.15s ease;
 }
 #topbar-notch .accent { color: var(--bg); } /* the cutout */
-#topbar-notch:hover { background: color-mix(in srgb, var(--accent) 62%, transparent); }
-/* bar hidden: the text folds away and the pill becomes a lip at the top edge */
+#topbar-notch:hover { background: color-mix(in srgb, var(--accent) 68%, transparent); }
+/* bar hidden: the text folds away and the tab becomes a lip at the top edge */
 body.menu-hidden #topbar-notch {
-  top: 0;
   height: 10px;
   line-height: 10px;
   font-size: 0;
-  border-radius: 0 0 10px 10px;
   background: color-mix(in srgb, var(--accent) 55%, transparent);
 }
 body.menu-hidden #topbar-notch:hover { background: var(--accent); }
