@@ -140,12 +140,13 @@ ignored from then on.
   description and item notes. When the ProPresenter module is running it
   follows that module's live item, highlights the matching plan item, dims
   what's done and shows the elapsed vs planned runtime and how far
-  ahead/behind the service is. Everything is configured in `/admin`:
-  Planning Center credentials (Personal Access Token app ID + secret, or an
-  OAuth token), the service type (a list grouped by your Planning Center
-  folders), an optional pinned plan, the top-bar text (placeholders such as
-  `{series} • {part} | {serviceType} • {date}`), colors, and a show/hide
-  checklist for every detail. Tiles only choose their text size.
+  ahead/behind the service is. Admin config is the connection: Planning
+  Center credentials (Personal Access Token app ID + secret, or an OAuth
+  token), the service type (a list grouped by your Planning Center folders)
+  and an optional pinned plan. Everything about the display is per tile
+  (gear menu): the top-bar text (placeholders such as
+  `{series} • {part} | {serviceType} • {date}`), colors, text size, and a
+  show/hide checklist for every detail.
 - **Clock** — a big booth clock; also the smallest possible module and the
   reference for module authors.
 

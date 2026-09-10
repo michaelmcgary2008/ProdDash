@@ -1,7 +1,7 @@
 {
   "id": "pco-plan",
   "name": "PCO Plan",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Order of service from Planning Center Services, following ProPresenter live",
   "client": "client.js",
   "server": "server.js",
@@ -12,11 +12,6 @@
     "Planning Center credentials": {
       "collapsed": "whenSet",
       "help": "Create a Personal Access Token at api.planningcenteronline.com (Application ID + Secret), or paste an OAuth 2.0 access token instead. Saved secrets never reach browsers."
-    },
-    "Show / hide": {
-      "collapsed": true,
-      "columns": 3,
-      "help": "Untick anything the tiles should not show. Applies to every PCO Plan tile."
     }
   },
   "configSchema": {
@@ -63,7 +58,21 @@
       "type": "switch",
       "label": "Follow the ProPresenter module's live item to highlight the current plan item and time it",
       "default": true
+    }
+  },
+  "instanceGroups": {
+    "Top bar": {
+      "collapsed": false
     },
+    "Show / hide": {
+      "collapsed": true,
+      "columns": 3,
+      "help": "Untick anything this tile should not show."
+    }
+  },
+  "instanceSchema": {
+    "textSize": { "type": "number", "label": "Text size (px)", "default": 14 },
+    "autoScroll": { "type": "boolean", "label": "Keep the current item in view", "default": true },
     "noteCategories": {
       "type": "string",
       "label": "Item note categories to show (comma-separated, blank = all)",
@@ -114,9 +123,5 @@
     "showItemRuntime": { "type": "boolean", "label": "Item runtime (elapsed vs planned)", "default": true, "group": "Show / hide" },
     "dimCompleted": { "type": "boolean", "label": "Dim completed items", "default": true, "group": "Show / hide" },
     "showLiveFooter": { "type": "boolean", "label": "ProPresenter match line", "default": true, "group": "Show / hide" }
-  },
-  "instanceSchema": {
-    "textSize": { "type": "number", "label": "Text size (px)", "default": 14 },
-    "autoScroll": { "type": "boolean", "label": "Keep the current item in view", "default": true }
   }
 }

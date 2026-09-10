@@ -2,9 +2,9 @@
 
    The server part reads Planning Center and (optionally) follows the
    ProPresenter module's live item; this tile only renders the plan it is
-   streamed. What is shown is decided server-wide in /admin (moduleApi.config:
-   show/hide checklist, top-bar template, colors); the tile itself only owns
-   its text size and auto-scroll. */
+   streamed. What is shown is this tile's own choice (gear menu →
+   moduleApi.instanceSettings: show/hide checklist, top-bar template,
+   colors, text size); /admin only holds the connection settings. */
 
 const REFRESH_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>';
 
@@ -43,10 +43,10 @@ export default function create({ root, moduleApi }) {
   const listEl = root.querySelector('.pp-list');
   const footEl = root.querySelector('.pp-foot');
 
-  /** Admin-wide display settings (the show/hide checklist lives there). */
-  const cfg = () => moduleApi.config || {};
+  /** This tile's display settings (gear menu) — read fresh on every render. */
+  const cfg = () => moduleApi.instanceSettings || {};
   const on = (key) => cfg()[key] !== false; // unset = shown
-  const tilePrefs = () => moduleApi.instanceSettings;
+  const tilePrefs = cfg;
   const serverNow = () => Date.now() + skew;
 
   /* ── title-bar controls ─────────────────────────────────────────── */
@@ -270,7 +270,7 @@ export default function create({ root, moduleApi }) {
         hint: `${state.serviceType?.name || 'This service type'} has no upcoming or recent plans in Planning Center.`,
       };
     }
-    if (!visibleItems().length) return { title: 'Nothing to show', hint: 'Every item is hidden by the PCO Plan settings in Admin.' };
+    if (!visibleItems().length) return { title: 'Nothing to show', hint: 'Every item is hidden by this tile’s settings (gear menu).' };
     return null;
   }
 
@@ -612,10 +612,8 @@ export default function create({ root, moduleApi }) {
       root.innerHTML = '';
     },
     onConfigChange() {
-      // Display settings changed in Admin: re-render from the new
-      // moduleApi.config. The server re-inits too and re-sends its state.
-      lastListKey = '';
-      render();
+      // Admin holds only connection settings; the server re-inits and its
+      // stream re-sends the state. Nothing cached here to refresh.
     },
   };
 }
