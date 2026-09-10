@@ -106,6 +106,12 @@ the group name:
 placeholders, where a value comes from. Keep labels short and put the
 explanation there.
 
+`group` and `help` work on `instanceSchema` fields too, and a manifest
+`instanceGroups` map plays the `configGroups` role for the tile's gear
+popover (`collapsed: true | false`, `columns`, `help`). That is how a module
+with a long show/hide checklist keeps the popover usable — see `pco-plan`.
+Display choices belong there, per tile; admin config is for connections.
+
 `showWhen: "<key>"` hides a field until the boolean/`switch` field named
 `<key>` is on — e.g. the audio device and channel appear only once the LTC
 listener switch is enabled. The hidden field still keeps its stored value.

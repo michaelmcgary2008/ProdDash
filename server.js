@@ -402,6 +402,7 @@ async function clientManifest(id) {
     minSize: man.minSize || { w: 1, h: 1 },
     defaultSize: man.defaultSize || { w: 4, h: 3 },
     instanceSchema: man.instanceSchema || {},
+    instanceGroups: man.instanceGroups && typeof man.instanceGroups === 'object' ? man.instanceGroups : {},
     hasServer: Boolean(man.server),
     config: clientConfig(id),
     tiles: await moduleTiles(id),
