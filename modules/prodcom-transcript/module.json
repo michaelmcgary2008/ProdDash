@@ -1,7 +1,7 @@
 {
   "id": "prodcom-transcript",
   "name": "ProdCom",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "proddash": ">=1.1.0",
   "description": "Live ProdCom transcript stream",
   "client": "client.js",
@@ -22,15 +22,15 @@
     }
   },
   "instanceSchema": {
-    "channel": {
-      "type": "string",
-      "label": "Channel filter (channel name; empty = all)",
-      "default": ""
+    "showAvatars": {
+      "type": "boolean",
+      "label": "Show channel icons",
+      "default": true
     },
-    "textSize": {
-      "type": "number",
-      "label": "Text size (px)",
-      "default": 15
+    "newestFirst": {
+      "type": "boolean",
+      "label": "Newest first (transcript reads bottom-up)",
+      "default": false
     },
     "showTimes": {
       "type": "boolean",
