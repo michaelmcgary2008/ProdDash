@@ -99,23 +99,55 @@ the app); its settings are kept for a later reinstall.
 Both schemas map field names to specs:
 
 ```
-{ "type": "string" | "number" | "boolean" | "switch" | "select" | "password" | "endpoint",
+{ "type": "string" | "number" | "boolean" | "switch" | "select" | "color" | "password" | "endpoint",
   "label": "Shown next to the field",
   "default": <value>,
   "group": "Section heading",                         // optional; see below
   "showWhen": "<other boolean/switch key>",           // optional; see below
-  "options": [ { "value": "a", "label": "A" }, … ],  // "select" only
-  "optionsRoute": "/devices"                          // "select" only, admin config only
+  "help": "One line shown under the control",         // optional, admin config only
+  "options": [ { "value": "a", "label": "A", "group": "Optgroup" }, … ],  // "select" only
+  "optionsRoute": "/devices",                         // "select" only, admin config only
+  "optionsDependsOn": "<other key>"                   // with optionsRoute; see below
 }
 ```
 
 `boolean` renders as a checkbox; `switch` is the same true/false value shown
 as a toggle (use it for a feature on/off that other fields depend on).
+`color` renders a swatch picker and stores a `#rrggbb` string (give it a hex
+default; the tile applies it as a CSS custom property — see `pco-plan`).
 
 `group` gathers consecutive fields under a labeled subsection in the admin
 page, so a module with several distinct concerns (e.g. a ProPresenter
 connection and an LTC audio input) reads as clearly separated blocks. Fields
 with no `group` render loose, before/after the grouped ones in schema order.
+
+A manifest-level `configGroups` map can dress a group up further, keyed by
+the group name:
+
+```json
+"configGroups": {
+  "Planning Center credentials": { "collapsed": "whenSet", "help": "Where to get a token…" },
+  "Show / hide":                 { "collapsed": true, "columns": 3 }
+}
+```
+
+- `collapsed`: `true` (starts folded), `false` (starts open but can fold),
+  or `"whenSet"` — folded once the group already holds values (a saved
+  password, or anything other than the schema default), open while it is
+  still empty. Omit it and the group is a plain, always-open block.
+- `columns`: 2–4 lays the group's fields out in a grid — the way to keep a
+  long checklist of booleans compact.
+- `help`: a line of guidance at the top of the group.
+
+`help` on a field puts one line of guidance under its control — allowed
+placeholders, where a value comes from. Keep labels short and put the
+explanation there.
+
+`group` and `help` work on `instanceSchema` fields too, and a manifest
+`instanceGroups` map plays the `configGroups` role for the tile's gear
+popover (`collapsed: true | false`, `columns`, `help`). That is how a module
+with a long show/hide checklist keeps the popover usable — see `pco-plan`.
+Display choices belong there, per tile; admin config is for connections.
 
 `showWhen: "<key>"` hides a field until the boolean/`switch` field named
 `<key>` is on — e.g. the audio device and channel appear only once the LTC
@@ -128,6 +160,13 @@ refresh of — static `options`: the admin page GETs
 "label" }, … ] }` from one of the module's own server routes. The saved value
 stays selectable even when the route is down or the option has vanished. (See
 `propresenter-timers`' "Audio device" for a worked example.)
+
+An option may carry a `group`: options sharing one render under a single
+`<optgroup>`, so a tree (Planning Center folders, device classes) is
+browsable inside the select. `optionsDependsOn: "<key>"` makes the admin
+page fetch the options with that other field's current value appended as a
+query parameter (`?<key>=<value>`), now and again whenever it changes — e.g.
+a plan list that follows the chosen service type. (Both in `pco-plan`.)
 
 `password` fields are admin-config only in practice: their values are stored
 in the server's `modules.json` (in the per-machine data directory, see the
@@ -522,6 +561,15 @@ client-side failures (a tile that fails to start says so in the tile).
   a timecode API). Also serves the stage-display websocket with an
   LTC-labeled layout field (`--stage-pwd`, `--no-ltc-field` exercise its
   failure paths). Point the Timers module at host `127.0.0.1`, port `1600`.
+- Planning Center: `node tools/pco-mock.js` (port 24700) — folders, service
+  types, plans (last week / today / next week), plan times and items with
+  songs, keys and item notes, behind a Basic/Bearer auth check. Planning
+  Center is a cloud API, so the module reads its base URL from the
+  environment instead of admin config: run ProdDash with
+  `PCO_PLAN_API_BASE=http://127.0.0.1:24700 node server.js`, enter any
+  Application ID + Secret under PCO Plan in `/admin`, save, then pick
+  "Sunday Service" from the Service type list. Its item titles match
+  `pp-mock.js`, so running both mocks exercises the ProPresenter matching.
 
 **The resilience checklist** — every module must pass this before it's done:
 

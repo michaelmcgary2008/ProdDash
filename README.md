@@ -194,14 +194,28 @@ below. Nothing is installed without someone clicking.
   session (Start ProdDash.command) and approve the one-time prompt; a server
   started over SSH or by bare launchd silently captures zeros. (Engine
   self-test: `node modules/propresenter-timers/ltc.selftest.js`.)
+- **PCO Plan** — the order of service from Planning Center Services: every
+  plan item with its scheduled start time, length, type, song key,
+  description and item notes. When the ProPresenter module is running it
+  follows that module's live item, highlights the matching plan item, dims
+  what's done and shows the elapsed vs planned runtime and how far
+  ahead/behind the service is. Admin config is the connection: Planning
+  Center credentials (Personal Access Token app ID + secret, or an OAuth
+  token), the service type (a list grouped by your Planning Center folders)
+  and an optional pinned plan. Everything about the display is per tile
+  (gear menu): the top-bar text (placeholders such as
+  `{series} • {part} | {serviceType} • {date}`), colors, text size, and a
+  show/hide checklist for every detail.
 - **Clock** — a big booth clock; also the smallest possible module and the
   reference for module authors.
 
 To develop modules against mocks instead of real gear:
 `node tools/prodcom-mock.js` (ProdCom on `127.0.0.1:24480`),
 `node band-lineup-display/tmp/pp-mock.js 1599` (ProPresenter slides on
-`127.0.0.1:1599`) and `node tools/pp-timers-mock.js 1600` (ProPresenter
-timers + timecode on `127.0.0.1:1600`). See the testing section of the
+`127.0.0.1:1599`), `node tools/pp-timers-mock.js 1600` (ProPresenter
+timers + timecode on `127.0.0.1:1600`) and `node tools/pco-mock.js`
+(Planning Center Services on `127.0.0.1:24700` — run ProdDash with
+`PCO_PLAN_API_BASE=http://127.0.0.1:24700`). See the testing section of the
 [module guide](docs/MODULE-GUIDE.md).
 
 ## Install as a desktop web app

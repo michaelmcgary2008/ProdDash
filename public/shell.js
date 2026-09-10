@@ -919,6 +919,14 @@ function unmountModule(tile) {
 
 /* ── per-tile settings popover ──────────────────────────────────────── */
 
+/** `<input type="color">` only accepts #rrggbb — anything else falls back. */
+function colorHex(value, fallback) {
+  const s = String(value ?? '').trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(s)) return s.toLowerCase();
+  if (/^#[0-9a-fA-F]{3}$/.test(s)) return ('#' + s.slice(1).split('').map((c) => c + c).join('')).toLowerCase();
+  return fallback;
+}
+
 function closeSettingsPopovers() {
   document.querySelectorAll('.tile-settings').forEach((p) => p.remove());
 }
@@ -934,10 +942,53 @@ function toggleSettingsPopover(tile, el) {
   pop.className = 'tile-settings';
   const inputs = new Map();
 
+  // Fields render in schema order; a field's `group` starts a labeled
+  // subsection that consecutive same-group fields share, and the manifest's
+  // optional `instanceGroups[name]` adds { collapsed, columns, help } —
+  // the same conventions as the admin page's config form.
+  const groupMeta = man.instanceGroups && typeof man.instanceGroups === 'object' ? man.instanceGroups : {};
+  let groupName = null;
+  let container = pop;
+
   for (const [key, spec] of Object.entries(man.instanceSchema)) {
     const type = spec?.type || 'string';
     const label = spec?.label || key;
     const current = key in (tile.settings || {}) ? tile.settings[key] : spec?.default;
+
+    const g = spec?.group || '';
+    if (g !== groupName) {
+      groupName = g;
+      if (g) {
+        const meta = groupMeta[g] && typeof groupMeta[g] === 'object' ? groupMeta[g] : {};
+        const folds = meta.collapsed !== undefined;
+        const group = document.createElement(folds ? 'details' : 'div');
+        group.className = 'field-group';
+        if (folds) group.open = !meta.collapsed;
+        const title = document.createElement(folds ? 'summary' : 'div');
+        title.className = 'field-group-title';
+        title.textContent = g;
+        group.appendChild(title);
+        const body = document.createElement('div');
+        body.className = 'field-group-body';
+        const cols = Math.min(4, Math.trunc(Number(meta.columns)) || 0);
+        if (cols > 1) {
+          body.classList.add('is-columns');
+          body.style.setProperty('--cols', String(cols));
+        }
+        if (meta.help) {
+          const help = document.createElement('div');
+          help.className = 'field-group-help';
+          help.textContent = meta.help;
+          body.appendChild(help);
+        }
+        group.appendChild(body);
+        pop.appendChild(group);
+        pop.classList.add('has-groups');
+        container = body;
+      } else {
+        container = pop;
+      }
+    }
 
     const field = document.createElement('label');
     field.className = 'field' + (type === 'boolean' ? ' check' : '');
@@ -961,6 +1012,16 @@ function toggleSettingsPopover(tile, el) {
       select.value = String(current ?? '');
       field.append(span, select);
       inputs.set(key, () => select.value);
+    } else if (type === 'color') {
+      // A swatch picker; the value is always a #rrggbb string.
+      field.classList.add('color-field');
+      const span = document.createElement('span');
+      span.textContent = label;
+      const input = document.createElement('input');
+      input.type = 'color';
+      input.value = colorHex(current, colorHex(spec?.default, '#2ee59a'));
+      field.append(span, input);
+      inputs.set(key, () => input.value);
     } else {
       const span = document.createElement('span');
       span.textContent = label;
@@ -970,7 +1031,13 @@ function toggleSettingsPopover(tile, el) {
       field.append(span, input);
       inputs.set(key, () => (type === 'number' ? Number(input.value) : input.value));
     }
-    pop.appendChild(field);
+    if (spec?.help) {
+      const help = document.createElement('small');
+      help.className = 'field-help';
+      help.textContent = spec.help;
+      field.appendChild(help);
+    }
+    container.appendChild(field);
   }
 
   const actions = document.createElement('div');

@@ -130,6 +130,50 @@ body { overflow: auto; }
 }
 .field-group .field:last-child { margin-bottom: 0; }
 
+/* collapsible groups (manifest configGroups[name].collapsed) */
+details.field-group > summary.field-group-title {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 0;
+  user-select: none;
+}
+details.field-group > summary.field-group-title::-webkit-details-marker { display: none; }
+details.field-group > summary.field-group-title::before {
+  content: "";
+  width: 0; height: 0;
+  border-left: 5px solid var(--muted);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 0.15s;
+}
+details.field-group[open] > summary.field-group-title::before { transform: rotate(90deg); }
+details.field-group[open] > summary.field-group-title { margin-bottom: 10px; }
+details.field-group > summary.field-group-title:hover { color: var(--text); }
+
+/* multi-column groups (configGroups[name].columns): a neat checklist grid */
+.field-group-body.is-columns {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr));
+  gap: 4px 16px;
+}
+.field-group-body.is-columns .field { margin-bottom: 4px; max-width: none; }
+.field-group-body.is-columns .field-group-help { grid-column: 1 / -1; }
+@media (max-width: 560px) { .field-group-body.is-columns { grid-template-columns: 1fr 1fr; } }
+
+.field-group-help,
+.field-help {
+  display: block;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.field-group-help { margin: -4px 0 8px; }
+.field-help { margin-top: 2px; }
+.field-help code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
 /* showWhen: a hidden dependent field must actually collapse — `.field`'s
    own `display:flex` (an author rule) otherwise outranks the [hidden] UA
    default and the field stays visible. */
