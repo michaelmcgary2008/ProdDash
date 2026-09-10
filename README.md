@@ -177,8 +177,10 @@ below. Nothing is installed without someone clicking.
   elapsed) and LTC timecode as auto-sized cards. The ＋ picker lists every
   discovered timer (and the LTC card) as its own tile, or add "All timers"
   and pick a selection via the tile's "Timers ▾" menu; overruns are
-  unmistakably red. Read-only — no start/stop controls. Admin config:
-  ProPresenter endpoint (host : port), password.
+  unmistakably red. LTC is read from a stage-display layout field labeled
+  "LTC" over ProPresenter's stage websocket (its HTTP API has no timecode
+  route). Read-only — no start/stop controls. Admin config: ProPresenter
+  endpoint (host : port), API password, stage display password.
 - **Clock** — a big booth clock; also the smallest possible module and the
   reference for module authors.
 

@@ -496,7 +496,9 @@ client-side failures (a tile that fails to start says so in the tile).
 - ProPresenter timers: `node tools/pp-timers-mock.js 1600` — running,
   overrunning, stopped and elapsed timers plus an LTC timecode that
   periodically drops to no-signal (`--no-ltc` serves a ProPresenter without
-  a timecode API). Point the Timers module at host `127.0.0.1`, port `1600`.
+  a timecode API). Also serves the stage-display websocket with an
+  LTC-labeled layout field (`--stage-pwd`, `--no-ltc-field` exercise its
+  failure paths). Point the Timers module at host `127.0.0.1`, port `1600`.
 
 **The resilience checklist** — every module must pass this before it's done:
 

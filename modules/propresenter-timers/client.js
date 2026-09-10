@@ -210,7 +210,9 @@ export default function create({ root, moduleApi }) {
     if (ltc.supported === false) {
       mode = 'unavailable';
       card.timeEl.textContent = '—';
-      card.stateEl.textContent = 'Timecode not available on this ProPresenter';
+      // The server says why when it knows (stage password rejected, no
+      // stage field labeled LTC, …) — surface that over the generic line.
+      card.stateEl.textContent = ltc.note || 'Timecode not available on this ProPresenter';
     } else if (ltc.supported === null) {
       mode = 'waiting';
       card.timeEl.textContent = displayTime(ltc.time);

@@ -1,23 +1,37 @@
 {
   "id": "propresenter-timers",
   "name": "Timers",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "proddash": ">=1.1.0",
   "description": "Live ProPresenter timers and LTC timecode",
   "client": "client.js",
   "server": "server.js",
   "style": "style.css",
-  "minSize": { "w": 2, "h": 1 },
-  "defaultSize": { "w": 4, "h": 2 },
+  "minSize": {
+    "w": 2,
+    "h": 1
+  },
+  "defaultSize": {
+    "w": 4,
+    "h": 2
+  },
   "configSchema": {
     "propresenter": {
       "type": "endpoint",
       "label": "ProPresenter",
-      "default": { "host": "", "port": 1025 }
+      "default": {
+        "host": "",
+        "port": 1025
+      }
     },
     "password": {
       "type": "password",
       "label": "API password (only if set in ProPresenter)",
+      "default": ""
+    },
+    "stagePassword": {
+      "type": "password",
+      "label": "Stage display password (for LTC — ProPresenter Settings → Network)",
       "default": ""
     }
   }

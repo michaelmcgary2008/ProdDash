@@ -23,10 +23,15 @@
  *     "overr" as overrun. The API exposes NO per-timer color anywhere.
  *   GET /v1/timecode/status → NOT in the published spec. The spec (fetched
  *     2026-08, 0 mentions of "timecode", not in the /v1/status/updates
- *     allowlist either) documents no timecode/LTC route at all. We probe this
- *     candidate route once per connection anyway so a future ProPresenter
- *     that adds it lights up without a module update; a 404 marks LTC
- *     "not available on this ProPresenter" (ltc.supported = false).
+ *     allowlist either) documents no timecode/LTC route at all — verified
+ *     live: ProPresenter 21.4 returns 404. We probe this candidate route
+ *     once per connection anyway so a future ProPresenter that adds it
+ *     lights up without a module update.
+ *
+ * Because the HTTP API has no timecode, LTC actually comes from the classic
+ * stage-display websocket (see stage-ws.js): a stage layout field labeled
+ * "LTC" streams its text to us. Source precedence: the HTTP route if it ever
+ * answers (authoritative), else the stage field, else "not available".
  *
  * ProPresenter's built-in HTTP server is easily overwhelmed (see the hot-path
  * notes in ../propresenter-now-next/propresenter-core). So: requests run
@@ -47,6 +52,8 @@ const REQUEST_TIMEOUT_MS = 4000;
 /** SSE comment ping cadence — keeps idle connections alive through sleepy Wi-Fi. */
 const HEARTBEAT_MS = 15000;
 
+const { createStageLtcClient } = require('./stage-ws');
+
 /** Set by init(), read by the routes — both are rebuilt together on remount. */
 let current = null;
 
@@ -56,9 +63,10 @@ function clearedState(enabled) {
     reachable: false,
     lastError: '',
     timers: [],
-    // supported: null = not probed yet (or ProPresenter unreachable),
-    // true/false once a reachable ProPresenter answered the probe.
-    ltc: { supported: null, time: '', receiving: false },
+    // supported: null = no verdict yet (probing, or ProPresenter
+    // unreachable); true once a timecode source is live; false when both
+    // sources came up empty (note says why, when we know).
+    ltc: { supported: null, time: '', receiving: false, source: '', note: '' },
   };
 }
 
@@ -85,6 +93,23 @@ module.exports = {
     /** null = probe /v1/timecode/status on the next reachable tick. */
     let ltcSupported = null;
     let ltcLast = { time: '', receiving: false };
+    /** Live view of the stage-display websocket's LTC field (stage-ws.js). */
+    let stageLtc = { bound: false, time: '', receiving: false, note: '' };
+
+    /** One LTC verdict from both sources: HTTP route wins if it ever
+        answers (authoritative), else the stage-display field. */
+    function composeLtc() {
+      if (ltcSupported === true) {
+        return { supported: true, source: 'api', time: ltcLast.time, receiving: ltcLast.receiving, note: '' };
+      }
+      if (stageLtc.bound) {
+        return { supported: true, source: 'stage', time: stageLtc.time, receiving: stageLtc.receiving, note: '' };
+      }
+      if (ltcSupported === null && !stageLtc.note) {
+        return { supported: null, source: '', time: '', receiving: false, note: '' };
+      }
+      return { supported: false, source: '', time: '', receiving: false, note: stageLtc.note || '' };
+    }
 
     function url(target) {
       const built = new URL(`http://${host}:${port}${target}`);
@@ -197,7 +222,10 @@ module.exports = {
     }
 
     async function pollLtc() {
-      if (ltcSupported === false) return;
+      // A 404 verdict is retried once a minute — an endpoint appearing
+      // without an unreachable spell (ProPresenter hot-swapped in testing,
+      // or some future in-place upgrade) must not stay invisible forever.
+      if (ltcSupported === false && tick % 120 !== 0) return;
       try {
         const body = await requestJson('/v1/timecode/status');
         if (ltcSupported === null) log('timecode endpoint answered — LTC card is live');
@@ -221,7 +249,7 @@ module.exports = {
         reachable: latest.reachable,
         lastError: latest.lastError,
         timers: latest.timers,
-        ltc: { supported: ltcSupported, time: ltcLast.time, receiving: ltcLast.receiving },
+        ltc: composeLtc(),
       };
       if (!streams.size) return;
       let frame;
@@ -271,9 +299,23 @@ module.exports = {
       pollTimer = setTimeout(pollTick, latest.reachable ? POLL_MS : RETRY_MS);
     }
 
+    let stageClient = null;
     if (enabled) {
       pollTick();
       log(`polling timers on ${host}:${port}`);
+      stageClient = createStageLtcClient({
+        host,
+        port,
+        password: String(config.stagePassword || ''),
+        log,
+        // The HTTP poller knows every configured timer's uuid — anything
+        // else streaming timecode-shaped text can be heuristically bound.
+        isTimerUid: (uid) => timerConfigs.has(uid),
+        onUpdate(update) {
+          stageLtc = update;
+          broadcast();
+        },
+      });
     } else {
       log('no ProPresenter host configured — set one in /admin');
     }
@@ -296,6 +338,7 @@ module.exports = {
         stopped = true;
         clearTimeout(pollTimer);
         clearInterval(heartbeat);
+        stageClient?.stop();
         for (const res of streams) {
           try { res.end(); } catch { /* already gone */ }
         }
@@ -305,7 +348,10 @@ module.exports = {
       health() {
         if (!enabled) return { status: 'error', message: 'No ProPresenter host configured' };
         if (latest.reachable) {
-          const ltcNote = latest.ltc.supported ? ' (with timecode)' : '';
+          const ltc = latest.ltc;
+          const ltcNote = ltc.supported
+            ? (ltc.source === 'stage' ? ', LTC via stage display' : ', LTC via API')
+            : (ltc.note ? ` (${ltc.note})` : '');
           return { status: 'ok', message: `Polling ${host}:${port}, ${latest.timers.length} timer(s)${ltcNote}` };
         }
         return {
