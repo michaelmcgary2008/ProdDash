@@ -7,3 +7,6 @@ dist/
 # runtime state written by the admin page / layout saves
 config/modules.json
 config/layouts/
+
+# compiled per-machine, source sits next to it
+modules/propresenter-timers/ltc-capture

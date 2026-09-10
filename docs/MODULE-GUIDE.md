@@ -99,12 +99,35 @@ the app); its settings are kept for a later reinstall.
 Both schemas map field names to specs:
 
 ```
-{ "type": "string" | "number" | "boolean" | "select" | "password" | "endpoint",
+{ "type": "string" | "number" | "boolean" | "switch" | "select" | "password" | "endpoint",
   "label": "Shown next to the field",
   "default": <value>,
-  "options": [ { "value": "a", "label": "A" }, … ]   // "select" only
+  "group": "Section heading",                         // optional; see below
+  "showWhen": "<other boolean/switch key>",           // optional; see below
+  "options": [ { "value": "a", "label": "A" }, … ],  // "select" only
+  "optionsRoute": "/devices"                          // "select" only, admin config only
 }
 ```
+
+`boolean` renders as a checkbox; `switch` is the same true/false value shown
+as a toggle (use it for a feature on/off that other fields depend on).
+
+`group` gathers consecutive fields under a labeled subsection in the admin
+page, so a module with several distinct concerns (e.g. a ProPresenter
+connection and an LTC audio input) reads as clearly separated blocks. Fields
+with no `group` render loose, before/after the grouped ones in schema order.
+
+`showWhen: "<key>"` hides a field until the boolean/`switch` field named
+`<key>` is on — e.g. the audio device and channel appear only once the LTC
+listener switch is enabled. The hidden field still keeps its stored value.
+
+A `select` whose choices are only knowable at runtime (audio devices, serial
+ports, discovered sources) sets `optionsRoute` instead of — or as a fallback
+refresh of — static `options`: the admin page GETs
+`/api/modules/<id><optionsRoute>` and expects `{ "options": [ { "value",
+"label" }, … ] }` from one of the module's own server routes. The saved value
+stays selectable even when the route is down or the option has vanished. (See
+`propresenter-timers`' "Audio device" for a worked example.)
 
 `password` fields are admin-config only in practice: their values are stored
 in the server's `modules.json` (in the per-machine data directory, see the

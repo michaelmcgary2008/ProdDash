@@ -113,6 +113,39 @@ body { overflow: auto; }
 .endpoint-row .ep-sep { color: var(--muted); font-weight: 600; }
 .module-form-empty { color: var(--muted); font-size: 12px; margin-top: 10px; }
 
+/* labeled config subsections (manifest field `group`) */
+.field-group {
+  margin: 14px 0 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+.field-group-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.field-group .field:last-child { margin-bottom: 0; }
+
+/* showWhen: a hidden dependent field must actually collapse — `.field`'s
+   own `display:flex` (an author rule) otherwise outranks the [hidden] UA
+   default and the field stays visible. */
+.module-form .field[hidden] { display: none; }
+
+/* a boolean rendered as a toggle (manifest type `switch`) */
+.field.switch-field {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  cursor: pointer;
+  max-width: none;
+}
+.field.switch-field .switch-label { font-size: 13px; }
+
 .module-actions {
   display: flex;
   align-items: center;

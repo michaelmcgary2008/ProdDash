@@ -177,10 +177,23 @@ below. Nothing is installed without someone clicking.
   elapsed) and LTC timecode as auto-sized cards. The ＋ picker lists every
   discovered timer (and the LTC card) as its own tile, or add "All timers"
   and pick a selection via the tile's "Timers ▾" menu; overruns are
-  unmistakably red. LTC is read from a stage-display layout field labeled
-  "LTC" over ProPresenter's stage websocket (its HTTP API has no timecode
-  route). Read-only — no start/stop controls. Admin config: ProPresenter
-  endpoint (host : port), API password, stage display password.
+  unmistakably red. Read-only — no start/stop controls. Admin config is in
+  three groups: **ProPresenter** (endpoint host : port, API password),
+  **LTC Timecode** (the listener switch, and — when it's on — the audio
+  device and channel), and **Display** (Timer font — Default or Monospace,
+  which keeps the digits from shifting as the numbers change).
+
+  ProPresenter exposes no timecode over any API, so LTC is decoded from the
+  audio signal, behind the admin **LTC listener** switch (off ⇒ no LTC tile
+  in the picker at all). On, the module captures the selected audio input
+  device/channel on the ProdDash machine — a native `ltc-capture` helper,
+  compiled on first use — and decodes the SMPTE frames in-process:
+  running/stopped/no-signal, the timecode counting frame-accurately in real
+  time, and the frame rate (incl. 29.97 drop-frame). macOS note: the
+  ProdDash server needs microphone permission — launch it from a logged-in
+  session (Start ProdDash.command) and approve the one-time prompt; a server
+  started over SSH or by bare launchd silently captures zeros. (Engine
+  self-test: `node modules/propresenter-timers/ltc.selftest.js`.)
 - **Clock** — a big booth clock; also the smallest possible module and the
   reference for module authors.
 
