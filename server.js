@@ -485,6 +485,7 @@ function adminModuleView(id) {
     hasServer: Boolean(man.server),
     enabled: isEnabled(id),
     configSchema: man.configSchema || {},
+    configGroups: man.configGroups && typeof man.configGroups === 'object' ? man.configGroups : {},
     config: values,
     passwordSet,
     mountError: entry?.error || '',
@@ -505,7 +506,7 @@ function applyConfigPatch(id, patch) {
       value = current[key] || '';
     }
     if (type === 'number') value = Number(value) || 0;
-    else if (type === 'boolean') value = Boolean(value);
+    else if (type === 'boolean' || type === 'switch') value = Boolean(value);
     else if (type === 'endpoint') {
       const src = value && typeof value === 'object' ? value : {};
       value = {

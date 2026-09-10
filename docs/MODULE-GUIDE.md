@@ -64,12 +64,66 @@ shell code changes, ever.
 Both schemas map field names to specs:
 
 ```
-{ "type": "string" | "number" | "boolean" | "select" | "password" | "endpoint",
+{ "type": "string" | "number" | "boolean" | "switch" | "select" | "password" | "endpoint",
   "label": "Shown next to the field",
   "default": <value>,
-  "options": [ { "value": "a", "label": "A" }, … ]   // "select" only
+  "group": "Section heading",                         // optional; see below
+  "showWhen": "<other boolean/switch key>",           // optional; see below
+  "help": "One line shown under the control",         // optional, admin config only
+  "options": [ { "value": "a", "label": "A", "group": "Optgroup" }, … ],  // "select" only
+  "optionsRoute": "/devices",                         // "select" only, admin config only
+  "optionsDependsOn": "<other key>"                   // with optionsRoute; see below
 }
 ```
+
+`boolean` renders as a checkbox; `switch` is the same true/false value shown
+as a toggle (use it for a feature on/off that other fields depend on).
+
+`group` gathers consecutive fields under a labeled subsection in the admin
+page, so a module with several distinct concerns (e.g. a ProPresenter
+connection and an LTC audio input) reads as clearly separated blocks. Fields
+with no `group` render loose, before/after the grouped ones in schema order.
+
+A manifest-level `configGroups` map can dress a group up further, keyed by
+the group name:
+
+```json
+"configGroups": {
+  "Planning Center credentials": { "collapsed": "whenSet", "help": "Where to get a token…" },
+  "Show / hide":                 { "collapsed": true, "columns": 3 }
+}
+```
+
+- `collapsed`: `true` (starts folded), `false` (starts open but can fold),
+  or `"whenSet"` — folded once the group already holds values (a saved
+  password, or anything other than the schema default), open while it is
+  still empty. Omit it and the group is a plain, always-open block.
+- `columns`: 2–4 lays the group's fields out in a grid — the way to keep a
+  long checklist of booleans compact.
+- `help`: a line of guidance at the top of the group.
+
+`help` on a field puts one line of guidance under its control — allowed
+placeholders, where a value comes from. Keep labels short and put the
+explanation there.
+
+`showWhen: "<key>"` hides a field until the boolean/`switch` field named
+`<key>` is on — e.g. the audio device and channel appear only once the LTC
+listener switch is enabled. The hidden field still keeps its stored value.
+
+A `select` whose choices are only knowable at runtime (audio devices, serial
+ports, discovered sources) sets `optionsRoute` instead of — or as a fallback
+refresh of — static `options`: the admin page GETs
+`/api/modules/<id><optionsRoute>` and expects `{ "options": [ { "value",
+"label" }, … ] }` from one of the module's own server routes. The saved value
+stays selectable even when the route is down or the option has vanished. (See
+`propresenter-timers`' "Audio device" for a worked example.)
+
+An option may carry a `group`: options sharing one render under a single
+`<optgroup>`, so a tree (Planning Center folders, device classes) is
+browsable inside the select. `optionsDependsOn: "<key>"` makes the admin
+page fetch the options with that other field's current value appended as a
+query parameter (`?<key>=<value>`), now and again whenever it changes — e.g.
+a plan list that follows the chosen service type. (Both in `pco-plan`.)
 
 `password` fields are admin-config only in practice: their values are stored
 in the server's `modules.json` (in the per-machine data directory, see the
@@ -468,9 +522,9 @@ client-side failures (a tile that fails to start says so in the tile).
   Center is a cloud API, so the module reads its base URL from the
   environment instead of admin config: run ProdDash with
   `PCO_PLAN_API_BASE=http://127.0.0.1:24700 node server.js`, enter any
-  Application ID + Secret in `/admin`, and pick "Sunday Service" in
-  `/modules/pco-plan/setup.html`. Its item titles match `pp-mock.js`, so
-  running both mocks exercises the ProPresenter matching.
+  Application ID + Secret under PCO Plan in `/admin`, save, then pick
+  "Sunday Service" from the Service type list. Its item titles match
+  `pp-mock.js`, so running both mocks exercises the ProPresenter matching.
 
 **The resilience checklist** — every module must pass this before it's done:
 

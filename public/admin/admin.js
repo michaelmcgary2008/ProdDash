@@ -83,19 +83,43 @@ function healthText(mod) {
   return mod.hasServer ? 'Mounted.' : 'Client-only module (no server part).';
 }
 
-function fieldFor(key, spec, value, passwordSet) {
+function fieldFor(key, spec, value, passwordSet, moduleId) {
   const type = spec?.type || 'string';
   const label = spec?.label || key;
   const field = document.createElement('label');
-  field.className = 'field' + (type === 'boolean' ? ' check' : '');
+  field.className = 'field' + (type === 'boolean' ? ' check' : '') + (type === 'switch' ? ' switch-field' : '');
   let read;
+  // For boolean/switch fields, the control other fields may depend on
+  // (showWhen) — returned so the caller can wire visibility.
+  let control = null;
+  // For selects: the element (optionsDependsOn sources) and, with an
+  // optionsRoute, a function that (re)loads the options.
+  let selectEl = null;
+  let refetch = null;
 
-  if (type === 'boolean') {
+  if (type === 'switch') {
+    // Same toggle as the module enable switch, inline with its label.
+    const toggle = document.createElement('span');
+    toggle.className = 'switch';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = Boolean(value);
+    const track = document.createElement('span');
+    track.className = 'track';
+    toggle.append(input, track);
+    const text = document.createElement('span');
+    text.className = 'switch-label';
+    text.textContent = label;
+    field.append(toggle, text);
+    read = () => input.checked;
+    control = input;
+  } else if (type === 'boolean') {
     const input = document.createElement('input');
     input.type = 'checkbox';
     input.checked = Boolean(value);
     field.append(input, document.createTextNode(label));
     read = () => input.checked;
+    control = input;
   } else if (type === 'endpoint') {
     // One consistent "Host / IP : Port" control for every module's upstream.
     const span = document.createElement('span');
@@ -122,19 +146,69 @@ function fieldFor(key, spec, value, passwordSet) {
     row.append(host, sep, port);
     field.append(span, row);
     read = () => ({ host: host.value.trim(), port: Number(port.value) || 0 });
-  } else if (type === 'select' && Array.isArray(spec.options)) {
+  } else if (type === 'select' && (Array.isArray(spec.options) || spec.optionsRoute)) {
     const span = document.createElement('span');
     span.textContent = label;
     const select = document.createElement('select');
-    for (const opt of spec.options) {
-      const o = document.createElement('option');
-      o.value = String(typeof opt === 'object' ? opt.value : opt);
-      o.textContent = String(typeof opt === 'object' ? (opt.label ?? opt.value) : opt);
-      select.appendChild(o);
+    const optValue = (opt) => String(typeof opt === 'object' ? opt.value : opt);
+    const fill = (options) => {
+      // Keep what the admin has picked but not yet saved across a refill
+      // (a dependent select refetching), else the saved value.
+      const saved = String(value ?? '');
+      const wanted = select.options.length ? select.value : saved;
+      select.innerHTML = '';
+      // The saved value must stay selectable even when it isn't among the
+      // live options (device unplugged, module route down).
+      if (saved && !options.some((opt) => optValue(opt) === saved)) {
+        options = [{ value: saved, label: `${saved} (saved)` }, ...options];
+      }
+      // Nothing saved yet → a blank "choose" entry, unless the module already
+      // offers a blank option of its own (an "Automatic" default, say).
+      if (!saved && !options.some((opt) => optValue(opt) === '')) {
+        options = [{ value: '', label: '— choose —' }, ...options];
+      }
+      // Options may carry a `group` (a folder path, a device class): options
+      // sharing one render under a single <optgroup>, in first-seen order.
+      const groups = new Map();
+      for (const opt of options) {
+        const o = document.createElement('option');
+        o.value = optValue(opt);
+        o.textContent = String(typeof opt === 'object' ? (opt.label ?? opt.value) : opt);
+        const g = typeof opt === 'object' && opt.group ? String(opt.group) : '';
+        if (!g) {
+          select.appendChild(o);
+          continue;
+        }
+        if (!groups.has(g)) {
+          const og = document.createElement('optgroup');
+          og.label = g;
+          groups.set(g, og);
+          select.appendChild(og);
+        }
+        groups.get(g).appendChild(o);
+      }
+      select.value = options.some((opt) => optValue(opt) === wanted) ? wanted : saved;
+    };
+    fill(Array.isArray(spec.options) ? spec.options : []);
+    if (spec.optionsRoute && moduleId) {
+      // Options discovered at runtime (audio devices, ports, sources…):
+      // the module serves them from one of its own routes. With
+      // optionsDependsOn the caller triggers the fetch (and re-fetches when
+      // that other field changes), passing its value as a query parameter.
+      refetch = (query) => {
+        const qs = query && Object.keys(query).length ? `?${new URLSearchParams(query)}` : '';
+        return fetch(`/api/modules/${encodeURIComponent(moduleId)}${spec.optionsRoute}${qs}`)
+          .then((res) => (res.ok ? res.json() : null))
+          .then((body) => {
+            if (Array.isArray(body?.options)) fill(body.options);
+          })
+          .catch(() => { /* keep the static/saved options */ });
+      };
+      if (!spec.optionsDependsOn) refetch();
     }
-    select.value = String(value ?? '');
     field.append(span, select);
     read = () => select.value;
+    selectEl = select;
   } else {
     const span = document.createElement('span');
     span.textContent = label;
@@ -149,7 +223,32 @@ function fieldFor(key, spec, value, passwordSet) {
     field.append(span, input);
     read = () => (type === 'number' ? Number(input.value) : input.value);
   }
-  return { field, read };
+  if (spec?.help) {
+    // One line of guidance under the control (allowed placeholders, where a
+    // value comes from…) — the label stays short.
+    const help = document.createElement('small');
+    help.className = 'field-help';
+    help.textContent = spec.help;
+    field.appendChild(help);
+  }
+  return { field, read, control, selectEl, refetch };
+}
+
+/**
+ * Does a config group have anything entered? Drives `collapsed: "whenSet"`:
+ * a credentials block stays folded once it holds a saved secret or a value
+ * other than the schema default, and opens by itself while still empty.
+ */
+function groupHasValues(fields, mod) {
+  return fields.some(({ key, spec }) => {
+    const type = spec?.type || 'string';
+    if (type === 'password') return Boolean(mod.passwordSet[key]);
+    if (type === 'boolean' || type === 'switch') return false;
+    const v = mod.config[key];
+    if (type === 'endpoint') return Boolean(v?.host);
+    if (v === undefined || v === null || String(v) === '') return false;
+    return !('default' in (spec || {})) || String(v) !== String(spec.default);
+  });
 }
 
 function buildModuleCard(mod) {
@@ -226,10 +325,88 @@ function buildModuleCard(mod) {
     const form = document.createElement('div');
     form.className = 'module-form';
     const readers = new Map();
+    const controls = new Map(); // key → boolean/switch input (for showWhen)
+    const selects = new Map(); // key → select element (optionsDependsOn sources)
+    const dependents = []; // { field, when } to show/hide by a control's state
+    const optionDeps = []; // { refetch, on } selects whose options follow another field
+    const reloaders = []; // re-run every optionsRoute fetch (after a save changed what the module can list)
+    const collapsibles = []; // { el, meta, fields } groups that fold
+    // Fields render in schema order; a `group` starts a labeled subsection
+    // and consecutive same-group fields share it. The manifest's optional
+    // `configGroups[name]` adds { collapsed, columns, help } for that group.
+    const groupMeta = mod.configGroups && typeof mod.configGroups === 'object' ? mod.configGroups : {};
+    let groupName = null;
+    let container = form;
+    let currentGroup = null;
     for (const [key, spec] of schemaKeys) {
-      const { field, read } = fieldFor(key, spec, mod.config[key], mod.passwordSet[key]);
+      const g = spec?.group || '';
+      if (g !== groupName) {
+        groupName = g;
+        currentGroup = null;
+        if (g) {
+          const meta = groupMeta[g] && typeof groupMeta[g] === 'object' ? groupMeta[g] : {};
+          const folds = meta.collapsed !== undefined;
+          const group = document.createElement(folds ? 'details' : 'div');
+          group.className = 'field-group';
+          const title = document.createElement(folds ? 'summary' : 'div');
+          title.className = 'field-group-title';
+          title.textContent = g;
+          group.appendChild(title);
+          const body = document.createElement('div');
+          body.className = 'field-group-body';
+          const cols = Math.min(4, Math.trunc(Number(meta.columns)) || 0);
+          if (cols > 1) {
+            body.classList.add('is-columns');
+            body.style.setProperty('--cols', String(cols));
+          }
+          if (meta.help) {
+            const help = document.createElement('div');
+            help.className = 'field-group-help';
+            help.textContent = meta.help;
+            body.appendChild(help);
+          }
+          group.appendChild(body);
+          form.appendChild(group);
+          container = body;
+          currentGroup = { el: group, meta, fields: [] };
+          if (folds) collapsibles.push(currentGroup);
+        } else {
+          container = form;
+        }
+      }
+      const { field, read, control, selectEl, refetch } = fieldFor(key, spec, mod.config[key], mod.passwordSet[key], mod.id);
       readers.set(key, read);
-      form.appendChild(field);
+      if (control) controls.set(key, control);
+      if (selectEl) selects.set(key, selectEl);
+      if (refetch && spec?.optionsDependsOn) optionDeps.push({ refetch, on: spec.optionsDependsOn });
+      else if (refetch) reloaders.push(() => refetch());
+      if (spec?.showWhen) dependents.push({ field, when: spec.showWhen });
+      if (currentGroup) currentGroup.fields.push({ key, spec });
+      container.appendChild(field);
+    }
+    // A field with showWhen:"K" is visible only while K's toggle is on.
+    for (const dep of dependents) {
+      const ctl = controls.get(dep.when);
+      if (!ctl) continue;
+      const sync = () => { dep.field.hidden = !ctl.checked; };
+      ctl.addEventListener('change', sync);
+      sync();
+    }
+    // A select with optionsDependsOn:"K" loads its options with K's current
+    // value as a query parameter, now and whenever K changes (a plan list
+    // that follows the chosen service type).
+    for (const dep of optionDeps) {
+      const src = selects.get(dep.on) || controls.get(dep.on);
+      const run = () => dep.refetch({ [dep.on]: !src ? '' : (src.type === 'checkbox' ? String(src.checked) : src.value) });
+      if (src) src.addEventListener('change', run);
+      reloaders.push(run);
+      run();
+    }
+    // Collapsible groups: `collapsed: true` starts folded, `false` open,
+    // "whenSet" folded only once the group already holds values.
+    for (const grp of collapsibles) {
+      const c = grp.meta.collapsed;
+      grp.el.open = !(c === true || (c === 'whenSet' && groupHasValues(grp.fields, mod)));
     }
     const actions = document.createElement('div');
     actions.className = 'module-actions';
@@ -256,6 +433,10 @@ function buildModuleCard(mod) {
         status.textContent = 'Saved — module re-initialised. Open tiles reconnect on their own.';
         status.className = 'admin-status ok';
         refreshStatus();
+        // What the module can list may have changed (credentials just
+        // saved → the upstream is reachable now): reload the dynamic selects.
+        // The re-init is quick but not instant; give it a beat.
+        setTimeout(() => { for (const reload of reloaders) reload(); }, 800);
       } catch (e) {
         status.textContent = e.message;
         status.className = 'admin-status error';
