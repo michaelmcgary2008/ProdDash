@@ -1,38 +1,58 @@
 {
   "id": "pco-plan",
   "name": "PCO Plan",
-  "version": "1.0.0",
-  "description": "Order of service from Planning Center Services, following ProPresenter live. Pick the service type at /modules/pco-plan/setup.html",
+  "version": "1.1.0",
+  "description": "Order of service from Planning Center Services, following ProPresenter live",
   "client": "client.js",
   "server": "server.js",
   "style": "style.css",
   "minSize": { "w": 3, "h": 3 },
   "defaultSize": { "w": 5, "h": 6 },
+  "configGroups": {
+    "Planning Center credentials": {
+      "collapsed": "whenSet",
+      "help": "Create a Personal Access Token at api.planningcenteronline.com (Application ID + Secret), or paste an OAuth 2.0 access token instead. Saved secrets never reach browsers."
+    },
+    "Show / hide": {
+      "collapsed": true,
+      "columns": 3,
+      "help": "Untick anything the tiles should not show. Applies to every PCO Plan tile."
+    }
+  },
   "configSchema": {
     "appId": {
       "type": "string",
-      "label": "Planning Center Application ID (Personal Access Token)",
-      "default": ""
+      "label": "Application ID",
+      "default": "",
+      "group": "Planning Center credentials"
     },
     "secret": {
       "type": "password",
-      "label": "Planning Center Secret (Personal Access Token)",
-      "default": ""
+      "label": "Secret",
+      "default": "",
+      "group": "Planning Center credentials"
     },
     "accessToken": {
       "type": "password",
-      "label": "OAuth 2.0 access token (alternative to App ID + Secret)",
-      "default": ""
+      "label": "OAuth 2.0 access token (instead of Application ID + Secret)",
+      "default": "",
+      "group": "Planning Center credentials"
     },
     "serviceTypeId": {
-      "type": "string",
-      "label": "Service type ID — browse folders and pick one at /modules/pco-plan/setup.html",
-      "default": ""
+      "type": "select",
+      "label": "Service type",
+      "default": "",
+      "optionsRoute": "/service-types",
+      "help": "Your Planning Center Services folders appear as groups in this list; pick the service type whose plans the tiles follow. Save the credentials first if the list is empty."
     },
     "planId": {
-      "type": "string",
-      "label": "Pin a plan ID (blank = today's plan, else the next upcoming)",
-      "default": ""
+      "type": "select",
+      "label": "Plan",
+      "default": "",
+      "options": [{ "value": "", "label": "Automatic — today's plan, else the next upcoming" }],
+      "optionsRoute": "/plans",
+      "optionsDependsOn": "serviceTypeId",
+      "help": "Leave on Automatic for services. Pin a specific plan for rehearsals or to review a past service."
     },
     "pollSeconds": {
       "type": "number",
@@ -40,28 +60,63 @@
       "default": 30
     },
     "followProPresenter": {
-      "type": "boolean",
-      "label": "Follow the ProPresenter module's live item to highlight the current plan item",
+      "type": "switch",
+      "label": "Follow the ProPresenter module's live item to highlight the current plan item and time it",
       "default": true
-    }
+    },
+    "noteCategories": {
+      "type": "string",
+      "label": "Item note categories to show (comma-separated, blank = all)",
+      "default": ""
+    },
+    "headerTemplate": {
+      "type": "string",
+      "label": "Top bar text",
+      "default": "{series} • {part} | {serviceType} • {date}",
+      "group": "Top bar",
+      "help": "Placeholders: {series} series name · {part} plan title / part number · {serviceType} · {date} · {shortDate} · {time} service start time · {length} planned length · {items} item count. Use • between items (an item whose placeholders are empty or hidden is dropped) and | to start a second line."
+    },
+    "tintByType": {
+      "type": "boolean",
+      "label": "Background color per item type (song / media / other)",
+      "default": false,
+      "group": "Top bar"
+    },
+    "keyColor": {
+      "type": "string",
+      "label": "Song key color",
+      "default": "#4ea1ff",
+      "group": "Top bar",
+      "help": "Any CSS color, e.g. #4ea1ff or dodgerblue."
+    },
+    "showTopBar": { "type": "boolean", "label": "Top bar", "default": true, "group": "Show / hide" },
+    "showSeries": { "type": "boolean", "label": "Series name", "default": true, "group": "Show / hide" },
+    "showPart": { "type": "boolean", "label": "Part # / plan title", "default": true, "group": "Show / hide" },
+    "showServiceType": { "type": "boolean", "label": "Service type", "default": true, "group": "Show / hide" },
+    "showDate": { "type": "boolean", "label": "Plan date", "default": true, "group": "Show / hide" },
+    "showServiceTime": { "type": "boolean", "label": "Service time", "default": true, "group": "Show / hide" },
+    "showTotalLength": { "type": "boolean", "label": "Planned total length", "default": true, "group": "Show / hide" },
+    "showRunningClock": { "type": "boolean", "label": "Running clock (ahead / behind)", "default": true, "group": "Show / hide" },
+    "showCountdown": { "type": "boolean", "label": "Countdown to service start", "default": true, "group": "Show / hide" },
+    "showHeaders": { "type": "boolean", "label": "Section headers", "default": true, "group": "Show / hide" },
+    "showItemNumbers": { "type": "boolean", "label": "Item numbers", "default": false, "group": "Show / hide" },
+    "showStartTimes": { "type": "boolean", "label": "Scheduled start times", "default": true, "group": "Show / hide" },
+    "showLength": { "type": "boolean", "label": "Item length", "default": true, "group": "Show / hide" },
+    "showItemType": { "type": "boolean", "label": "Item type badge", "default": true, "group": "Show / hide" },
+    "showKey": { "type": "boolean", "label": "Song key", "default": true, "group": "Show / hide" },
+    "showArrangement": { "type": "boolean", "label": "Song arrangement", "default": false, "group": "Show / hide" },
+    "showSongAuthor": { "type": "boolean", "label": "Song author / CCLI", "default": false, "group": "Show / hide" },
+    "showDescription": { "type": "boolean", "label": "Item description", "default": true, "group": "Show / hide" },
+    "showNotes": { "type": "boolean", "label": "Item notes", "default": true, "group": "Show / hide" },
+    "showPreService": { "type": "boolean", "label": "Pre-service items", "default": true, "group": "Show / hide" },
+    "showPostService": { "type": "boolean", "label": "Post-service items", "default": true, "group": "Show / hide" },
+    "showNowIndicator": { "type": "boolean", "label": "Now indicator", "default": true, "group": "Show / hide" },
+    "showItemRuntime": { "type": "boolean", "label": "Item runtime (elapsed vs planned)", "default": true, "group": "Show / hide" },
+    "dimCompleted": { "type": "boolean", "label": "Dim completed items", "default": true, "group": "Show / hide" },
+    "showLiveFooter": { "type": "boolean", "label": "ProPresenter match line", "default": true, "group": "Show / hide" }
   },
   "instanceSchema": {
-    "showPlanHeader": { "type": "boolean", "label": "Show plan title, date and service time", "default": true },
-    "showStartTimes": { "type": "boolean", "label": "Show scheduled start time of each item", "default": true },
-    "showLength": { "type": "boolean", "label": "Show planned length of each item", "default": true },
-    "showItemType": { "type": "boolean", "label": "Show item type badge (song / media)", "default": true },
-    "showKey": { "type": "boolean", "label": "Show song key", "default": true },
-    "showArrangement": { "type": "boolean", "label": "Show song arrangement", "default": false },
-    "showDescription": { "type": "boolean", "label": "Show item description", "default": true },
-    "showNotes": { "type": "boolean", "label": "Show item notes", "default": true },
-    "noteCategories": { "type": "string", "label": "Only these note categories (comma-separated, blank = all)", "default": "" },
-    "showHeaders": { "type": "boolean", "label": "Show section headers", "default": true },
-    "showPreService": { "type": "boolean", "label": "Show pre-service items", "default": true },
-    "showPostService": { "type": "boolean", "label": "Show post-service items", "default": true },
-    "showRuntime": { "type": "boolean", "label": "Show live runtime (elapsed vs planned) when following ProPresenter", "default": true },
-    "showLiveFooter": { "type": "boolean", "label": "Show the ProPresenter match line at the bottom", "default": true },
-    "dimCompleted": { "type": "boolean", "label": "Dim items that are already done", "default": true },
-    "autoScroll": { "type": "boolean", "label": "Keep the current item in view", "default": true },
-    "textSize": { "type": "number", "label": "Text size (px)", "default": 14 }
+    "textSize": { "type": "number", "label": "Text size (px)", "default": 14 },
+    "autoScroll": { "type": "boolean", "label": "Keep the current item in view", "default": true }
   }
 }

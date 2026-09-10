@@ -84,9 +84,9 @@ function plansFor(stId) {
     ],
   });
   return [
-    mk(`${stId}-P1`, firstServiceStart - 7 * DAY, 'The Table', 'Living Hope'),
-    mk(`${stId}-P2`, firstServiceStart, 'Living Hope Wk 2', 'Living Hope'),
-    mk(`${stId}-P3`, firstServiceStart + 7 * DAY, 'Living Hope Wk 3', 'Living Hope'),
+    mk(`${stId}-P1`, firstServiceStart - 7 * DAY, 'Part 1', 'Living Hope'),
+    mk(`${stId}-P2`, firstServiceStart, 'Part 2', 'Living Hope'),
+    mk(`${stId}-P3`, firstServiceStart + 7 * DAY, 'Part 3', 'Living Hope'),
   ];
 }
 

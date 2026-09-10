@@ -1,8 +1,10 @@
-/* PCO Plan module — scoped to its tiles, shell variables only.
-   Everything scales from --pp-size (set from the tile's text-size setting). */
+/* PCO Plan module — scoped to its tiles, shell variables only (plus the
+   admin-chosen --pp-key color for song keys). Everything scales from
+   --pp-size (set from the tile's text-size setting). */
 
 [data-module="pco-plan"] .pp-wrap {
   --pp-size: 14px;
+  --pp-key: #4ea1ff;
   position: absolute;
   inset: 0;
   display: flex;
@@ -11,7 +13,7 @@
   color: var(--text);
 }
 
-/* ── plan header ── */
+/* ── top bar ── */
 
 [data-module="pco-plan"] .pp-head {
   flex: none;
@@ -28,8 +30,9 @@
 [data-module="pco-plan"] .pp-plan { flex: 1; min-width: 0; }
 
 [data-module="pco-plan"] .pp-plan-title {
-  font-size: 1.05em;
+  font-size: 1.1em;
   font-weight: 700;
+  line-height: 1.25;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -37,12 +40,13 @@
 
 [data-module="pco-plan"] .pp-plan-sub {
   margin-top: 0.15em;
-  font-size: 0.8em;
+  font-size: 0.82em;
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+[data-module="pco-plan"] .pp-plan-sub[hidden] { display: none; }
 
 [data-module="pco-plan"] .pp-clock {
   flex: none;
@@ -91,22 +95,36 @@
 [data-module="pco-plan"] .pp-row + .pp-row { margin-top: 0.15em; }
 [data-module="pco-plan"] .pp-row:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
 
+/* Optional background tint per item type (admin "Background color per item type"). */
+[data-module="pco-plan"] .tint-types .pp-row.is-song { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+[data-module="pco-plan"] .tint-types .pp-row.is-media { background: color-mix(in srgb, var(--warn) 10%, transparent); }
+[data-module="pco-plan"] .tint-types .pp-row.is-item { background: color-mix(in srgb, var(--text) 5%, transparent); }
+[data-module="pco-plan"] .tint-types .pp-row.is-song:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+[data-module="pco-plan"] .tint-types .pp-row.is-media:hover { background: color-mix(in srgb, var(--warn) 15%, transparent); }
+[data-module="pco-plan"] .tint-types .pp-row.is-item:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
+
+/* Section headers: a full-width band so a new part of the service is
+   unmistakable at a glance — accent bar, tinted ground, spaced capitals. */
 [data-module="pco-plan"] .pp-row.is-header {
-  margin-top: 0.6em;
-  padding-top: 0.5em;
-  padding-bottom: 0.15em;
-  border-top: 1px solid var(--border);
-  border-radius: 0;
-  background: none;
+  margin-top: 0.9em;
+  padding: 0.5em 0.7em 0.45em;
+  align-items: center;
+  border-left: 3px solid var(--accent);
+  border-radius: 0.4em;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 22%, transparent), color-mix(in srgb, var(--accent) 5%, transparent) 70%, transparent);
 }
-[data-module="pco-plan"] .pp-row.is-header:first-child { margin-top: 0; border-top: none; }
+[data-module="pco-plan"] .pp-row.is-header:first-child { margin-top: 0.15em; }
+[data-module="pco-plan"] .pp-row.is-header:hover { background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 26%, transparent), color-mix(in srgb, var(--accent) 7%, transparent) 70%, transparent); }
 [data-module="pco-plan"] .pp-row.is-header .pp-title {
-  font-size: 0.78em;
+  font-size: 0.85em;
   font-weight: 800;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--text);
 }
+[data-module="pco-plan"] .pp-row.is-header .pp-col-time,
+[data-module="pco-plan"] .pp-row.is-header .pp-col-num,
+[data-module="pco-plan"] .pp-row.is-header .pp-col-len { visibility: hidden; }
 
 [data-module="pco-plan"] .pp-row.is-pre .pp-title,
 [data-module="pco-plan"] .pp-row.is-post .pp-title { color: color-mix(in srgb, var(--text) 75%, var(--muted)); }
@@ -116,8 +134,19 @@
 
 [data-module="pco-plan"] .pp-row.is-current {
   border-left-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
   opacity: 1;
+}
+
+[data-module="pco-plan"] .pp-col-num {
+  flex: none;
+  width: 1.6em;
+  padding-top: 0.1em;
+  font-size: 0.8em;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  text-align: right;
 }
 
 [data-module="pco-plan"] .pp-col-time {
@@ -130,14 +159,13 @@
   text-align: right;
   white-space: nowrap;
 }
-[data-module="pco-plan"] .pp-col-time[hidden] { display: none; }
 [data-module="pco-plan"] .pp-row.is-current .pp-col-time { color: var(--accent); font-weight: 700; }
 
 [data-module="pco-plan"] .pp-col-main { flex: 1; min-width: 0; }
 
 [data-module="pco-plan"] .pp-title-line {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   flex-wrap: wrap;
   gap: 0.2em 0.55em;
   min-width: 0;
@@ -147,6 +175,21 @@
   font-weight: 600;
   line-height: 1.3;
   overflow-wrap: anywhere;
+}
+
+/* The song key: right after the title, larger and in the admin-chosen
+   color (blue by default) so the band can read it from across the booth. */
+[data-module="pco-plan"] .pp-key {
+  font-size: 1.15em;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: 0.02em;
+  padding: 0.05em 0.5em;
+  border-radius: 0.4em;
+  color: var(--pp-key);
+  background: color-mix(in srgb, var(--pp-key) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--pp-key) 45%, transparent);
+  white-space: nowrap;
 }
 
 [data-module="pco-plan"] .pp-now-tag {
@@ -159,12 +202,10 @@
   font-weight: 800;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  vertical-align: middle;
 }
 [data-module="pco-plan"] .pp-row.is-current .pp-now-tag { display: inline-block; }
 
 [data-module="pco-plan"] .pp-badge,
-[data-module="pco-plan"] .pp-key,
 [data-module="pco-plan"] .pp-arr {
   font-size: 0.7em;
   font-weight: 700;
@@ -180,12 +221,16 @@
 }
 [data-module="pco-plan"] .pp-badge.is-song { color: color-mix(in srgb, var(--accent) 80%, var(--text)); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 [data-module="pco-plan"] .pp-badge.is-media { color: color-mix(in srgb, var(--warn) 85%, var(--text)); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
-[data-module="pco-plan"] .pp-key {
-  background: color-mix(in srgb, var(--text) 10%, transparent);
-  color: var(--text);
-  text-transform: none;
-}
 [data-module="pco-plan"] .pp-arr { color: var(--muted); text-transform: none; letter-spacing: 0; font-weight: 600; }
+
+[data-module="pco-plan"] .pp-author {
+  margin-top: 0.1em;
+  font-size: 0.78em;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 [data-module="pco-plan"] .pp-desc {
   margin-top: 0.15em;
@@ -230,7 +275,6 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-[data-module="pco-plan"] .pp-col-len[hidden] { display: none; }
 [data-module="pco-plan"] .pp-len {
   font-size: 0.85em;
   color: var(--muted);

@@ -10,8 +10,9 @@
  *   GET  /state    → { state, now }        (instant paint for new tiles)
  *   GET  /stream   → SSE, `state` events   (change-detected, heartbeated)
  *   POST /refresh  → re-read the plan now
- *   GET  /browse   → folders + service types, for the setup page
- *   GET  /preview?serviceTypeId=… → which plan the module would pick
+ *   GET  /service-types → { options } for the admin "Service type" select,
+ *                         grouped by Planning Center folder path
+ *   GET  /plans?serviceTypeId=… → { options } for the admin "Plan" select
  *
  * Planning Center API v2 (https://api.planningcenteronline.com/services/v2):
  *   Auth: Personal Access Token (HTTP Basic app_id:secret) or an OAuth 2.0
@@ -392,20 +393,24 @@ module.exports = {
       return `${SERVICES}/service_types/${encodeURIComponent(serviceTypeId)}/plans/${encodeURIComponent(planId)}`;
     }
 
-    /** Today's plan, else the next upcoming one, else the most recent past one. */
-    async function choosePlanId(stId) {
+    /** The plans around now for a service type: a few upcoming, a few recent, oldest first. */
+    async function listPlans(stId, { future = 5, past = 3 } = {}) {
       const base = `${SERVICES}/service_types/${encodeURIComponent(stId)}/plans`;
-      const [future, past] = await Promise.all([
-        pco.get(base, { filter: 'future', order: 'sort_date', per_page: 5 }),
-        pco.get(base, { filter: 'past', order: '-sort_date', per_page: 3 }),
+      const [fut, pst] = await Promise.all([
+        pco.get(base, { filter: 'future', order: 'sort_date', per_page: future }),
+        pco.get(base, { filter: 'past', order: '-sort_date', per_page: past }),
       ]);
       const byId = new Map();
-      for (const rec of [...(future?.data || []), ...(past?.data || [])]) {
+      for (const rec of [...(fut?.data || []), ...(pst?.data || [])]) {
         const sortDate = Date.parse(rec?.attributes?.sort_date || '');
         if (!rec?.id || !Number.isFinite(sortDate)) continue;
         byId.set(String(rec.id), { rec, sortDate });
       }
-      const plans = Array.from(byId.values()).sort((x, y) => x.sortDate - y.sortDate);
+      return Array.from(byId.values()).sort((x, y) => x.sortDate - y.sortDate);
+    }
+
+    /** Today's plan, else the next upcoming one, else the most recent past one. */
+    function pickPlan(plans) {
       if (!plans.length) return null;
       const now = Date.now();
       const today = localYmd(new Date(now));
@@ -414,6 +419,10 @@ module.exports = {
       const next = plans.find((p) => p.sortDate > now);
       if (next) return next.rec;
       return plans[plans.length - 1].rec;
+    }
+
+    async function choosePlanId(stId) {
+      return pickPlan(await listPlans(stId));
     }
 
     async function readPlanTimes(planId) {
@@ -694,7 +703,7 @@ module.exports = {
       state.lastError = 'No Planning Center credentials — add an Application ID + Secret (or OAuth token) in /admin';
       log(state.lastError);
     } else if (!serviceTypeId) {
-      state.lastError = 'No service type selected — open /modules/pco-plan/setup.html';
+      state.lastError = 'No service type selected — choose one under PCO Plan in /admin';
       log(state.lastError);
     } else {
       log(`reading service type ${serviceTypeId} from ${API_BASE} (${pco.method})${pinnedPlanId ? `, plan ${pinnedPlanId} pinned` : ''}`);
@@ -725,7 +734,8 @@ module.exports = {
         clearTimeout(pollTimer);
         return poll();
       },
-      choosePlanId,
+      listPlans,
+      pickPlan,
     };
 
     return {
@@ -743,7 +753,7 @@ module.exports = {
       },
       health() {
         if (!pco.configured) return { status: 'error', message: 'No Planning Center credentials configured' };
-        if (!serviceTypeId) return { status: 'error', message: 'No service type selected — open /modules/pco-plan/setup.html' };
+        if (!serviceTypeId) return { status: 'error', message: 'No service type selected — pick one in the Service type list below' };
         if (!state.reachable) {
           return { status: state.lastFetched ? 'error' : 'connecting', message: state.lastError || 'Reading the plan…' };
         }
@@ -793,13 +803,15 @@ module.exports = {
         );
       },
 
-      /** Folders + service types as flat lists; the setup page builds the tree. */
-      'GET /browse': async (req, res) => {
+      /**
+       * Options for the admin page's "Service type" select: every service
+       * type, grouped by its Planning Center folder path — so the folders
+       * are browsable as <optgroup>s right in the admin form.
+       */
+      'GET /service-types': async (req, res) => {
         if (!current) return json(res, 503, { error: 'Module not running.' });
         const { pco } = current;
-        if (!pco.configured) {
-          return json(res, 400, { error: 'No Planning Center credentials — add them in /admin first.', unconfigured: true });
-        }
+        if (!pco.configured) return json(res, 200, { options: [], error: 'No Planning Center credentials yet.' });
         try {
           const [folderBody, stBody] = await Promise.all([
             pco.getAll(`${SERVICES}/folders`),
@@ -838,44 +850,62 @@ module.exports = {
               folders.set(id, { id, name: `Folder ${id}`, parentId: '' });
             }
           }
-          const state = current.getState();
-          json(res, 200, {
-            folders: Array.from(folders.values()),
-            serviceTypes,
-            selected: state.serviceType.id,
-            selectedName: state.serviceType.name,
-            apiBase: API_BASE,
-            method: pco.method,
-          });
+          // "Campuses › North Campus" — the folder path from the root down.
+          const pathOf = (parentId) => {
+            const names = [];
+            let id = parentId;
+            const seen = new Set();
+            while (id && folders.has(id) && !seen.has(id)) {
+              seen.add(id);
+              names.unshift(folders.get(id).name);
+              id = folders.get(id).parentId;
+            }
+            return names.join(' › ');
+          };
+          const options = serviceTypes
+            .map((st) => ({ value: st.id, label: st.name, group: pathOf(st.parentId) }))
+            .sort((a, b) => a.group.localeCompare(b.group) || a.label.localeCompare(b.label));
+          json(res, 200, { options });
         } catch (err) {
-          log(`browse failed: ${err?.message || err}`);
-          json(res, err?.status === 401 ? 401 : 502, { error: err?.message || String(err) });
+          log(`service type list failed: ${err?.message || err}`);
+          json(res, err?.status === 401 ? 401 : 502, { options: [], error: err?.message || String(err) });
         }
       },
 
-      /** Which plan would be followed for a service type — shown before saving. */
-      'GET /preview': async (req, res) => {
+      /**
+       * Options for the admin page's "Plan" select, for the service type the
+       * admin currently has picked (?serviceTypeId=…): the upcoming and recent
+       * plans, with the one Automatic would choose marked.
+       */
+      'GET /plans': async (req, res) => {
         if (!current) return json(res, 503, { error: 'Module not running.' });
+        const { pco } = current;
         const params = new URLSearchParams(req.search || '');
         const stId = String(params.get('serviceTypeId') || '').trim();
-        if (!stId) return json(res, 400, { error: 'serviceTypeId is required.' });
+        const auto = { value: '', label: 'Automatic — today\'s plan, else the next upcoming' };
+        if (!pco.configured || !stId) return json(res, 200, { options: [auto] });
         try {
-          const rec = await current.choosePlanId(stId);
-          if (!rec) return json(res, 200, { plan: null });
-          const a = rec.attributes || {};
-          json(res, 200, {
-            plan: {
-              id: String(rec.id),
-              title: String(a.title || ''),
-              seriesTitle: String(a.series_title || ''),
-              dates: String(a.dates || ''),
-              itemsCount: Number(a.items_count) || 0,
-              totalLength: Number(a.total_length) || 0,
-              sortDate: a.sort_date || '',
-            },
-          });
+          const plans = await current.listPlans(stId, { future: 8, past: 6 });
+          const picked = current.pickPlan(plans);
+          const now = Date.now();
+          const options = [auto];
+          // Upcoming first (soonest at the top), then the recent ones.
+          const ordered = [
+            ...plans.filter((p) => p.sortDate >= now - 12 * 3600000),
+            ...plans.filter((p) => p.sortDate < now - 12 * 3600000).reverse(),
+          ];
+          for (const { rec, sortDate } of ordered) {
+            const a = rec.attributes || {};
+            const bits = [String(a.dates || a.short_dates || new Date(sortDate).toLocaleDateString())];
+            if (a.series_title) bits.push(String(a.series_title));
+            if (a.title) bits.push(String(a.title));
+            let label = bits.join(' — ');
+            if (picked && rec.id === picked.id) label += '  (Automatic picks this)';
+            options.push({ value: String(rec.id), label, group: sortDate >= now - 12 * 3600000 ? 'Upcoming' : 'Recent' });
+          }
+          json(res, 200, { options });
         } catch (err) {
-          json(res, err?.status === 401 ? 401 : 502, { error: err?.message || String(err) });
+          json(res, err?.status === 401 ? 401 : 502, { options: [auto], error: err?.message || String(err) });
         }
       },
     };

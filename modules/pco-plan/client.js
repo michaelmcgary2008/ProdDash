@@ -2,10 +2,11 @@
 
    The server part reads Planning Center and (optionally) follows the
    ProPresenter module's live item; this tile only renders the plan it is
-   streamed. Which details show is a per-tile choice (gear menu). */
+   streamed. What is shown is decided server-wide in /admin (moduleApi.config:
+   show/hide checklist, top-bar template, colors); the tile itself only owns
+   its text size and auto-scroll. */
 
 const REFRESH_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>';
-const SETUP_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h18M3 12h18M3 17h12"/><circle cx="19" cy="17" r="2.2"/></svg>';
 
 export default function create({ root, moduleApi }) {
   let state = null;
@@ -42,7 +43,10 @@ export default function create({ root, moduleApi }) {
   const listEl = root.querySelector('.pp-list');
   const footEl = root.querySelector('.pp-foot');
 
-  const prefs = () => moduleApi.instanceSettings;
+  /** Admin-wide display settings (the show/hide checklist lives there). */
+  const cfg = () => moduleApi.config || {};
+  const on = (key) => cfg()[key] !== false; // unset = shown
+  const tilePrefs = () => moduleApi.instanceSettings;
   const serverNow = () => Date.now() + skew;
 
   /* ── title-bar controls ─────────────────────────────────────────── */
@@ -59,20 +63,12 @@ export default function create({ root, moduleApi }) {
   });
 
   function bumpTextSize(delta) {
-    const size = Number(prefs().textSize) || 14;
+    const size = Number(tilePrefs().textSize) || 14;
     moduleApi.saveInstanceSettings({ textSize: Math.min(40, Math.max(9, size + delta)) });
     applyPrefs();
   }
   moduleApi.header.addButton({ label: 'A−', title: 'Smaller text', onClick: () => bumpTextSize(-1) });
   moduleApi.header.addButton({ label: 'A+', title: 'Larger text', onClick: () => bumpTextSize(1) });
-
-  moduleApi.header.addButton({
-    icon: SETUP_SVG,
-    title: 'Planning Center setup (choose the service type)',
-    onClick() {
-      window.open(`/modules/${moduleApi.id}/setup.html`, '_blank', 'noopener');
-    },
-  });
 
   /* ── formatting ─────────────────────────────────────────────────── */
 
@@ -103,26 +99,30 @@ export default function create({ root, moduleApi }) {
     switch (itemType) {
       case 'song': return 'Song';
       case 'media': return 'Media';
-      case 'header': return '';
       default: return '';
     }
+  }
+
+  function plannedLength() {
+    return (state?.items || [])
+      .filter((it) => it.servicePosition === 'during')
+      .reduce((sum, it) => sum + (it.length || 0), 0);
   }
 
   /* ── which items to show ────────────────────────────────────────── */
 
   function visibleItems() {
-    const p = prefs();
     const items = Array.isArray(state?.items) ? state.items : [];
     return items.filter((it) => {
-      if (it.itemType === 'header' && !p.showHeaders) return false;
-      if (it.servicePosition === 'pre' && !p.showPreService) return false;
-      if (it.servicePosition === 'post' && !p.showPostService) return false;
+      if (it.itemType === 'header' && !on('showHeaders')) return false;
+      if (it.servicePosition === 'pre' && !on('showPreService')) return false;
+      if (it.servicePosition === 'post' && !on('showPostService')) return false;
       return true;
     });
   }
 
   function noteFilter() {
-    const raw = String(prefs().noteCategories || '');
+    const raw = String(cfg().noteCategories || '');
     const wanted = raw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
     return wanted.length ? (note) => wanted.includes(String(note.category || '').toLowerCase()) : () => true;
   }
@@ -133,7 +133,7 @@ export default function create({ root, moduleApi }) {
     if (feedOffline) return moduleApi.setStatus('error', 'ProdDash server unreachable — reconnecting…');
     if (!state) return moduleApi.setStatus('connecting', 'Connecting…');
     if (!state.configured) return moduleApi.setStatus('error', 'No Planning Center credentials — add them in Admin');
-    if (!state.serviceTypeSet) return moduleApi.setStatus('error', 'No service type selected — use the setup page');
+    if (!state.serviceTypeSet) return moduleApi.setStatus('error', 'No service type selected — pick one in Admin');
     if (!state.reachable) {
       return moduleApi.setStatus(state.lastFetched ? 'error' : 'connecting', state.lastError || 'Reading the plan…');
     }
@@ -147,22 +147,65 @@ export default function create({ root, moduleApi }) {
     moduleApi.setStatus('ok', `Plan read ${new Date(state.lastFetched).toLocaleTimeString()}${extra}`);
   }
 
-  /* ── plan header ────────────────────────────────────────────────── */
+  /* ── top bar: admin template with placeholders ──────────────────── */
+
+  const DEFAULT_TEMPLATE = '{series} • {part} | {serviceType} • {date}';
+
+  /** Placeholder → text; a hidden or empty value resolves to '' and drops its segment. */
+  function templateValues() {
+    const plan = state?.plan || {};
+    const items = state?.items || [];
+    const planned = plannedLength();
+    return {
+      series: on('showSeries') ? plan.seriesTitle || '' : '',
+      part: on('showPart') ? plan.title || '' : '',
+      title: on('showPart') ? plan.title || '' : '',
+      servicetype: on('showServiceType') ? state?.serviceType?.name || '' : '',
+      date: on('showDate') ? plan.dates || '' : '',
+      shortdate: on('showDate') ? plan.shortDates || plan.dates || '' : '',
+      time: on('showServiceTime') && plan.serviceStartsAt
+        ? `${plan.serviceName && plan.serviceName !== 'Service' ? `${plan.serviceName} ` : ''}${fmtClock(plan.serviceStartsAt)}`
+        : '',
+      length: on('showTotalLength') && planned ? fmtMinutes(planned) : '',
+      items: items.filter((it) => it.itemType !== 'header').length ? String(items.filter((it) => it.itemType !== 'header').length) : '',
+    };
+  }
+
+  /**
+   * "{series} • {part} | {serviceType} • {date}" → up to two lines. Within a
+   * line, • (or ·) separates segments; a segment whose placeholders all came
+   * out empty is dropped, so a plan with no series just reads "Wk 2".
+   */
+  function renderTemplate(template, values) {
+    const lines = String(template || DEFAULT_TEMPLATE).split('|').slice(0, 2);
+    return lines.map((line) => {
+      const segments = line.split(/\s*[•·]\s*/);
+      const kept = [];
+      for (const seg of segments) {
+        let sawVar = false;
+        let allEmpty = true;
+        const text = seg.replace(/\{([a-zA-Z]+)\}/g, (m, name) => {
+          sawVar = true;
+          const v = values[name.toLowerCase()];
+          if (v) allEmpty = false;
+          return v || '';
+        }).trim();
+        if (sawVar && allEmpty) continue;
+        if (text) kept.push(text);
+      }
+      return kept.join(' • ');
+    });
+  }
 
   function renderHead() {
     const plan = state?.plan;
-    const show = prefs().showPlanHeader && plan;
+    const show = on('showTopBar') && plan;
     headEl.hidden = !show;
     if (!show) return;
-    const title = [plan.dates, plan.title || plan.seriesTitle].filter(Boolean).join(' · ');
-    planTitleEl.textContent = title || (state.serviceType?.name || 'Plan');
-    const bits = [];
-    if (state.serviceType?.name) bits.push(state.serviceType.name);
-    if (plan.title && plan.seriesTitle) bits.push(plan.seriesTitle);
-    if (plan.serviceStartsAt) bits.push(`${plan.serviceName ? `${plan.serviceName} ` : ''}${fmtClock(plan.serviceStartsAt)}`);
-    const planned = state.items.filter((it) => it.servicePosition === 'during').reduce((sum, it) => sum + (it.length || 0), 0);
-    if (planned) bits.push(`planned ${fmtMinutes(planned)}`);
-    planSubEl.textContent = bits.join(' · ');
+    const [line1, line2] = renderTemplate(cfg().headerTemplate, templateValues());
+    planTitleEl.textContent = line1 || line2 || state.serviceType?.name || 'Plan';
+    planSubEl.textContent = line1 ? line2 || '' : '';
+    planSubEl.hidden = !planSubEl.textContent;
     renderClock();
   }
 
@@ -174,16 +217,13 @@ export default function create({ root, moduleApi }) {
     clockValueEl.className = 'pp-clock-value';
     if (!plan || headEl.hidden) return;
     const now = serverNow();
-    if (prefs().showRuntime && live.serviceStartedAt) {
+    if (on('showRunningClock') && live.following && live.serviceStartedAt) {
       clockLabelEl.textContent = 'Running';
       clockValueEl.textContent = fmtDur((now - live.serviceStartedAt) / 1000);
       // Ahead of / behind the plan: elapsed minus what the completed items were planned to take.
-      const planned = state.items
-        .filter((it) => live.history?.[it.id]?.endedAt)
-        .reduce((sum, it) => sum + (it.length || 0), 0);
-      const actual = state.items
-        .filter((it) => live.history?.[it.id]?.endedAt)
-        .reduce((sum, it) => sum + (live.history[it.id].endedAt - live.history[it.id].startedAt) / 1000, 0);
+      const done = state.items.filter((it) => live.history?.[it.id]?.endedAt);
+      const planned = done.reduce((sum, it) => sum + (it.length || 0), 0);
+      const actual = done.reduce((sum, it) => sum + (live.history[it.id].endedAt - live.history[it.id].startedAt) / 1000, 0);
       const drift = actual - planned;
       if (planned && Math.abs(drift) >= 30) {
         clockLabelEl.textContent = `Running · ${drift > 0 ? 'behind' : 'ahead'} ${fmtDur(Math.abs(drift))}`;
@@ -191,12 +231,12 @@ export default function create({ root, moduleApi }) {
       }
       return;
     }
-    if (plan.serviceStartsAt && plan.serviceStartsAt > now) {
+    if (on('showCountdown') && plan.serviceStartsAt && plan.serviceStartsAt > now) {
       clockLabelEl.textContent = 'Starts in';
       clockValueEl.textContent = fmtDur((plan.serviceStartsAt - now) / 1000);
       return;
     }
-    if (plan.serviceStartsAt) {
+    if (on('showRunningClock') && plan.serviceStartsAt) {
       clockLabelEl.textContent = 'Since start';
       clockValueEl.textContent = fmtDur((now - plan.serviceStartsAt) / 1000);
     }
@@ -210,15 +250,15 @@ export default function create({ root, moduleApi }) {
     if (!state.configured) {
       return {
         title: 'Planning Center not connected',
-        hint: 'Add a Planning Center Application ID and Secret (Personal Access Token) for PCO Plan in Admin.',
+        hint: 'Enter the Planning Center credentials under PCO Plan in Admin.',
         link: { href: '/admin', text: 'Open Admin' },
       };
     }
     if (!state.serviceTypeSet) {
       return {
         title: 'No service type selected',
-        hint: 'Browse your Planning Center folders and choose the service type to follow.',
-        link: { href: `/modules/${moduleApi.id}/setup.html`, text: 'Open setup' },
+        hint: 'Pick the service type to follow from the list under PCO Plan in Admin.',
+        link: { href: '/admin', text: 'Open Admin' },
       };
     }
     if (!state.reachable && !state.plan) {
@@ -230,22 +270,32 @@ export default function create({ root, moduleApi }) {
         hint: `${state.serviceType?.name || 'This service type'} has no upcoming or recent plans in Planning Center.`,
       };
     }
-    if (!visibleItems().length) return { title: 'Nothing to show', hint: 'Every item is hidden by this tile’s settings.' };
+    if (!visibleItems().length) return { title: 'Nothing to show', hint: 'Every item is hidden by the PCO Plan settings in Admin.' };
     return null;
   }
 
-  function buildRow(item, p, notesWanted) {
+  function buildRow(item, number, notesWanted) {
     const row = document.createElement('div');
     row.className = 'pp-row';
     row.dataset.id = item.id;
     if (item.itemType === 'header') row.classList.add('is-header');
+    else row.classList.add(`is-${item.itemType === 'song' || item.itemType === 'media' ? item.itemType : 'item'}`);
     if (item.servicePosition !== 'during') row.classList.add(`is-${item.servicePosition}`);
+    const isHeader = item.itemType === 'header';
 
-    const timeCol = document.createElement('div');
-    timeCol.className = 'pp-col-time';
-    timeCol.textContent = p.showStartTimes && item.startsAt && item.itemType !== 'header' ? fmtClock(item.startsAt) : '';
-    timeCol.hidden = !p.showStartTimes;
-    row.appendChild(timeCol);
+    if (on('showItemNumbers')) {
+      const numCol = document.createElement('div');
+      numCol.className = 'pp-col-num';
+      numCol.textContent = isHeader ? '' : String(number);
+      row.appendChild(numCol);
+    }
+
+    if (on('showStartTimes')) {
+      const timeCol = document.createElement('div');
+      timeCol.className = 'pp-col-time';
+      timeCol.textContent = item.startsAt && !isHeader ? fmtClock(item.startsAt) : '';
+      row.appendChild(timeCol);
+    }
 
     const main = document.createElement('div');
     main.className = 'pp-col-main';
@@ -255,24 +305,27 @@ export default function create({ root, moduleApi }) {
     titleEl.className = 'pp-title';
     titleEl.textContent = item.title || item.song?.title || '(untitled)';
     titleLine.appendChild(titleEl);
-    if (item.itemType !== 'header') {
-      const nowTag = document.createElement('span');
-      nowTag.className = 'pp-now-tag';
-      nowTag.textContent = 'Now';
-      titleLine.appendChild(nowTag);
-      if (p.showItemType && typeLabel(item.itemType)) {
-        const badge = document.createElement('span');
-        badge.className = `pp-badge is-${item.itemType}`;
-        badge.textContent = typeLabel(item.itemType);
-        titleLine.appendChild(badge);
-      }
-      if (p.showKey && item.keyName) {
+    if (!isHeader) {
+      // Order after the title: key, NOW, type badge, arrangement.
+      if (on('showKey') && item.keyName) {
         const key = document.createElement('span');
         key.className = 'pp-key';
         key.textContent = item.keyName;
         titleLine.appendChild(key);
       }
-      if (p.showArrangement && item.arrangement) {
+      if (on('showNowIndicator')) {
+        const nowTag = document.createElement('span');
+        nowTag.className = 'pp-now-tag';
+        nowTag.textContent = 'Now';
+        titleLine.appendChild(nowTag);
+      }
+      if (on('showItemType') && typeLabel(item.itemType)) {
+        const badge = document.createElement('span');
+        badge.className = `pp-badge is-${item.itemType}`;
+        badge.textContent = typeLabel(item.itemType);
+        titleLine.appendChild(badge);
+      }
+      if (on('showArrangement') && item.arrangement) {
         const arr = document.createElement('span');
         arr.className = 'pp-arr';
         arr.textContent = item.arrangement;
@@ -281,13 +334,19 @@ export default function create({ root, moduleApi }) {
     }
     main.appendChild(titleLine);
 
-    if (p.showDescription && item.description) {
+    if (!isHeader && on('showSongAuthor') && item.song && (item.song.author || item.song.ccli)) {
+      const author = document.createElement('div');
+      author.className = 'pp-author';
+      author.textContent = [item.song.author, item.song.ccli ? `CCLI ${item.song.ccli}` : ''].filter(Boolean).join(' · ');
+      main.appendChild(author);
+    }
+    if (on('showDescription') && item.description) {
       const desc = document.createElement('div');
       desc.className = 'pp-desc';
       desc.textContent = item.description;
       main.appendChild(desc);
     }
-    if (p.showNotes && item.notes?.length) {
+    if (on('showNotes') && item.notes?.length) {
       const notes = item.notes.filter(notesWanted);
       if (notes.length) {
         const notesEl = document.createElement('div');
@@ -309,23 +368,25 @@ export default function create({ root, moduleApi }) {
     }
     row.appendChild(main);
 
-    const lenCol = document.createElement('div');
-    lenCol.className = 'pp-col-len';
-    if (item.itemType !== 'header') {
-      if (p.showLength) {
-        const len = document.createElement('div');
-        len.className = 'pp-len';
-        len.textContent = item.length ? fmtDur(item.length) : '';
-        lenCol.appendChild(len);
+    const wantRuntime = on('showItemRuntime') && state?.live?.following;
+    if (on('showLength') || wantRuntime) {
+      const lenCol = document.createElement('div');
+      lenCol.className = 'pp-col-len';
+      if (!isHeader) {
+        if (on('showLength')) {
+          const len = document.createElement('div');
+          len.className = 'pp-len';
+          len.textContent = item.length ? fmtDur(item.length) : '';
+          lenCol.appendChild(len);
+        }
+        if (wantRuntime) {
+          const el = document.createElement('div');
+          el.className = 'pp-elapsed';
+          lenCol.appendChild(el);
+        }
       }
-      if (p.showRuntime && state?.live?.following) {
-        const el = document.createElement('div');
-        el.className = 'pp-elapsed';
-        lenCol.appendChild(el);
-      }
+      row.appendChild(lenCol);
     }
-    lenCol.hidden = !p.showLength && !(p.showRuntime && state?.live?.following);
-    row.appendChild(lenCol);
     return row;
   }
 
@@ -359,15 +420,18 @@ export default function create({ root, moduleApi }) {
       return;
     }
 
-    // Rebuild rows only when the plan content or the display prefs changed;
-    // live highlighting and timers are applied in place.
-    const p = prefs();
-    const key = JSON.stringify([state.plan.id, state.items, p, state.live?.following]);
+    // Rebuild rows only when the plan content or the display settings
+    // changed; live highlighting and timers are applied in place.
+    const key = JSON.stringify([state.plan.id, state.items, cfg(), state.live?.following]);
     if (key !== lastListKey) {
       lastListKey = key;
       listEl.innerHTML = '';
       const notesWanted = noteFilter();
-      for (const item of visibleItems()) listEl.appendChild(buildRow(item, p, notesWanted));
+      let number = 0;
+      for (const item of visibleItems()) {
+        if (item.itemType !== 'header') number += 1;
+        listEl.appendChild(buildRow(item, number, notesWanted));
+      }
       lastCurrentId = null; // force the highlight + scroll pass
     }
     renderLiveMarks();
@@ -376,14 +440,11 @@ export default function create({ root, moduleApi }) {
   /** Current / done classes and the elapsed timers, without rebuilding rows. */
   function renderLiveMarks() {
     const live = state?.live || {};
-    const p = prefs();
     const now = serverNow();
     const currentId = live.following ? live.currentItemId || '' : '';
     const history = live.history || {};
     const byId = new Map(state.items.map((it) => [it.id, it]));
-    const rows = listEl.querySelectorAll('.pp-row');
     // Everything before the current item counts as done, matched or not.
-    let seenCurrent = !currentId;
     const doneIds = new Set();
     if (currentId) {
       for (const it of state.items) {
@@ -391,13 +452,12 @@ export default function create({ root, moduleApi }) {
         if (it.itemType !== 'header') doneIds.add(it.id);
       }
     }
-    for (const row of rows) {
+    const showNow = on('showNowIndicator');
+    for (const row of listEl.querySelectorAll('.pp-row')) {
       const id = row.dataset.id;
       const item = byId.get(id);
-      const isCurrent = id === currentId;
-      row.classList.toggle('is-current', isCurrent);
-      row.classList.toggle('is-done', p.dimCompleted && doneIds.has(id));
-      if (isCurrent) seenCurrent = true;
+      row.classList.toggle('is-current', showNow && id === currentId);
+      row.classList.toggle('is-done', on('dimCompleted') && doneIds.has(id));
       const elapsedEl = row.querySelector('.pp-elapsed');
       if (!elapsedEl || !item) continue;
       const h = history[id];
@@ -415,10 +475,9 @@ export default function create({ root, moduleApi }) {
       }
       if (!h.endedAt) elapsedEl.classList.add('is-running');
     }
-    void seenCurrent;
     if (currentId !== lastCurrentId) {
       lastCurrentId = currentId;
-      if (currentId && p.autoScroll && Date.now() - userScrolledAt > 8000) {
+      if (currentId && tilePrefs().autoScroll !== false && Date.now() - userScrolledAt > 8000) {
         const row = listEl.querySelector(`.pp-row[data-id="${CSS.escape(currentId)}"]`);
         row?.scrollIntoView({ block: 'center', behavior: 'smooth' });
       }
@@ -429,7 +488,7 @@ export default function create({ root, moduleApi }) {
 
   function renderFoot() {
     const live = state?.live;
-    const show = prefs().showLiveFooter && live?.following && state?.plan;
+    const show = on('showLiveFooter') && live?.following && state?.plan;
     footEl.hidden = !show;
     footEl.className = 'pp-foot';
     if (!show) return;
@@ -466,6 +525,9 @@ export default function create({ root, moduleApi }) {
 
   function render() {
     wrap.classList.toggle('is-offline', feedOffline);
+    wrap.classList.toggle('tint-types', Boolean(cfg().tintByType));
+    const keyColor = String(cfg().keyColor || '').trim();
+    wrap.style.setProperty('--pp-key', /^[#a-zA-Z0-9(),.%\s-]+$/.test(keyColor) ? keyColor : '#4ea1ff');
     renderStatus();
     if (!state) {
       headEl.hidden = true;
@@ -479,7 +541,7 @@ export default function create({ root, moduleApi }) {
   }
 
   function applyPrefs() {
-    const size = Math.min(40, Math.max(9, Number(prefs().textSize) || 14));
+    const size = Math.min(40, Math.max(9, Number(tilePrefs().textSize) || 14));
     wrap.style.setProperty('--pp-size', `${size}px`);
     lastListKey = '';
     render();
@@ -488,7 +550,7 @@ export default function create({ root, moduleApi }) {
   function tick() {
     if (!state?.plan) return;
     renderClock();
-    if (state.live?.following && prefs().showRuntime) renderLiveMarks();
+    if (state.live?.following && on('showItemRuntime')) renderLiveMarks();
   }
 
   /* ── live feed ──────────────────────────────────────────────────── */
@@ -550,7 +612,8 @@ export default function create({ root, moduleApi }) {
       root.innerHTML = '';
     },
     onConfigChange() {
-      // The server re-inits and its stream re-sends the state; nothing to cache here.
+      // Display settings changed in Admin: re-render from the new
+      // moduleApi.config. The server re-inits too and re-sends its state.
       lastListKey = '';
       render();
     },
