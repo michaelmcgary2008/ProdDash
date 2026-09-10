@@ -64,6 +64,10 @@
     "Top bar": {
       "collapsed": false
     },
+    "Colors": {
+      "collapsed": false,
+      "columns": 2
+    },
     "Show / hide": {
       "collapsed": true,
       "columns": 3,
@@ -85,19 +89,11 @@
       "group": "Top bar",
       "help": "Placeholders: {series} series name · {part} plan title / part number · {serviceType} · {date} · {shortDate} · {time} service start time · {length} planned length · {items} item count. Use • between items (an item whose placeholders are empty or hidden is dropped) and | to start a second line."
     },
-    "tintByType": {
-      "type": "boolean",
-      "label": "Background color per item type (song / media / other)",
-      "default": false,
-      "group": "Top bar"
-    },
-    "keyColor": {
-      "type": "string",
-      "label": "Song key color",
-      "default": "#4ea1ff",
-      "group": "Top bar",
-      "help": "Any CSS color, e.g. #4ea1ff or dodgerblue."
-    },
+    "keyColor": { "type": "color", "label": "Song key", "default": "#4ea1ff", "group": "Colors" },
+    "headerColor": { "type": "color", "label": "Section headers", "default": "#2ee59a", "group": "Colors" },
+    "currentColor": { "type": "color", "label": "Current item", "default": "#2ee59a", "group": "Colors" },
+    "headerGradient": { "type": "boolean", "label": "Fade header color to the right", "default": true, "group": "Colors" },
+    "tintByType": { "type": "boolean", "label": "Tint items by type (song / media / other)", "default": false, "group": "Colors" },
     "showTopBar": { "type": "boolean", "label": "Top bar", "default": true, "group": "Show / hide" },
     "showSeries": { "type": "boolean", "label": "Series name", "default": true, "group": "Show / hide" },
     "showPart": { "type": "boolean", "label": "Part # / plan title", "default": true, "group": "Show / hide" },

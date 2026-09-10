@@ -526,8 +526,14 @@ export default function create({ root, moduleApi }) {
   function render() {
     wrap.classList.toggle('is-offline', feedOffline);
     wrap.classList.toggle('tint-types', Boolean(cfg().tintByType));
-    const keyColor = String(cfg().keyColor || '').trim();
-    wrap.style.setProperty('--pp-key', /^[#a-zA-Z0-9(),.%\s-]+$/.test(keyColor) ? keyColor : '#4ea1ff');
+    wrap.classList.toggle('header-gradient', cfg().headerGradient !== false);
+    const color = (value, fallback) => {
+      const s = String(value || '').trim();
+      return /^[#a-zA-Z0-9(),.%\s-]+$/.test(s) && s ? s : fallback;
+    };
+    wrap.style.setProperty('--pp-key', color(cfg().keyColor, '#4ea1ff'));
+    wrap.style.setProperty('--pp-header', color(cfg().headerColor, '#2ee59a'));
+    wrap.style.setProperty('--pp-current', color(cfg().currentColor, '#2ee59a'));
     renderStatus();
     if (!state) {
       headEl.hidden = true;

@@ -5,6 +5,8 @@
 [data-module="pco-plan"] .pp-wrap {
   --pp-size: 14px;
   --pp-key: #4ea1ff;
+  --pp-header: var(--accent);
+  --pp-current: var(--accent);
   position: absolute;
   inset: 0;
   display: flex;
@@ -103,18 +105,27 @@
 [data-module="pco-plan"] .tint-types .pp-row.is-media:hover { background: color-mix(in srgb, var(--warn) 15%, transparent); }
 [data-module="pco-plan"] .tint-types .pp-row.is-item:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
 
-/* Section headers: a full-width band so a new part of the service is
-   unmistakable at a glance — accent bar, tinted ground, spaced capitals. */
+/* Section headers: a band that runs edge to edge across the tile (negative
+   margins cancel the list padding) so a new part of the service is
+   unmistakable — tile-chosen color, solid or fading to the right. The
+   left padding keeps the text aligned with the other rows' text. */
 [data-module="pco-plan"] .pp-row.is-header {
-  margin-top: 0.9em;
-  padding: 0.5em 0.7em 0.45em;
+  margin: 0.9em -0.5em 0;
+  padding: 0.5em 1em 0.45em calc(1em + 3px);
   align-items: center;
-  border-left: 3px solid var(--accent);
-  border-radius: 0.4em;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 22%, transparent), color-mix(in srgb, var(--accent) 5%, transparent) 70%, transparent);
+  border-left: none;
+  border-radius: 0;
+  background: color-mix(in srgb, var(--pp-header) 22%, transparent);
 }
-[data-module="pco-plan"] .pp-row.is-header:first-child { margin-top: 0.15em; }
-[data-module="pco-plan"] .pp-row.is-header:hover { background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 26%, transparent), color-mix(in srgb, var(--accent) 7%, transparent) 70%, transparent); }
+[data-module="pco-plan"] .pp-row.is-header:first-child { margin-top: 0; }
+[data-module="pco-plan"] .pp-row + .pp-row.is-header { margin-top: 0.9em; }
+[data-module="pco-plan"] .pp-row.is-header:hover { background: color-mix(in srgb, var(--pp-header) 28%, transparent); }
+[data-module="pco-plan"] .header-gradient .pp-row.is-header {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--pp-header) 30%, transparent), color-mix(in srgb, var(--pp-header) 6%, transparent) 70%, transparent);
+}
+[data-module="pco-plan"] .header-gradient .pp-row.is-header:hover {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--pp-header) 36%, transparent), color-mix(in srgb, var(--pp-header) 8%, transparent) 70%, transparent);
+}
 [data-module="pco-plan"] .pp-row.is-header .pp-title {
   font-size: 0.85em;
   font-weight: 800;
@@ -133,8 +144,8 @@
 [data-module="pco-plan"] .pp-row.is-done:hover { opacity: 0.8; }
 
 [data-module="pco-plan"] .pp-row.is-current {
-  border-left-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-left-color: var(--pp-current);
+  background: color-mix(in srgb, var(--pp-current) 16%, transparent);
   opacity: 1;
 }
 
@@ -159,7 +170,7 @@
   text-align: right;
   white-space: nowrap;
 }
-[data-module="pco-plan"] .pp-row.is-current .pp-col-time { color: var(--accent); font-weight: 700; }
+[data-module="pco-plan"] .pp-row.is-current .pp-col-time { color: var(--pp-current); font-weight: 700; }
 
 [data-module="pco-plan"] .pp-col-main { flex: 1; min-width: 0; }
 
@@ -196,7 +207,7 @@
   display: none;
   padding: 0.05em 0.45em;
   border-radius: 999px;
-  background: var(--accent);
+  background: var(--pp-current);
   color: var(--bg);
   font-size: 0.65em;
   font-weight: 800;
