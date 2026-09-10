@@ -277,6 +277,11 @@ function buildTile(tile) {
   resizeLeft.className = 'tile-resize-left';
   resizeLeft.title = 'Drag to resize';
 
+  // pill on the bottom edge: moves that edge (trading rows with tiles below)
+  const resizeBottom = document.createElement('div');
+  resizeBottom.className = 'tile-resize-bottom';
+  resizeBottom.title = 'Drag to adjust height';
+
   // notch on the title bar's bottom edge: hides/shows the bar
   const notch = document.createElement('button');
   notch.className = 'tile-notch';
@@ -288,7 +293,7 @@ function buildTile(tile) {
     saveLayout();
   });
 
-  el.append(head, body, resize, resizeLeft, notch);
+  el.append(head, body, resize, resizeLeft, resizeBottom, notch);
   el.classList.toggle('head-hidden', Boolean(tile.headHidden));
   grid.appendChild(el);
 
@@ -299,6 +304,7 @@ function buildTile(tile) {
   wireDrag(tile, el, head);
   wireResize(tile, el, resize, false);
   wireResize(tile, el, resizeLeft, true);
+  wireBottomResize(tile, el, resizeBottom);
 
   mountModule(tile);
   return entry;
@@ -411,6 +417,79 @@ function wireResize(tile, el, handle, fromLeft) {
         changed = true;
         notifyResize(tile);
       }
+    };
+    const onUp = () => {
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('pointercancel', onUp);
+      el.classList.remove('resizing');
+      grid.classList.remove('no-dividers');
+      if (changed) {
+        saveLayout();
+        rebuildDividers();
+      }
+    };
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onUp);
+  });
+}
+
+/* ── drag the bottom edge: height only ──────────────────────────────── */
+
+/* The pill on a tile's bottom edge moves that edge. When other tiles sit
+   directly below it (sharing the edge), the drag trades rows with them —
+   the column's total height stays the same, like the seam pill trades
+   columns. With nothing directly below, it simply changes this tile's
+   height. */
+
+function tilesDirectlyBelow(tile) {
+  return tiles.filter((t) => t !== tile
+    && t.y === tile.y + tile.h
+    && t.x < tile.x + tile.w && tile.x < t.x + t.w);
+}
+
+function wireBottomResize(tile, el, handle) {
+  handle.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0 && ev.pointerType === 'mouse') return;
+    if (document.body.classList.contains('fullscreen')) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    closeSettingsPopovers();
+    handle.setPointerCapture(ev.pointerId);
+    const m = cellMetrics();
+    const sy = ev.clientY;
+    const startH = tile.h;
+    const below = tilesDirectlyBelow(tile).map((t) => ({ t, bottom: t.y + t.h }));
+    const group = [tile.id, ...below.map((b) => b.t.id)];
+    const minH = minSizeOf(tile).h;
+    // the edge can rise until this tile hits its minimum, and drop until the
+    // shortest neighbour below hits its own
+    const maxH = below.length
+      ? Math.min(...below.map((b) => b.bottom - minSizeOf(b.t).h)) - tile.y
+      : Infinity;
+    el.classList.add('resizing');
+    grid.classList.add('no-dividers');
+    let changed = false;
+
+    const onMove = (e) => {
+      const dRows = Math.round((e.clientY - sy) / (m.ch + m.gap));
+      const h = Math.max(minH, Math.min(maxH, startH + dRows));
+      if (h === tile.h || h > maxH) return;
+      const edge = tile.y + h;
+      const candSelf = { x: tile.x, y: tile.y, w: tile.w, h };
+      const candBelow = below.map((b) => ({ x: b.t.x, y: edge, w: b.t.w, h: b.bottom - edge }));
+      if (!isFreeExcept(candSelf, group) || candBelow.some((c) => !isFreeExcept(c, group))) return;
+      tile.h = h;
+      applyRect(tile);
+      notifyResize(tile);
+      below.forEach((b, i) => {
+        b.t.y = candBelow[i].y;
+        b.t.h = candBelow[i].h;
+        applyRect(b.t);
+        notifyResize(b.t);
+      });
+      changed = true;
     };
     const onUp = () => {
       handle.removeEventListener('pointermove', onMove);
@@ -1079,27 +1158,68 @@ try {
 /* ── fullscreen: auto-fit the layout to the screen ──────────────────── */
 
 /* Fullscreen is a viewing mode. The occupied columns stretch proportionally
-   to the full width; tiles whose bottom edge lands near the bottom of the
-   viewport are stretched to end exactly at it; when nothing extends below
-   the viewport, scrolling is disabled. All of it is visual-only — the saved
+   to the full width, and every column runs to the bottom of the screen: the
+   bottom-most tile of each column stretches to end exactly there. A small
+   tile (the clock) is never stretched into a ribbon — with a tile above it,
+   it drops to the bottom edge and the tile above grows into the gap; alone
+   in its columns, it stays exactly as it is. When nothing extends below the
+   viewport, scrolling is disabled. All of it is visual-only — the saved
    layout is untouched and everything reverts on exit. */
 
 const fsBtn = document.getElementById('fs-btn');
-/** Rows this close to the viewport bottom count as "near" and get stretched. */
-const FS_NEAR_ROWS = 2;
+/** Tiles this short (the clock) are moved, never stretched, in fullscreen. */
+const FS_SMALL_ROWS = 2;
 let menuHiddenBeforeFs = false;
 
-function fsSmallExempt(tile) {
-  // A small tile (like the clock) alone in its columns must not become a
-  // full-height ribbon.
-  if (tile.h > 2) return false;
-  return !tiles.some((t) => t !== tile && t.x < tile.x + tile.w && tile.x < t.x + t.w);
+function colsOverlap(a, b) {
+  return a.x < b.x + b.w && b.x < a.x + a.w;
+}
+
+function fsSmall(tile) {
+  return tile.h <= FS_SMALL_ROWS;
+}
+
+function fsAloneInColumns(tile) {
+  return !tiles.some((t) => t !== tile && colsOverlap(t, tile));
 }
 
 function fsBottomMost(tile) {
-  return !tiles.some((t) => t !== tile
-    && t.x < tile.x + tile.w && tile.x < t.x + t.w
-    && t.y >= tile.y + tile.h);
+  return !tiles.some((t) => t !== tile && colsOverlap(t, tile) && t.y >= tile.y + tile.h);
+}
+
+/**
+ * Fullscreen row placement for every tile, given R rows on screen:
+ * { id -> { y, h } }. Only bottom-most tiles change (stretch, or drop when
+ * small), plus the tile directly above a dropped small one, which grows
+ * into the space it left — stopping at anything else below it.
+ */
+function fullscreenRows(R) {
+  const rows = new Map(tiles.map((t) => [t.id, { y: t.y, h: t.h }]));
+  const dropped = [];
+  for (const tile of tiles) {
+    if (!fsBottomMost(tile)) continue;
+    if (!fsSmall(tile)) {
+      rows.get(tile.id).h = R - tile.y;
+    } else if (!fsAloneInColumns(tile) && R - tile.h > tile.y) {
+      rows.get(tile.id).y = R - tile.h;
+      dropped.push(tile);
+    }
+  }
+  for (const small of dropped) {
+    const gapTop = rows.get(small.id).y;
+    for (const above of tiles) {
+      if (above === small || fsSmall(above) || !colsOverlap(above, small)) continue;
+      if (above.y + above.h !== small.y) continue; // only a tile touching it
+      let limit = gapTop;
+      for (const other of tiles) {
+        if (other === above || other === small || !colsOverlap(above, other)) continue;
+        const oy = rows.get(other.id).y;
+        if (oy >= above.y + above.h) limit = Math.min(limit, oy);
+      }
+      rows.get(above.id).h = Math.max(above.h, limit - above.y);
+    }
+  }
+  return rows;
 }
 
 function applyFullscreenFit() {
@@ -1128,16 +1248,14 @@ function applyFullscreenFit() {
   const cellH = (wrapH - (R - 1) * m.gap) / R;
   grid.style.gridAutoRows = cellH + 'px';
 
+  const rows = fullscreenRows(R);
   for (const tile of tiles) {
-    applyRect(tile); // reset any previous stretch first
-    const bottom = tile.y + tile.h;
-    if (R - bottom <= FS_NEAR_ROWS && fsBottomMost(tile) && !fsSmallExempt(tile)) {
-      const entry = tileEls.get(tile.id);
-      if (entry) {
-        entry.el.style.gridRow = `${tile.y + 1} / span ${R - tile.y}`;
-        try { entry.instance?.onResize?.(tile.w, R - tile.y); } catch { /* module's problem */ }
-      }
-    }
+    const entry = tileEls.get(tile.id);
+    if (!entry) continue;
+    const r = rows.get(tile.id);
+    entry.el.style.gridColumn = `${tile.x + 1} / span ${tile.w}`;
+    entry.el.style.gridRow = `${r.y + 1} / span ${r.h}`;
+    try { entry.instance?.onResize?.(tile.w, r.h); } catch { /* module's problem, not the shell's */ }
   }
 }
 
@@ -1174,14 +1292,14 @@ document.addEventListener('fullscreenchange', () => {
   }
 });
 
-window.addEventListener('resize', () => {
-  if (document.body.classList.contains('fullscreen')) applyFullscreenFit();
-});
-
-// the menubar collapse animates, so the grid's final height arrives late
-topbar.addEventListener('transitionend', () => {
-  if (document.body.classList.contains('fullscreen')) applyFullscreenFit();
-});
+// The grid area's size settles late: the browser animates into fullscreen,
+// then the menubar collapse animates. Re-fit whenever its size changes.
+let fsRefit = 0;
+new ResizeObserver(() => {
+  if (!document.body.classList.contains('fullscreen')) return;
+  cancelAnimationFrame(fsRefit);
+  fsRefit = requestAnimationFrame(applyFullscreenFit);
+}).observe(gridwrap);
 
 /* ── live updates from the admin page ───────────────────────────────── */
 

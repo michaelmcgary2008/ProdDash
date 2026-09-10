@@ -2,6 +2,7 @@
   "id": "propresenter-timers",
   "name": "Timers",
   "version": "1.0.0",
+  "proddash": ">=1.1.0",
   "description": "Live ProPresenter timers and LTC timecode",
   "client": "client.js",
   "server": "server.js",
