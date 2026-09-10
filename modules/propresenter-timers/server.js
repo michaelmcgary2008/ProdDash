@@ -57,10 +57,11 @@ const { createLtcListener } = require('./ltc-listener');
 /** Set by init(), read by the routes — both are rebuilt together on remount. */
 let current = null;
 
-function clearedState(enabled, ltcEnabled = false) {
+function clearedState(enabled, ltcEnabled = false, timerFont = 'default') {
   return {
     enabled,
     ltcEnabled,
+    timerFont,
     reachable: false,
     lastError: '',
     timers: [],
@@ -86,8 +87,9 @@ module.exports = {
     const ltcEnabled = Boolean(config.ltcEnabled);
     const ltcDevice = String(config.ltcDevice || '');
     const ltcChannel = Math.max(1, Math.trunc(Number(config.ltcChannel)) || 1);
+    const timerFont = config.timerFont === 'monospace' ? 'monospace' : 'default';
 
-    let latest = clearedState(enabled, ltcEnabled);
+    let latest = clearedState(enabled, ltcEnabled, timerFont);
     let lastFrame = '';
     let stopped = false;
     let pollTimer = null;
@@ -207,6 +209,7 @@ module.exports = {
       latest = {
         enabled,
         ltcEnabled,
+        timerFont,
         reachable: latest.reachable,
         lastError: latest.lastError,
         timers: latest.timers,

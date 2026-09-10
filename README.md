@@ -176,9 +176,10 @@ below. Nothing is installed without someone clicking.
   discovered timer (and the LTC card) as its own tile, or add "All timers"
   and pick a selection via the tile's "Timers ▾" menu; overruns are
   unmistakably red. Read-only — no start/stop controls. Admin config is in
-  two groups: **ProPresenter** (endpoint host : port, API password) and
+  three groups: **ProPresenter** (endpoint host : port, API password),
   **LTC Timecode** (the listener switch, and — when it's on — the audio
-  device and channel).
+  device and channel), and **Display** (Timer font — Default or Monospace,
+  which keeps the digits from shifting as the numbers change).
 
   ProPresenter exposes no timecode over any API, so LTC is decoded from the
   audio signal, behind the admin **LTC listener** switch (off ⇒ no LTC tile

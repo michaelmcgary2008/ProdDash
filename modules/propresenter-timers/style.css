@@ -113,6 +113,13 @@
   white-space: nowrap;
 }
 
+/* Admin "Timer font: Monospace" — steadier digits as the numbers change.
+   Applies to timer and LTC values alike (both are .tm-time). */
+[data-module="propresenter-timers"] .tm-mono .tm-time {
+  font-family: ui-monospace, "SF Mono", "Menlo", "Cascadia Mono", "Consolas", monospace;
+  letter-spacing: 0;
+}
+
 [data-module="propresenter-timers"] .tm-state {
   flex: none;
   max-width: 100%;

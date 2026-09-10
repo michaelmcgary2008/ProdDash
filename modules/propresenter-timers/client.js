@@ -393,6 +393,14 @@ export default function create({ root, moduleApi }) {
     rebuildMenu();
     updateLtcAnchor();
 
+    // Admin-chosen digit font. A font swap changes glyph metrics, so re-fit
+    // the digit sizing when it actually changes.
+    const mono = state?.timerFont === 'monospace';
+    if (mono !== wrap.classList.contains('tm-mono')) {
+      wrap.classList.toggle('tm-mono', mono);
+      fit();
+    }
+
     let hint = '';
     if (state && !state.enabled && !state.ltc?.supported) {
       hint = 'No ProPresenter connection — set the host and port in Admin.';
