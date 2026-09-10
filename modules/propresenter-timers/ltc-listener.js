@@ -161,7 +161,15 @@ function createLtcListener({ device, channel, moduleDir, log, onUpdate }) {
 
   evalTimer = setInterval(() => {
     if (stopped || !child) return;
-    report({ state: snapshotState(), time: lastTc, fps, df });
+    const state = snapshotState();
+    // ageMs = how old this report's timecode is (time since that frame
+    // decoded) — the client pins the anchor to its own clock with it and
+    // extrapolates frame-accurately between reports. Only while running:
+    // a held frame has no meaningful age, and a varying field would defeat
+    // the report dedupe while stopped.
+    const update = { state, time: lastTc, fps, df };
+    if (state === 'running') update.ageMs = Date.now() - lastFrameWall;
+    report(update);
   }, EVAL_MS);
   evalTimer.unref?.();
 

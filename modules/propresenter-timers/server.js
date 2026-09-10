@@ -132,7 +132,7 @@ module.exports = {
       if (!ltcEnabled) {
         return { supported: false, source: '', time: '', receiving: false, status: '', fps: 0, df: false, note: 'LTC listener disabled' };
       }
-      const audioVerdict = (src, tag) => ({
+      const audioVerdict = (src, tag, ageMs) => ({
         supported: true,
         source: tag,
         time: src.time,
@@ -140,16 +140,19 @@ module.exports = {
         status: src.state,
         fps: src.fps,
         df: src.df,
+        // While running: how old this timecode is, so clients can pin the
+        // anchor to their own clock and count frames between updates.
+        ...(src.state === 'running' && Number.isFinite(ageMs) ? { ageMs: Math.max(0, ageMs) } : {}),
         note: '',
       });
       // The built-in listener while it has actual data …
       if (listenerLtc && !listenerLtc.error && listenerLtc.state !== 'nosignal') {
-        return audioVerdict(listenerLtc, 'listener');
+        return audioVerdict(listenerLtc, 'listener', listenerLtc.ageMs);
       }
       // … else a fresh remote reader (during migrations both may run —
       // real data beats no data) …
       if (ingest && Date.now() - ingest.at < INGEST_STALE_MS) {
-        return audioVerdict(ingest, 'reader');
+        return audioVerdict(ingest, 'reader', Date.now() - ingest.at);
       }
       // … else a healthy-but-silent listener is believed over the indirect
       // sources: no audio means the LTC really stopped.
