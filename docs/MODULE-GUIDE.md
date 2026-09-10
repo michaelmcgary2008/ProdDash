@@ -64,7 +64,7 @@ shell code changes, ever.
 Both schemas map field names to specs:
 
 ```
-{ "type": "string" | "number" | "boolean" | "switch" | "select" | "password" | "endpoint",
+{ "type": "string" | "number" | "boolean" | "switch" | "select" | "color" | "password" | "endpoint",
   "label": "Shown next to the field",
   "default": <value>,
   "group": "Section heading",                         // optional; see below
@@ -78,6 +78,8 @@ Both schemas map field names to specs:
 
 `boolean` renders as a checkbox; `switch` is the same true/false value shown
 as a toggle (use it for a feature on/off that other fields depend on).
+`color` renders a swatch picker and stores a `#rrggbb` string (give it a hex
+default; the tile applies it as a CSS custom property — see `pco-plan`).
 
 `group` gathers consecutive fields under a labeled subsection in the admin
 page, so a module with several distinct concerns (e.g. a ProPresenter

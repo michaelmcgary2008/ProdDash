@@ -626,6 +626,27 @@ body.fullscreen #grid { padding-bottom: 0; }
 }
 .field.check input { width: 15px; height: 15px; accent-color: var(--accent); }
 
+/* color fields: label on the left, swatch on the right */
+.field.color-field {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.field.color-field > span { flex: 1; min-width: 0; }
+.field.color-field input[type="color"] {
+  width: 44px;
+  height: 26px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  cursor: pointer;
+}
+.field.color-field input[type="color"]:focus { outline: none; border-color: var(--accent); }
+.field.color-field .field-help { flex-basis: 100%; }
+
 /* ── modal dialogs (layout name prompt etc.) ───────────────────────── */
 
 #modal-backdrop {

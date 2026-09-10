@@ -919,6 +919,14 @@ function unmountModule(tile) {
 
 /* ── per-tile settings popover ──────────────────────────────────────── */
 
+/** `<input type="color">` only accepts #rrggbb — anything else falls back. */
+function colorHex(value, fallback) {
+  const s = String(value ?? '').trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(s)) return s.toLowerCase();
+  if (/^#[0-9a-fA-F]{3}$/.test(s)) return ('#' + s.slice(1).split('').map((c) => c + c).join('')).toLowerCase();
+  return fallback;
+}
+
 function closeSettingsPopovers() {
   document.querySelectorAll('.tile-settings').forEach((p) => p.remove());
 }
@@ -1004,6 +1012,16 @@ function toggleSettingsPopover(tile, el) {
       select.value = String(current ?? '');
       field.append(span, select);
       inputs.set(key, () => select.value);
+    } else if (type === 'color') {
+      // A swatch picker; the value is always a #rrggbb string.
+      field.classList.add('color-field');
+      const span = document.createElement('span');
+      span.textContent = label;
+      const input = document.createElement('input');
+      input.type = 'color';
+      input.value = colorHex(current, colorHex(spec?.default, '#2ee59a'));
+      field.append(span, input);
+      inputs.set(key, () => input.value);
     } else {
       const span = document.createElement('span');
       span.textContent = label;

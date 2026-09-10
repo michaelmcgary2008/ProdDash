@@ -209,6 +209,17 @@ function fieldFor(key, spec, value, passwordSet, moduleId) {
     field.append(span, select);
     read = () => select.value;
     selectEl = select;
+  } else if (type === 'color') {
+    // A swatch picker; the value is always a #rrggbb string.
+    field.classList.add('color-field');
+    const span = document.createElement('span');
+    span.textContent = label;
+    const input = document.createElement('input');
+    input.type = 'color';
+    const hex = (v, fb) => (/^#[0-9a-fA-F]{6}$/.test(String(v ?? '').trim()) ? String(v).trim().toLowerCase() : fb);
+    input.value = hex(value, hex(spec?.default, '#2ee59a'));
+    field.append(span, input);
+    read = () => input.value;
   } else {
     const span = document.createElement('span');
     span.textContent = label;
