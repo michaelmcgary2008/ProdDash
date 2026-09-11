@@ -1,9 +1,12 @@
 {
   "id": "propresenter-now-next",
   "name": "ProPresenter",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "proddash": ">=1.1.0",
   "description": "What is live in ProPresenter and what comes next",
+  "permissions": [
+    { "kind": "local-network", "reason": "Reaching ProPresenter on this network" }
+  ],
   "client": "client.js",
   "server": "server.js",
   "style": "style.css",
