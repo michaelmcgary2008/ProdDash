@@ -54,57 +54,43 @@ body.menu-hidden #topbar {
   overflow: hidden;
 }
 
-/* The menubar's show/hide handle IS the logo: a translucent accent pill
-   wrapped around "ProdDash" at the left of the bar, "Dash" cut out in the
-   background colour. It sits at the left — never screen-centre, where a
-   tile's own (centred) tab lands once both bars are hidden. When the bar
-   hides, the pill shrinks to a slim lip at the very top edge, clear of a
-   top-row tile's status dot and title. */
-.brand-spacer { visibility: hidden; }
-
+/* The bar's show/hide handle: a small accent lip on its bottom edge, the
+   same idea as a tile's notch. It sits at the left — never screen-centre,
+   where a tile's own (centred) tab lands once both bars are hidden — and
+   grows under the pointer so it is easy to hit without being loud at rest.
+   It used to be the ProdDash wordmark on a pill hanging past the bar, which
+   read as a step cut out of the bar, and animating its font-size on the way
+   out was the jerkiest thing on the page in Safari. Everything here moves by
+   transform, opacity and its own fixed size: no text metrics, no reflow. */
 #topbar-notch {
   position: fixed;
-  /* a tab hung from the top of the bar: square top, rounded bottom, hanging
-     8px past the bar's bottom edge; the logo sits centred in the bar part */
   top: 0;
-  left: 2px; /* the logo text starts at the bar's 12px padding; the tab adds 10px each side */
-  height: calc(var(--topbar-h, 46px) + 8px);
-  min-width: 60px;
-  padding: 0 10px;
-  font: inherit;
-  font-weight: 800;
-  font-size: 15px;
-  letter-spacing: 0.02em;
-  line-height: var(--topbar-h, 46px);
-  color: var(--text);
-  background: color-mix(in srgb, var(--accent) 45%, transparent);
+  left: 10px;
+  width: 28px;
+  height: 5px;
+  padding: 0;
   border: none;
-  border-radius: 0 0 12px 12px;
+  border-radius: 0 0 5px 5px;
+  background: var(--accent);
+  opacity: 0.5;
   cursor: pointer;
   z-index: 60;
-  transition: height 0.22s ease, line-height 0.22s ease, font-size 0.22s ease, background 0.15s ease;
+  /* Glued to the bar's bottom edge: --topbar-h is the bar's live height, so
+     the lip rides the bar's own collapse instead of running a second,
+     competing animation against it. */
+  transform: translateY(var(--topbar-h, 46px));
+  transition: width 0.16s ease, height 0.16s ease,
+              opacity 0.16s ease, border-radius 0.16s ease;
 }
-#topbar-notch .accent { color: var(--bg); } /* the cutout */
-#topbar-notch:hover { background: color-mix(in srgb, var(--accent) 68%, transparent); }
-/* bar hidden: the text folds away and the tab becomes a lip at the top edge */
-body.menu-hidden #topbar-notch {
+#topbar-notch:hover,
+#topbar-notch:focus-visible {
+  width: 60px;
   height: 10px;
-  line-height: 10px;
-  font-size: 0;
-  background: color-mix(in srgb, var(--accent) 55%, transparent);
+  opacity: 1;
+  border-radius: 0 0 8px 8px;
 }
-body.menu-hidden #topbar-notch:hover { background: var(--accent); }
-body.menu-hidden #topbar-notch::after {
-  content: "";
-  display: block;
-  width: 20px;
-  height: 3px;
-  margin: 0 auto;
-  position: relative;
-  top: 3px;
-  border-radius: 999px;
-  background: var(--bg);
-}
+/* With the bar collapsed --topbar-h is 0, so the lip ends up at the very top
+   edge without a rule of its own. */
 
 #brand {
   font-weight: 800;
@@ -386,6 +372,22 @@ body.menu-hidden #topbar-notch::after {
   background: var(--muted);
 }
 .tile-notch:hover::after { background: var(--text); }
+
+/* Fullscreen is for watching, not arranging: every title bar folds away, and
+   a tile's own hidden/shown preference is left untouched for when the screen
+   comes back. The notch still peeks one open, and it folds back once the
+   pointer has been off that tile for a while (PEEK_HIDE_MS in shell.js). */
+body.fullscreen .tile:not(.head-peek) .tile-head {
+  height: 0;
+  border-bottom-width: 0;
+  overflow: hidden;
+}
+body.fullscreen .tile:not(.head-peek) .tile-notch { top: 0; }
+body.fullscreen .tile.head-peek .tile-head {
+  height: 32px;
+  border-bottom-width: 1px;
+}
+body.fullscreen .tile.head-peek .tile-notch { top: 32px; }
 
 .tile-body {
   flex: 1;

@@ -1,6 +1,6 @@
 {
   "name": "proddash",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
   "description": "Modular production dashboard for Waters Church — zero-dependency Node server + vanilla client",
   "license": "UNLICENSED",

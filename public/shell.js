@@ -288,9 +288,22 @@ function buildTile(tile) {
   notch.title = 'Hide / show the title bar';
   notch.addEventListener('click', (e) => {
     e.stopPropagation();
+    // In fullscreen the bars are all folded away for watching; the notch
+    // peeks one open for a moment without touching what this tile saved.
+    if (document.body.classList.contains('fullscreen')) {
+      peekHead(tile, el, !el.classList.contains('head-peek'));
+      return;
+    }
     tile.headHidden = !tile.headHidden;
     el.classList.toggle('head-hidden', tile.headHidden);
     saveLayout();
+  });
+
+  // A peeked title bar stays while the pointer is on its tile, and starts
+  // counting down as soon as it leaves.
+  el.addEventListener('pointerenter', () => clearPeekTimer(tile.id));
+  el.addEventListener('pointerleave', () => {
+    if (el.classList.contains('head-peek')) schedulePeekHide(tile.id, el);
   });
 
   el.append(head, body, resize, resizeLeft, resizeBottom, notch);
@@ -634,6 +647,7 @@ function addTile(moduleId, entry = null) {
 function removeTile(id) {
   const idx = tiles.findIndex((t) => t.id === id);
   if (idx < 0) return;
+  clearPeekTimer(id);
   unmountModule(tiles[idx]);
   tiles.splice(idx, 1);
   const entry = tileEls.get(id);
@@ -928,7 +942,10 @@ function colorHex(value, fallback) {
 }
 
 function closeSettingsPopovers() {
-  document.querySelectorAll('.tile-settings').forEach((p) => p.remove());
+  document.querySelectorAll('.tile-settings').forEach((p) => {
+    p._cleanup?.();
+    p.remove();
+  });
 }
 
 function toggleSettingsPopover(tile, el) {
@@ -941,6 +958,34 @@ function toggleSettingsPopover(tile, el) {
   const pop = document.createElement('div');
   pop.className = 'tile-settings';
   const inputs = new Map();
+
+  /* These are display choices — a text size, a filter, a colour — so they
+     apply as they are changed and save with the layout. There is nothing to
+     confirm, so there is no Apply. Typing is debounced because applying
+     means remounting the module, which shouldn't happen per keystroke. */
+  let applyTimer = null;
+  const commit = (delay) => {
+    clearTimeout(applyTimer);
+    applyTimer = setTimeout(() => {
+      applyTimer = null;
+      // Only when something really moved: a text field fires `input` and then
+      // `change` on the way out, and a module shouldn't be torn down twice
+      // over for one edit.
+      let changed = false;
+      for (const [key, read] of inputs) {
+        const value = read();
+        if (tile.settings[key] === value) continue;
+        tile.settings[key] = value;
+        changed = true;
+      }
+      if (!changed) return;
+      saveLayout();
+      remountTile(tile);
+    }, delay);
+  };
+  const live = (input, event = 'change', delay = 0) => {
+    input.addEventListener(event, () => commit(delay));
+  };
 
   // Fields render in schema order; a field's `group` starts a labeled
   // subsection that consecutive same-group fields share, and the manifest's
@@ -999,6 +1044,7 @@ function toggleSettingsPopover(tile, el) {
       input.checked = Boolean(current);
       field.append(input, document.createTextNode(label));
       inputs.set(key, () => input.checked);
+      live(input);
     } else if (type === 'select' && Array.isArray(spec.options)) {
       const span = document.createElement('span');
       span.textContent = label;
@@ -1012,6 +1058,7 @@ function toggleSettingsPopover(tile, el) {
       select.value = String(current ?? '');
       field.append(span, select);
       inputs.set(key, () => select.value);
+      live(select);
     } else if (type === 'color') {
       // A swatch picker; the value is always a #rrggbb string.
       field.classList.add('color-field');
@@ -1022,6 +1069,7 @@ function toggleSettingsPopover(tile, el) {
       input.value = colorHex(current, colorHex(spec?.default, '#2ee59a'));
       field.append(span, input);
       inputs.set(key, () => input.value);
+      live(input, 'input', 150);   // dragging the picker fires continuously
     } else {
       const span = document.createElement('span');
       span.textContent = label;
@@ -1030,6 +1078,8 @@ function toggleSettingsPopover(tile, el) {
       input.value = current === undefined || current === null ? '' : String(current);
       field.append(span, input);
       inputs.set(key, () => (type === 'number' ? Number(input.value) : input.value));
+      live(input, 'input', 400);   // mid-word is not the moment to remount
+      live(input, 'change');       // …but blur or Enter is
     }
     if (spec?.help) {
       const help = document.createElement('small');
@@ -1040,26 +1090,17 @@ function toggleSettingsPopover(tile, el) {
     container.appendChild(field);
   }
 
-  const actions = document.createElement('div');
-  actions.className = 'actions';
-  actions.style.display = 'flex';
-  actions.style.justifyContent = 'flex-end';
-  actions.style.gap = '8px';
-  const cancel = document.createElement('button');
-  cancel.className = 'btn';
-  cancel.textContent = 'Cancel';
-  cancel.addEventListener('click', () => pop.remove());
-  const apply = document.createElement('button');
-  apply.className = 'btn primary';
-  apply.textContent = 'Apply';
-  apply.addEventListener('click', () => {
-    for (const [key, read] of inputs) tile.settings[key] = read();
-    pop.remove();
-    saveLayout();
-    remountTile(tile);
-  });
-  actions.append(cancel, apply);
-  pop.appendChild(actions);
+  // Nothing to press: click away, press Escape, or click the gear again.
+  // (The gear's own click stops propagating, so it toggles rather than
+  // closing and reopening.)
+  const closeOnClick = (e) => { if (!pop.contains(e.target)) closeSettingsPopovers(); };
+  const closeOnEscape = (e) => { if (e.key === 'Escape') closeSettingsPopovers(); };
+  pop._cleanup = () => {
+    document.removeEventListener('click', closeOnClick);
+    document.removeEventListener('keydown', closeOnEscape);
+  };
+  document.addEventListener('click', closeOnClick);
+  document.addEventListener('keydown', closeOnEscape);
 
   pop.addEventListener('pointerdown', (e) => e.stopPropagation());
   el.appendChild(pop);
@@ -1222,6 +1263,41 @@ try {
   if (localStorage.getItem(LS_MENU) === '1') setMenuHidden(true, { persist: false });
 } catch { /* fine */ }
 
+/* ── fullscreen: peeking at a tile's title bar ──────────────────────── */
+
+/** How long a peeked title bar stays after the pointer leaves its tile. */
+const PEEK_HIDE_MS = 10000;
+const peekTimers = new Map();   // tile id → timeout
+
+function clearPeekTimer(id) {
+  const timer = peekTimers.get(id);
+  if (timer === undefined) return;
+  clearTimeout(timer);
+  peekTimers.delete(id);
+}
+
+function schedulePeekHide(id, el) {
+  clearPeekTimer(id);
+  peekTimers.set(id, setTimeout(() => {
+    peekTimers.delete(id);
+    el.classList.remove('head-peek');
+  }, PEEK_HIDE_MS));
+}
+
+function peekHead(tile, el, on) {
+  el.classList.toggle('head-peek', on);
+  clearPeekTimer(tile.id);
+  // Opened from a click the pointer is on the tile, so the countdown waits
+  // for it to leave — unless it already has (a keyboard or touch open).
+  if (on && !el.matches(':hover')) schedulePeekHide(tile.id, el);
+}
+
+/** Back to a plain screen: no peeks left open, no timers left running. */
+function clearPeeks() {
+  for (const id of [...peekTimers.keys()]) clearPeekTimer(id);
+  document.querySelectorAll('.tile.head-peek').forEach((el) => el.classList.remove('head-peek'));
+}
+
 /* ── fullscreen: auto-fit the layout to the screen ──────────────────── */
 
 /* Fullscreen is a viewing mode. The occupied columns stretch proportionally
@@ -1355,6 +1431,7 @@ document.addEventListener('fullscreenchange', () => {
     requestAnimationFrame(() => requestAnimationFrame(applyFullscreenFit));
   } else {
     setMenuHidden(menuHiddenBeforeFs, { persist: false });
+    clearPeeks();
     clearFullscreenFit();
   }
 });
