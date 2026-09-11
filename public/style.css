@@ -494,7 +494,8 @@ body.fullscreen .tile.head-peek .tile-notch { top: 32px; }
   transition: opacity 0.15s ease, background 0.15s ease;
 }
 
-.tile-divider:hover::after { opacity: 0.7; }
+.tile-divider:hover::after,
+.tile-divider.linked::after { opacity: 0.7; }
 .tile-divider.active::after { opacity: 1; background: var(--text); }
 
 /* Hide the pills while a tile itself is being moved or corner-resized —

@@ -531,13 +531,22 @@ function notifyResize(tile) {
 /* ── seam dividers between adjacent tiles ───────────────────────────── */
 
 /* Wherever two tiles share a vertical edge, a divider sits on the seam.
-   Dragging its pill moves the shared edge, trading width between the two
-   tiles — their combined span never changes, so nothing else can collide
-   except via the explicit check below (a third tile can sit behind the
-   seam for part of its height). */
+   Dragging one moves that column boundary wherever it appears: every pair of
+   tiles meeting at the same x, in every row, moves with it, so a column of
+   tiles keeps its edge as one line rather than drifting row by row. Hovering
+   a seam lights up the others that travel with it.
+
+   Each pair trades width within its own span — the pair's combined span never
+   changes — so nothing else can collide except via the explicit check below
+   (a third tile can sit behind the seam for part of its height). A row where
+   one tile simply spans the boundary has no seam there and stays put. */
+
+/** Live dividers, so a drag can reposition all of them as the tiles move. */
+const dividers = [];
 
 function rebuildDividers() {
   grid.querySelectorAll('.tile-divider').forEach((el) => el.remove());
+  dividers.length = 0;
   for (const L of tiles) {
     for (const R of tiles) {
       if (L === R || L.x + L.w !== R.x) continue;
@@ -549,10 +558,24 @@ function rebuildDividers() {
   }
 }
 
+/** Every pair of tiles that meets at this column boundary, in any row. */
+function seamPairsAt(boundary) {
+  const pairs = [];
+  for (const L of tiles) {
+    if (L.x + L.w !== boundary) continue;
+    for (const R of tiles) {
+      if (R === L || R.x !== boundary) continue;
+      if (Math.min(L.y + L.h, R.y + R.h) <= Math.max(L.y, R.y)) continue;
+      pairs.push({ L, R });
+    }
+  }
+  return pairs;
+}
+
 function buildDivider(L, R, top, bottom) {
   const el = document.createElement('div');
   el.className = 'tile-divider';
-  el.title = 'Drag to resize';
+  el.title = 'Drag to resize this column';
 
   const place = () => {
     const m = cellMetrics();
@@ -563,43 +586,72 @@ function buildDivider(L, R, top, bottom) {
   };
   place();
 
+  const boundary = () => L.x + L.w;
+  const groupEls = () => dividers.filter((d) => d.boundary() === boundary()).map((d) => d.el);
+  const unlink = () => { for (const d of dividers) d.el.classList.remove('linked'); };
+
+  // Before anything is dragged, show which seams travel with this one.
+  el.addEventListener('pointerenter', () => {
+    if (document.body.classList.contains('fullscreen')) return;
+    for (const other of groupEls()) other.classList.add('linked');
+  });
+  el.addEventListener('pointerleave', unlink);
+
   el.addEventListener('pointerdown', (ev) => {
     if (ev.button !== 0 && ev.pointerType === 'mouse') return;
     if (document.body.classList.contains('fullscreen')) return;
     ev.preventDefault();
     closeSettingsPopovers();
     el.setPointerCapture(ev.pointerId);
-    el.classList.add('active');
+
     const m = cellMetrics();
     const sx = ev.clientX;
-    const startBoundary = L.x + L.w;
-    const rightEdge = R.x + R.w; // fixed for the whole drag
-    const minB = L.x + minSizeOf(L).w;
-    const maxB = rightEdge - minSizeOf(R).w;
+    const startBoundary = boundary();
+    // Every row that has a seam here moves with it. Each pair's outer edges
+    // are fixed for the whole drag, so each row only trades width internally.
+    const parts = seamPairsAt(startBoundary).map(({ L: a, R: b }) => ({
+      L: a, R: b, leftX: a.x, rightEdge: b.x + b.w,
+    }));
+    if (!parts.length) return;
+    const moving = parts.flatMap((p) => [p.L.id, p.R.id]);
+    // The whole column stops at whichever row runs out of room first.
+    const minB = Math.max(...parts.map((p) => p.leftX + minSizeOf(p.L).w));
+    const maxB = Math.min(...parts.map((p) => p.rightEdge - minSizeOf(p.R).w));
+    const group = groupEls();
+    for (const other of group) other.classList.add('active');
     let changed = false;
 
     const onMove = (e) => {
       const b = Math.max(minB, Math.min(maxB,
         startBoundary + Math.round((e.clientX - sx) / (m.cw + m.gap))));
-      if (b === L.x + L.w) return;
-      const candL = { x: L.x, y: L.y, w: b - L.x, h: L.h };
-      const candR = { x: b, y: R.y, w: rightEdge - b, h: R.h };
-      if (!isFreeExcept(candL, [L.id, R.id]) || !isFreeExcept(candR, [L.id, R.id])) return;
-      L.w = candL.w;
-      R.x = candR.x;
-      R.w = candR.w;
-      applyRect(L);
-      applyRect(R);
-      notifyResize(L);
-      notifyResize(R);
-      place();
+      if (b === boundary()) return;
+      const next = parts.map((p) => ({
+        p,
+        candL: { x: p.leftX, y: p.L.y, w: b - p.leftX, h: p.L.h },
+        candR: { x: b, y: p.R.y, w: p.rightEdge - b, h: p.R.h },
+      }));
+      // All rows move or none do — a column edge that bends is worse than one
+      // that won't budge.
+      if (next.some(({ candL, candR }) =>
+        !isFreeExcept(candL, moving) || !isFreeExcept(candR, moving))) return;
+      for (const { p, candL, candR } of next) {
+        p.L.w = candL.w;
+        p.R.x = candR.x;
+        p.R.w = candR.w;
+        applyRect(p.L);
+        applyRect(p.R);
+        notifyResize(p.L);
+        notifyResize(p.R);
+      }
+      for (const d of dividers) d.place();
       changed = true;
     };
     const onUp = () => {
       el.removeEventListener('pointermove', onMove);
       el.removeEventListener('pointerup', onUp);
       el.removeEventListener('pointercancel', onUp);
-      el.classList.remove('active');
+      for (const other of group) other.classList.remove('active');
+      unlink();
       if (changed) saveLayout();
       rebuildDividers(); // adjacencies may have changed
     };
@@ -608,6 +660,7 @@ function buildDivider(L, R, top, bottom) {
     el.addEventListener('pointercancel', onUp);
   });
 
+  dividers.push({ el, place, boundary });
   grid.appendChild(el);
 }
 
