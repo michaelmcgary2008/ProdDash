@@ -435,8 +435,9 @@ body.fullscreen .tile.head-peek .tile-notch { top: 32px; }
   border-radius: 0 0 0 3px;
 }
 
-/* bottom-edge pill: drag to move the tile's bottom edge (height only);
-   sits between the two corner handles */
+/* bottom edge: drag to move the tile's bottom edge (height only). Drawn as
+   the same 2px line as the corner handles it sits between, on the same
+   4px inset, so the three read as one set of marks along the bottom. */
 .tile-resize-bottom {
   position: absolute;
   left: 24px;
@@ -449,6 +450,7 @@ body.fullscreen .tile.head-peek .tile-notch { top: 32px; }
   justify-content: center;
   cursor: ns-resize;
   touch-action: none;
+  color: var(--muted);
   opacity: 0;
   transition: opacity 0.15s ease;
 }
@@ -456,17 +458,13 @@ body.fullscreen .tile.head-peek .tile-notch { top: 32px; }
   content: "";
   width: 44px;
   max-width: 60%;
-  height: 5px;
-  margin-bottom: 2px;
-  border-radius: 999px;
-  background: var(--muted);
-  transition: background 0.15s ease;
+  height: 0;
+  margin-bottom: 4px;
+  border-bottom: 2px solid currentColor;
 }
 .tile:hover .tile-resize-bottom { opacity: 0.6; }
 .tile .tile-resize-bottom:hover,
-.tile.resizing .tile-resize-bottom { opacity: 1; }
-.tile .tile-resize-bottom:hover::after,
-.tile.resizing .tile-resize-bottom::after { background: var(--text); }
+.tile.resizing .tile-resize-bottom { opacity: 1; color: var(--text); }
 
 /* ── seam divider between adjacent tiles ───────────────────────────── */
 
