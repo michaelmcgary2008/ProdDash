@@ -82,7 +82,13 @@ final class ServerController: ObservableObject {
     /// Re-resolve the checkout, the node binary and the port. Cheap, and run
     /// again before every start so a folder fixed in Settings takes effect.
     func refreshEnvironment() {
-        let root = ProdDash.findRoot(preferred: settings.rootPath)
+        // A shipped app installs (or re-installs) its copy of ProdDash before
+        // going looking for one. An explicitly chosen folder skips all that.
+        let base = ProdDash.dataDir(root: nil)
+        if settings.rootPath.isEmpty {
+            ProdDash.seedWorkingCopy(dataDir: base) { [log] message in log.launcher(message) }
+        }
+        let root = ProdDash.findRoot(preferred: settings.rootPath, dataDir: base)
         rootURL = root
         let node = ProdDash.findNode(root: root, preferred: settings.nodePath)
         if node?.path != nodeURL?.path {

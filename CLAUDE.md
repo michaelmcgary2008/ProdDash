@@ -4,8 +4,9 @@ Modular production dashboard web app for Waters Church, developed in this repo.
 The app lives at the repo root and is built: zero-dependency Node server
 (`server.js`, Node 18+), dashboard shell client in `public/`, admin page at
 `/admin`, modules in `modules/`, and a native macOS menu-bar launcher in
-`launcher/macos/` (Swift, no dependencies — it supervises the server and owns
-the macOS permissions modules declare; see its README). Runtime state (module
+`launcher/macos/` (Swift, no dependencies — the shipped macOS app: it carries
+the server and its own Node runtime, supervises them, and owns the macOS
+permissions modules declare; see its README). Runtime state (module
 config, named layouts) is written to a per-machine data directory outside the
 checkout (`PRODDASH_DATA_DIR` overrides; see README "Where settings are
 kept") — never add code that writes runtime state into the repo folder.

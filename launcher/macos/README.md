@@ -1,50 +1,104 @@
-# ProdDash Launcher (macOS)
+# ProdDash for macOS
 
-A menu-bar app that starts, stops and watches over the ProdDash server on a
-Mac — and, just as importantly, **owns the permissions its modules need**.
+The Mac application: a menu-bar app that carries the dashboard, its own Node
+runtime, and the permissions its modules need. Installing it is dragging
+**ProdDash** to Applications — nothing else has to be present on the machine,
+and nothing can go missing from under it.
 
-It is a native Swift app: about 1 MB, no dependencies, nothing to install but
-the app itself. Build it with `./build.sh`.
+Build it with `./build.sh`. The app is native Swift with no dependencies of
+its own; the Node it ships is fetched from nodejs.org at build time and
+checksum-verified.
 
-## Why a launcher, and not just `Start ProdDash.command`
+## What's in the bundle
 
-Two reasons, and the second is the one that bites.
+```
+ProdDash.app/Contents/
+  MacOS/ProdDash            the launcher (Swift, ~1 MB)
+  Resources/node/bin/node   the Node runtime ProdDash runs on
+  Resources/app/            server.js, public/, modules/ — ProdDash itself
+```
 
-**Supervision.** The server is started as a child process, its output is kept
-in a log, and it is brought back if it stops on its own. The shell was built
-for this: with `PRODDASH_LAUNCHER=1` in its environment it exits **75** rather
-than respawning itself when the admin page applies an update, which the
-launcher reads as "start me again" instead of as a fault. A crash gets a
-backed-off restart (1s, 2s, 5s, 10s); four crashes in two minutes stops the
-cycle, so a broken install doesn't spin forever.
+Everything mutable lives outside, in `~/Library/Application Support/ProdDash`:
+module config, layouts, modules installed from the admin page — and `app/`,
+the copy of ProdDash that actually runs.
+
+**Why a copy, when the bundle already has one.** ProdDash updates itself: the
+admin page's **Update now** downloads a new version and writes it over the app
+folder. Nothing may write inside a signed `.app` without breaking its
+signature, so the bundle carries a read-only baseline and the data directory
+carries the copy that runs. Both routes to a new version work, and they don't
+fight: installing a newer `.app` replaces the copy, while a copy that has
+already updated itself past the bundle is left alone.
+
+## Why it exists
 
 **Permissions.** macOS grants privacy permissions to the *application* that
-owns a process, and a child inherits its parent's identity. Start ProdDash
-from here and node — plus the Timers module's `ltc-capture` tool — belong to
-this app bundle, so the microphone and local-network prompts are asked, and
-remembered, as **ProdDash**. Start it over SSH or from a bare launchd job and
-there is no owner to ask: the permission is silently absent rather than
-refused, and an LTC input reads as endless zeroes with no error anywhere.
-That is the failure `modules/propresenter-timers/ltc-listener.js` warns about,
-and this is the fix.
+owns a process, and a child inherits its parent's identity. Started from here,
+node — and the Timers module's `ltc-capture` — belong to this app bundle, so
+the microphone and local-network prompts are asked, and remembered, as
+ProdDash. Started over SSH or from a bare launchd job there is nobody to ask:
+the permission is silently absent rather than refused, which is the "endless
+zeroes, no error" failure `ltc-listener.js` warns about.
+
+**Supervision.** The shell was built for this: with `PRODDASH_LAUNCHER=1` it
+exits **75** instead of respawning itself when the admin page applies an
+update, which the launcher reads as "start me again" rather than as a fault.
+A crash gets a backed-off restart (1s, 2s, 5s, 10s); four in two minutes stops
+the cycle rather than spinning forever.
 
 ## Build
 
 ```bash
-cd launcher/macos
-./build.sh                  # build/ProdDash.app, universal (Apple Silicon + Intel)
-./build.sh --install        # …and copy it to /Applications
-./build.sh --run            # …and open it
-./build.sh --arch native    # this Mac's architecture only — faster while iterating
+./build.sh                 # build/ProdDash.app — the whole application
+./build.sh --dmg           # …and build/ProdDash-<version>-arm64.dmg
+./build.sh --install       # …and copy it to /Applications
+./build.sh --run           # …and open it
+./build.sh --notarize      # with --dmg: notarise and staple (Developer ID)
+./build.sh --dev           # launcher only: no Node, no server — runs against
+                           # the checkout. Seconds, for work on the launcher.
 ```
 
 Needs the Xcode command line tools (`xcode-select --install`) and macOS 13 or
-newer. The app icon is built from `public/icons/icon-512.png`, so ProdDash's
-own icon is the app's icon.
+newer. The first build downloads Node (~50 MB) into `.cache/` and reuses it.
+A full build takes about ten seconds and produces a 117 MB app, 43 MB
+compressed in the disk image.
 
-The build is signed ad-hoc, which is all a local tool needs — but the
-signature changes on every rebuild, so macOS may treat a rebuilt app as a new
-one and ask for the microphone again. Build once, install it, and leave it.
+Builds for **Apple Silicon**. To change that, or to move to a newer Node, edit
+`ARCH` and `NODE_VERSION` at the top of `build.sh` — the download is verified
+against nodejs.org's published checksums either way.
+
+The app icon is built from `public/icons/icon-512.png`, so ProdDash's own icon
+is the app's icon. A module's native helper is compiled during the build
+(`<name>.swift` beside a module's files becomes `<name>`), so the Mac running
+ProdDash never needs a compiler.
+
+## Signing
+
+`build.sh` uses a **Developer ID Application** certificate when one is
+installed, and signs ad-hoc when none is — which is fine on your own Macs, but
+another Mac will refuse the app until someone approves it under System
+Settings → Privacy & Security.
+
+To sign properly you need the Apple Developer Program (paid) and a Developer
+ID certificate — note this is not the same as the "Apple Development"
+certificate Xcode creates for you:
+
+1. Xcode → Settings → Accounts → your team → **Manage Certificates** →
+   **+** → **Developer ID Application**. (Requires Account Holder or Admin
+   on the team.) `security find-identity -v -p codesigning` should then
+   list a `Developer ID Application: …` identity.
+2. Store notarisation credentials once, with an app-specific password from
+   [appleid.apple.com](https://appleid.apple.com):
+
+   ```bash
+   xcrun notarytool store-credentials proddash --apple-id you@example.com --team-id TEAMID
+   ```
+
+3. `./build.sh --notarize`
+
+Then the disk image opens by double-click on any Mac, with no warnings.
+`CODESIGN_IDENTITY` overrides the certificate; `NOTARY_PROFILE` overrides the
+keychain profile name.
 
 ## Using it
 
@@ -56,7 +110,8 @@ hollow when it is stopped. Its menu has the whole app in it:
 - **Start / Stop / Restart ProdDash**.
 - **Launcher…** — the window below.
 - **Open at Login** — a login item, through the modern `SMAppService` API.
-- **Quit ProdDash** — stops the server too, and asks first while it is running.
+- **Quit ProdDash** — stops the server too, and asks first while it is
+  running.
 
 The window has the status, both addresses the dashboard answers on, and three
 tabs:
@@ -64,10 +119,10 @@ tabs:
 - **Log** — everything the server prints, plus what the launcher did and why.
   Also written to `~/Library/Logs/ProdDash/proddash-<date>.log`, kept a week.
 - **Settings** — the port, and how it starts (at login, server on open,
-  restart on crash, open a browser, show this window). It also shows the
-  ProdDash folder, the node binary in use and where settings are kept.
-- **Permissions** — what the installed modules declare they need, who needs
-  it, and what macOS currently allows. See below.
+  restart on crash, open a browser, show this window). It also shows which
+  copy of ProdDash is running, which node, and where settings are kept.
+- **Permissions** — one line per permission: a status dot, its name, and the
+  one thing you can do about it. See below.
 
 ### Port
 
@@ -78,9 +133,8 @@ it while the server runs restarts it.
 
 ### Permissions
 
-One line per permission: a status dot, its name, and the one thing you can do
-about it. What appears is what the installed modules declare in their
-manifests (`"permissions": [ … ]` — see
+What appears is what the installed modules declare in their manifests
+(`"permissions": [ … ]` — see
 [docs/MODULE-GUIDE.md](../../docs/MODULE-GUIDE.md)); hover a row to see which
 module asked, and why.
 
@@ -88,8 +142,8 @@ module asked, and why.
 - **Local Network** — macOS has no API that reports whether this was granted,
   so **Check Access** asks the network instead: it browses for Bonjour
   services (which is what raises the prompt) and tries every upstream the
-  admin page is pointed at, then says what the result means. Nothing
-  answering, when the gear is on, means macOS is withholding access.
+  admin page is pointed at. Nothing answering, when the gear is on, means
+  macOS is withholding access.
 - **Notifications** — the launcher's own, so a server that stops while nobody
   is watching still reaches someone. Turn them off for ProdDash in System
   Settings if you'd rather not have them.
@@ -110,21 +164,17 @@ still at the keyboard, rather than halfway through a service.
   Monitor.
 - **Signals.** `killall ProdDash`, a logout or a shutdown stops the server
   first rather than leaving node running.
-- **Where the settings live.** ProdDash's port is in the data directory's
-  `proddash.json`; everything else (auto-start, restart-on-crash, the paths)
-  is the launcher's own, in its preferences.
-- **Finding things.** The ProdDash folder is the checkout the app was built
-  inside, or `~/Apps/ProdDash` and the other usual spots, or whatever you
-  pick under Settings. Node is the checkout's bundled `runtime/bin/node` if
-  there is one, then Homebrew, `/usr/local`, nvm, Volta, and finally whatever
-  a login shell finds.
+- **Nothing is required outside the app.** A development build (`--dev`)
+  carries no server and no Node, and runs the checkout it was built in with
+  whatever node is on the machine — Settings → ProdDash folder points it
+  somewhere else.
 
 ## Troubleshooting
 
 | What you see | What it means |
 | --- | --- |
-| "Can't find the ProdDash folder" | Point it at the folder with `server.js` in it, under Settings. |
-| "Node.js 18 or newer isn't installed" | Install Node. A GUI app inherits almost no `PATH`, so one in an unusual place may not be found — Settings shows which one is in use. |
+| "ProdDash can't be opened because Apple cannot check it" | The app is ad-hoc signed. System Settings → Privacy & Security → **Open Anyway**, once. Signing it properly (above) removes this. |
 | "ProdDash stopped 4 times in two minutes" | The server is failing on startup — the Log tab has its own error. |
-| LTC shows no signal | Permissions tab → Microphone. If it says granted and the input is still silent, the server may be an older copy started outside the launcher — Stop, then Start. |
+| LTC shows no signal | Permissions tab → Microphone. If it says granted and the input is still silent, the server may be an older copy started outside the app — Stop, then Start. |
 | Nothing on the network answers | Permissions tab → **Check Access**. |
+| A development build says it can't find ProdDash | `--dev` builds need a checkout: Settings → ProdDash folder. |

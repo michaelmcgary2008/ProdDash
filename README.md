@@ -29,21 +29,28 @@ and a clear degraded state, then recover on their own.
 
 ## Run it
 
-Requires [Node.js](https://nodejs.org) 18 or newer.
+### macOS — the app
 
-On a Mac, run it from the **menu-bar launcher** — see
-[launcher/macos](launcher/macos). It starts and stops the server, can open at
-login, owns the port, and holds the permissions the modules need: the
-microphone the LTC listener reads, and local network access for ProdCom and
-ProPresenter. macOS grants those to the app that owns the process, so a server
-started any other way — over SSH, from a launchd job — simply doesn't have
-them, and an LTC input goes silently to zeroes. Build it once:
+Open the disk image and drag **ProdDash** to Applications. That's the whole
+installation: the app carries the dashboard and its own Node runtime, so
+nothing else has to be installed and nothing can be missing. It lives in the
+menu bar, starts and stops the server, can open at login, and holds the
+permissions the modules need — the microphone the LTC listener reads, and
+local network access for ProdCom and ProPresenter. macOS grants those to the
+app that owns the process, so a server started any other way (over SSH, from
+a launchd job) simply doesn't have them, and an LTC input goes silently to
+zeroes.
+
+Build the disk image from a checkout with
+[launcher/macos](launcher/macos)/`build.sh`:
 
 ```bash
-cd launcher/macos && ./build.sh --install
+cd launcher/macos && ./build.sh --dmg
 ```
 
-Otherwise, from the app folder:
+### Anywhere else, or from a checkout
+
+Requires [Node.js](https://nodejs.org) 18 or newer.
 
 ```bash
 node server.js
@@ -81,7 +88,10 @@ it at startup (`Settings : …`).
 
 The directory holds `modules.json` (module config), `layouts/` (named
 layouts) and `modules/` (modules installed from the admin page), all written
-by the app itself. It may also hold a `proddash.json`
+by the app itself. Installed from the macOS app, it also holds `app/` — the
+copy of ProdDash that actually runs, laid down from inside the app bundle on
+first launch and updated in place from then on (nothing may write inside a
+signed .app, and ProdDash updates itself). It may also hold a `proddash.json`
 with this machine's shell settings — the same keys as the checked-in
 [config/proddash.json](config/proddash.json), which supplies the defaults:
 

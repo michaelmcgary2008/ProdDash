@@ -32,6 +32,95 @@ enum ProdDash {
             .appendingPathComponent("Library/Application Support/ProdDash")
     }
 
+    // MARK: - What the app carries
+
+    /**
+     A shipped ProdDash lives read-only inside the app bundle and runs from a
+     copy in the data directory.
+
+     The copy isn't ceremony: ProdDash updates itself in place — the admin
+     page's "Update now" writes a fresh download over the app folder — and
+     nothing may write inside a signed .app without breaking its signature.
+     So the bundle carries the baseline, the data directory carries the copy
+     that actually runs, and both routes to a new version keep working: drop
+     in a newer .app, or press Update now.
+
+     A development build ships no payload and falls through to the checkout it
+     was built in.
+     */
+    static func bundledPayload() -> URL? {
+        guard let resources = Bundle.main.resourceURL else { return nil }
+        let payload = resources.appendingPathComponent("app")
+        return isRoot(payload) ? payload : nil
+    }
+
+    /// The Node the app carries, so nothing depends on what this Mac happens
+    /// to have installed — or on it staying installed.
+    static func bundledNode() -> URL? {
+        guard let resources = Bundle.main.resourceURL else { return nil }
+        let node = resources.appendingPathComponent("node/bin/node")
+        return FileManager.default.isExecutableFile(atPath: node.path) ? node : nil
+    }
+
+    static func workingCopy(dataDir: URL) -> URL { dataDir.appendingPathComponent("app") }
+
+    /**
+     Put the bundled ProdDash in place: when there is no copy yet, or when the
+     app carries a newer one than the copy — someone installed a new .app. A
+     copy that has updated itself *past* the bundle is left alone, so a new
+     install never drags a running system backwards.
+     */
+    @discardableResult
+    static func seedWorkingCopy(dataDir: URL, log: (String) -> Void) -> URL? {
+        guard let payload = bundledPayload() else { return nil }
+        let working = workingCopy(dataDir: dataDir)
+        let shipped = shellVersion(root: payload)
+        if isRoot(working) {
+            let installed = shellVersion(root: working)
+            guard compareVersions(shipped, installed) > 0 else { return working }
+            log("this app carries ProdDash \(shipped) — replacing the \(installed) copy it runs")
+        } else {
+            log("first run — installing ProdDash \(shipped)")
+        }
+
+        let fm = FileManager.default
+        let previous = working.appendingPathExtension("previous")
+        do {
+            try fm.createDirectory(at: dataDir, withIntermediateDirectories: true)
+            try? fm.removeItem(at: previous)
+            if fm.fileExists(atPath: working.path) { try fm.moveItem(at: working, to: previous) }
+            try fm.copyItem(at: payload, to: working)
+            makeWritable(working)
+            try? fm.removeItem(at: previous)
+            return working
+        } catch {
+            log("could not install the bundled ProdDash: \(error.localizedDescription)")
+            // Put back whatever was working before rather than leaving nothing.
+            if !fm.fileExists(atPath: working.path), fm.fileExists(atPath: previous.path) {
+                try? fm.moveItem(at: previous, to: working)
+            }
+            return isRoot(working) ? working : nil
+        }
+    }
+
+    /// Files copied out of a bundle can arrive read-only, and this copy is
+    /// exactly where ProdDash writes its own updates.
+    private static func makeWritable(_ root: URL) {
+        let fm = FileManager.default
+        var targets = [root]
+        if let walker = fm.enumerator(at: root, includingPropertiesForKeys: nil) {
+            for case let url as URL in walker { targets.append(url) }
+        }
+        for url in targets {
+            guard let mode = (try? fm.attributesOfItem(atPath: url.path))?[.posixPermissions] as? NSNumber
+            else { continue }
+            let writable = mode.uint16Value | 0o200
+            if writable != mode.uint16Value {
+                try? fm.setAttributes([.posixPermissions: NSNumber(value: writable)], ofItemAtPath: url.path)
+            }
+        }
+    }
+
     // MARK: - Finding the checkout
 
     /// A folder is ProdDash if it has the two files the server cannot run without.
@@ -46,7 +135,7 @@ enum ProdDash {
      this .app was built inside (the app usually sits in `launcher/macos/build`),
      else the handful of places people actually keep it.
      */
-    static func findRoot(preferred: String?) -> URL? {
+    static func findRoot(preferred: String?, dataDir: URL) -> URL? {
         if let preferred, !preferred.isEmpty {
             let url = URL(fileURLWithPath: preferred).standardizedFileURL
             if isRoot(url) { return url }
@@ -54,6 +143,12 @@ enum ProdDash {
         if let env = ProcessInfo.processInfo.environment["PRODDASH_ROOT"], !env.isEmpty {
             let url = URL(fileURLWithPath: env).standardizedFileURL
             if isRoot(url) { return url }
+        }
+        // A shipped app runs the copy it installed; only a development build
+        // (no payload) goes looking for a checkout.
+        if bundledPayload() != nil {
+            let working = workingCopy(dataDir: dataDir)
+            if isRoot(working) { return working }
         }
         var up = Bundle.main.bundleURL.standardizedFileURL
         for _ in 0..<6 {
@@ -89,6 +184,8 @@ enum ProdDash {
     static func findNode(root: URL?, preferred: String?) -> URL? {
         var tries: [URL] = []
         if let preferred, !preferred.isEmpty { tries.append(URL(fileURLWithPath: preferred)) }
+        // What the app carries, so a shipped ProdDash needs nothing installed.
+        if let bundled = bundledNode() { tries.append(bundled) }
         // The runtime a production machine ships with — same preference as Start ProdDash.command.
         if let root { tries.append(root.appendingPathComponent("runtime/bin/node")) }
         tries += ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/opt/local/bin/node", "/usr/bin/node"]

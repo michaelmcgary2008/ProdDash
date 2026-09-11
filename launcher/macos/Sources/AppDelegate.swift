@@ -10,8 +10,10 @@ import Combine
  */
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
+    /// The launcher's own version. The app's CFBundleShortVersionString is
+    /// ProdDash's, because the app *is* ProdDash now.
     static var version: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+        Bundle.main.infoDictionary?["ProdDashLauncherVersion"] as? String ?? "dev"
     }
     /// Sent by a second copy of the launcher so the first one shows itself.
     static let showNotification = Notification.Name("org.waterschurch.proddash.launcher.show")

@@ -11,5 +11,6 @@ config/layouts/
 # compiled per-machine, source sits next to it
 modules/propresenter-timers/ltc-capture
 
-# the launcher's build output (built per machine from launcher/macos/build.sh)
+# the launcher's build output, and its cache of the Node runtime it embeds
 launcher/macos/build/
+launcher/macos/.cache/
