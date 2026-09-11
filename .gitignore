@@ -10,3 +10,6 @@ config/layouts/
 
 # compiled per-machine, source sits next to it
 modules/propresenter-timers/ltc-capture
+
+# the launcher's build output (built per machine from launcher/macos/build.sh)
+launcher/macos/build/

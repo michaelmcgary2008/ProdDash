@@ -1,9 +1,12 @@
 {
   "id": "prodcom-transcript",
   "name": "ProdCom",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "proddash": ">=1.1.0",
   "description": "Live ProdCom transcript stream",
+  "permissions": [
+    { "kind": "local-network", "reason": "Reaching the ProdCom API on this network" }
+  ],
   "client": "client.js",
   "server": "server.js",
   "style": "style.css",

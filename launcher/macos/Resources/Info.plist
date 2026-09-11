@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>ProdDash</string>
+	<key>CFBundleDisplayName</key>
+	<string>ProdDash</string>
+	<key>CFBundleExecutable</key>
+	<string>ProdDash</string>
+	<key>CFBundleIdentifier</key>
+	<string>org.waterschurch.proddash</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>1.0.0</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<!-- Menu-bar app: no Dock icon, no app menu. -->
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<!-- The prompts this app exists to own. macOS shows these sentences
+	     verbatim, so they say what ProdDash does with each permission. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>ProdDash reads an audio input on this Mac to decode SMPTE LTC timecode for the Timers module.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>ProdDash connects to production gear on this network — ProdCom, ProPresenter and anything else its modules are pointed at.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_http._tcp</string>
+	</array>
+</dict>
+</plist>

@@ -66,6 +66,9 @@ the app); its settings are kept for a later reinstall.
   "version": "1.0.0",
   "proddash": ">=1.1.0",
   "description": "One line shown in the Add-tile picker and the admin page",
+  "permissions": [
+    { "kind": "microphone", "reason": "Why this module needs it, in one line" }
+  ],
   "client": "client.js",
   "server": "server.js",
   "style": "style.css",
@@ -88,6 +91,7 @@ the app); its settings are kept for a later reinstall.
 | `version` | yes | Your module's version (`x.y.z`). Bump it on every change — the admin page offers updates when the repo's copy is newer than the installed one. |
 | `proddash` | yes | The ProdDash versions this module works with: `">=1.1.0"`, `"^1.1.0"`, `">=1.1.0 <2.0.0"`, or `"*"`. A module whose requirement the running shell doesn't meet is listed in the admin page but never loaded, and can't be installed from the catalog. |
 | `description` | no | Shown in the admin page / picker. |
+| `permissions` | no | What macOS must allow before this module can work — see **Permissions macOS has to grant**. Ignored by the shell; read by the macOS launcher. |
 | `client` | yes | Client entry file, loaded as an ES module. |
 | `server` | no | Server entry file (CommonJS), loaded with `require()`. |
 | `style` | no | A stylesheet the shell injects once per module. |
@@ -206,6 +210,38 @@ Admin config lives in `modules.json` inside the server's data directory
 (written by the admin page — your module never touches that file, and it
 survives updates of the app folder). Per-tile settings live inside each
 browser's layout.
+
+### Permissions macOS has to grant
+
+Some things a module does need the operating system's permission, not just
+configuration: reading an audio input, reaching gear on the local network.
+macOS grants those to the **application that owns the process**, which for
+ProdDash is the macOS launcher (`launcher/macos`) — the server is its child,
+so the prompts are asked, and remembered, in ProdDash's name. A server
+started over SSH or from a bare launchd job has no such owner, and the
+permission is silently absent rather than refused: an LTC input reads as
+endless zeroes, a local host simply never answers.
+
+Declare what you need, and why, so the launcher's Permissions tab can list
+it and ask for it before a service rather than during one:
+
+```json
+"permissions": [
+  { "kind": "microphone",    "reason": "Decoding SMPTE LTC timecode from an audio input on this machine" },
+  { "kind": "local-network", "reason": "Reaching ProPresenter on this network" }
+]
+```
+
+| `kind` | When to declare it |
+| --- | --- |
+| `microphone` | The module reads an audio input (`ltc-capture` and anything like it). |
+| `local-network` | The module talks to gear on this building's network. Not needed for services out on the internet — Planning Center, say. |
+
+`reason` is one line, shown to the operator as-is; modules giving the same
+reason are listed together. A bare `"permissions": ["microphone"]` works when
+the standing explanation is enough. A `kind` the launcher doesn't manage is
+still listed, so nothing goes unmentioned — the shell itself ignores the key
+entirely, and other platforms ignore it too.
 
 ## Client entry (`client.js`)
 

@@ -31,6 +31,20 @@ and a clear degraded state, then recover on their own.
 
 Requires [Node.js](https://nodejs.org) 18 or newer.
 
+On a Mac, run it from the **menu-bar launcher** — see
+[launcher/macos](launcher/macos). It starts and stops the server, can open at
+login, owns the port, and holds the permissions the modules need: the
+microphone the LTC listener reads, and local network access for ProdCom and
+ProPresenter. macOS grants those to the app that owns the process, so a server
+started any other way — over SSH, from a launchd job — simply doesn't have
+them, and an LTC input goes silently to zeroes. Build it once:
+
+```bash
+cd launcher/macos && ./build.sh --install
+```
+
+Otherwise, from the app folder:
+
 ```bash
 node server.js
 ```
@@ -73,7 +87,7 @@ with this machine's shell settings — the same keys as the checked-in
 
 | Key | Meaning |
 | --- | --- |
-| `port` | Port ProdDash serves on (default `24500`) |
+| `port` | Port ProdDash serves on (default `24500`). The macOS launcher writes this one, so the port it is set to holds however ProdDash is started. |
 | `adminPasscode` | If set, the admin page asks for this shared passcode. Leave `""` for none — it's a plain-HTTP LAN tool. |
 
 Environment variables override both files: `PORT`, `PRODDASH_PASSCODE`, and
