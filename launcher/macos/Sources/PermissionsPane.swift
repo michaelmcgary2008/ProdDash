@@ -3,101 +3,145 @@ import SwiftUI
 import UserNotifications
 
 /**
- The permissions pane.
+ The permissions pane: one line per permission — a status dot, its name, and
+ the one thing you can do about it.
 
- This is the reason the launcher exists as much as the start button is: macOS
- grants privacy permissions to the *app* that owns the process tree, so when
- ProdDash runs as this app's child, the prompts are asked in ProdDash's name
- and stay granted. What each module needs is read from its own manifest, so
- this list matches what is actually installed.
+ What appears here is what the installed modules declare in their manifests,
+ so the list matches what is actually installed. Each row's tooltip carries
+ the modules' own reasons; the row itself stays out of the way.
  */
 struct PermissionsPane: View {
 
     @ObservedObject var server: ServerController
-    @ObservedObject var settings: LauncherSettings
     @ObservedObject var permissions: PermissionsModel
 
     var body: some View {
-        Form {
-            Section {
-                Text("ProdDash's modules ask macOS for these through the launcher. Start the server any other way "
-                     + "— over SSH, from a launchd job — and the permissions belong to that instead, which is why "
-                     + "LTC goes quietly silent when it isn't launched from here.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            if permissions.needs.isEmpty {
-                Section("Modules") {
-                    Text("No installed module declares a permission.")
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            ForEach(permissions.needs) { need in
-                Section(need.kind.title) {
-                    NeedHeader(need: need)
-                    switch need.kind {
-                    case .microphone:   microphoneControls
-                    case .localNetwork: localNetworkControls
-                    case .other:
-                        Text("The launcher doesn't manage this one — grant it in System Settings → Privacy & Security.")
-                            .font(.caption)
+        VStack(spacing: 0) {
+            Form {
+                Section {
+                    if permissions.needs.isEmpty {
+                        Text("No installed module declares a permission.")
                             .foregroundStyle(.secondary)
                     }
-                }
-            }
-
-            Section("Notifications") {
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Tell me when ProdDash stops")
-                        Text("The launcher's own — so a server that stops on a booth machine nobody is watching "
-                             + "still reaches someone.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    ForEach(permissions.needs) { need in
+                        row(for: need)
                     }
-                    Spacer()
-                    StatusText(text: notificationLabel, tone: notificationTone)
-                }
-                Toggle("Notify me", isOn: Binding(
-                    get: { settings.notifyOnProblem },
-                    set: { on in
-                        settings.notifyOnProblem = on
-                        if on { permissions.requestNotifications() }
-                    }))
-                if permissions.notifications == .denied {
-                    Button("Open Notification Settings") { SystemSettings.open(SystemSettings.notifications) }
-                        .controlSize(.small)
+                    notifications
                 }
             }
+            .formStyle(.grouped)
 
-            Section {
-                Button("Re-check") {
-                    permissions.refresh(root: server.rootURL, dataDir: server.dataDir)
-                }
+            Button("Re-check") {
+                permissions.refresh(root: server.rootURL, dataDir: server.dataDir)
             }
+            .padding(.bottom, 14)
         }
-        .formStyle(.grouped)
         .onAppear { permissions.refresh(root: server.rootURL, dataDir: server.dataDir) }
     }
 
-    // MARK: - Microphone
+    // MARK: - Rows
 
-    private var microphoneControls: some View {
-        HStack {
-            StatusText(text: permissions.microphone.description, tone: microphoneTone)
-            Spacer()
-            switch permissions.microphone {
-            case .notDetermined:
-                Button("Allow…") { permissions.requestMicrophone() }
-            case .denied, .restricted:
-                Button("Open System Settings") { SystemSettings.open(SystemSettings.microphone) }
-            default:
-                Button("Open System Settings") { SystemSettings.open(SystemSettings.microphone) }
-                    .controlSize(.small)
+    @ViewBuilder
+    private func row(for need: ModuleNeed) -> some View {
+        switch need.kind {
+        case .microphone:
+            PermissionRow(title: need.kind.title,
+                          tone: microphoneTone,
+                          help: help(for: need),
+                          actionTitle: microphoneActionTitle,
+                          action: microphoneActionTitle == nil ? nil : { requestMicrophone() })
+
+        case .localNetwork:
+            VStack(alignment: .leading, spacing: 7) {
+                PermissionRow(title: need.kind.title,
+                              tone: localNetworkTone,
+                              help: help(for: need),
+                              busy: permissions.checking,
+                              actionTitle: "Check Access",
+                              action: { permissions.checkLocalNetwork(root: server.rootURL, dataDir: server.dataDir) })
+                if !results.isEmpty { hostResults }
+            }
+
+        case .other:
+            PermissionRow(title: need.kind.title,
+                          tone: .unknown,
+                          help: "The launcher doesn't manage this one — grant it in System Settings.\n"
+                              + help(for: need),
+                          actionTitle: "Open System Settings",
+                          action: { SystemSettings.open(SystemSettings.privacy) })
+        }
+    }
+
+    private var notifications: some View {
+        PermissionRow(title: "Notifications",
+                      tone: notificationTone,
+                      help: "Tells you when ProdDash stops on its own.",
+                      actionTitle: notificationActionTitle,
+                      action: notificationActionTitle == nil ? nil : { permissions.requestNotifications() })
+    }
+
+    /// What the modules said, for the tooltip — one line per distinct reason.
+    private func help(for need: ModuleNeed) -> String {
+        need.claims
+            .map { $0.modules.isEmpty ? $0.reason : "\($0.reason) — \($0.askedBy)" }
+            .joined(separator: "\n")
+    }
+
+    // MARK: - Local network results
+
+    private var results: [Net.Probe] { permissions.hostChecks.compactMap(\.result) }
+
+    private var hostResults: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(permissions.hostChecks) { check in
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(tone(for: check.result).color)
+                        .frame(width: 6, height: 6)
+                    Text(check.label)
+                        .font(.system(.caption, design: .monospaced))
+                    Spacer()
+                    Text(describe(check.result))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if !results.isEmpty, !results.contains(where: \.isReachableHost) {
+                // Only when everything failed, because that is the shape a
+                // withheld permission takes.
+                HStack(spacing: 8) {
+                    Text("Nothing answered.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Open System Settings") { SystemSettings.open(SystemSettings.localNetwork) }
+                        .buttonStyle(.link)
+                        .controlSize(.small)
+                }
             }
         }
+        .padding(.leading, 17)
+    }
+
+    private func describe(_ result: Net.Probe?) -> String {
+        switch result {
+        case .none:            return "—"
+        case .open:            return "answered"
+        case .refused:         return "reachable"
+        case .unreachable:     return "no route"
+        case .timedOut:        return "no answer"
+        case .failed(let why): return why
+        }
+    }
+
+    private func tone(for result: Net.Probe?) -> Tone {
+        guard let result else { return .unknown }
+        return result.isReachableHost ? .good : .bad
+    }
+
+    // MARK: - Status and actions
+
+    private func requestMicrophone() {
+        permissions.requestMicrophone()
     }
 
     private var microphoneTone: Tone {
@@ -108,77 +152,19 @@ struct PermissionsPane: View {
         }
     }
 
-    // MARK: - Local network
-
-    private var localNetworkControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("macOS never reports whether this was granted, so the check below asks the network directly: "
-                 + "it browses for services (which is what raises the prompt) and tries every upstream the admin "
-                 + "page is pointed at.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            HStack(spacing: 8) {
-                Button(permissions.checking ? "Checking…" : "Check Access") {
-                    permissions.checkLocalNetwork(root: server.rootURL, dataDir: server.dataDir)
-                }
-                .disabled(permissions.checking)
-                if permissions.checking {
-                    ProgressView().controlSize(.small)
-                }
-                Spacer()
-                Button("Open System Settings") { SystemSettings.open(SystemSettings.localNetwork) }
-                    .controlSize(.small)
-            }
-
-            ForEach(permissions.hostChecks) { check in
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(tone(for: check.result).color)
-                        .frame(width: 7, height: 7)
-                    Text(check.label)
-                        .font(.system(.caption, design: .monospaced))
-                    Text(check.module)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                    Spacer()
-                    Text(describe(check.result))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            if !permissions.localNetworkVerdict.isEmpty {
-                Text(permissions.localNetworkVerdict)
-                    .font(.caption)
-                    .foregroundStyle(permissions.localNetworkVerdict.contains("working") ? .secondary : .primary)
-            }
+    private var microphoneActionTitle: String? {
+        switch permissions.microphone {
+        case .authorized: return nil
+        case .notDetermined: return "Allow"
+        default: return "Open System Settings"
         }
     }
 
-    private func describe(_ result: Net.Probe?) -> String {
-        switch result {
-        case .none:              return "—"
-        case .open:              return "answered"
-        case .refused:           return "reachable, nothing on that port"
-        case .unreachable:       return "no route"
-        case .timedOut:          return "no answer"
-        case .failed(let why):   return why
-        }
-    }
-
-    private func tone(for result: Net.Probe?) -> Tone {
-        guard let result else { return .unknown }
-        return result.isReachableHost ? .good : .bad
-    }
-
-    private var notificationLabel: String {
-        switch permissions.notifications {
-        case .authorized, .provisional, .ephemeral: return "granted"
-        case .denied: return "denied"
-        case .notDetermined: return "not asked yet"
-        @unknown default: return "unknown"
-        }
+    /// Anything answering means the permission is there; only a clean sweep of
+    /// failures points at macOS withholding it.
+    private var localNetworkTone: Tone {
+        guard !results.isEmpty else { return .unknown }
+        return results.contains(where: \.isReachableHost) ? .good : .bad
     }
 
     private var notificationTone: Tone {
@@ -188,9 +174,17 @@ struct PermissionsPane: View {
         default: return .unknown
         }
     }
+
+    private var notificationActionTitle: String? {
+        switch permissions.notifications {
+        case .authorized, .provisional, .ephemeral: return nil
+        case .notDetermined: return "Enable"
+        default: return "Open System Settings"
+        }
+    }
 }
 
-// MARK: - Small pieces
+// MARK: - Pieces
 
 enum Tone {
     case good, bad, unknown
@@ -202,33 +196,39 @@ enum Tone {
         case .unknown: return .secondary
         }
     }
-}
 
-private struct StatusText: View {
-    let text: String
-    let tone: Tone
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Circle().fill(tone.color).frame(width: 7, height: 7)
-            Text(text).font(.callout)
+    /// Said out loud for anyone who can't see the dot.
+    var word: String {
+        switch self {
+        case .good: return "allowed"
+        case .bad: return "not allowed"
+        case .unknown: return "not checked"
         }
     }
 }
 
-private struct NeedHeader: View {
-    let need: ModuleNeed
+private struct PermissionRow: View {
+    let title: String
+    let tone: Tone
+    let help: String
+    var busy = false
+    var actionTitle: String?
+    var action: (() -> Void)?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(need.claims) { claim in
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(claim.reason)
-                    Text("Needed by \(claim.askedBy)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+        HStack(spacing: 9) {
+            Circle()
+                .fill(tone.color)
+                .frame(width: 8, height: 8)
+                .accessibilityHidden(true)          // the name carries the status instead
+            Text(title)
+                .accessibilityLabel("\(title): \(tone.word)")
+            Spacer()
+            if busy { ProgressView().controlSize(.small) }
+            if let actionTitle, let action {
+                Button(actionTitle, action: action).disabled(busy)
             }
         }
+        .help(help)
     }
 }

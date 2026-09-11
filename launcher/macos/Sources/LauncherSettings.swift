@@ -15,9 +15,6 @@ final class LauncherSettings: ObservableObject {
     /// Bring the server back if it dies on its own. Backs off, and gives up
     /// after a burst of fast crashes rather than looping forever.
     @Published var restartOnCrash: Bool { didSet { defaults.set(restartOnCrash, forKey: "restartOnCrash") } }
-    /// Notify when the server stops unexpectedly — the point of a booth machine
-    /// nobody is watching.
-    @Published var notifyOnProblem: Bool { didSet { defaults.set(notifyOnProblem, forKey: "notifyOnProblem") } }
     /// Open the dashboard in a browser whenever the server comes up.
     @Published var openDashboardOnStart: Bool { didSet { defaults.set(openDashboardOnStart, forKey: "openDashboardOnStart") } }
     /// Show this window at launch. Off means the launcher starts straight into
@@ -28,7 +25,6 @@ final class LauncherSettings: ObservableObject {
         defaults.register(defaults: [
             "startServerAtLaunch": true,
             "restartOnCrash": true,
-            "notifyOnProblem": true,
             "openDashboardOnStart": false,
             "showWindowAtLaunch": true,
         ])
@@ -36,7 +32,6 @@ final class LauncherSettings: ObservableObject {
         nodePath = defaults.string(forKey: "nodePath") ?? ""
         startServerAtLaunch = defaults.bool(forKey: "startServerAtLaunch")
         restartOnCrash = defaults.bool(forKey: "restartOnCrash")
-        notifyOnProblem = defaults.bool(forKey: "notifyOnProblem")
         openDashboardOnStart = defaults.bool(forKey: "openDashboardOnStart")
         showWindowAtLaunch = defaults.bool(forKey: "showWindowAtLaunch")
     }

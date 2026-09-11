@@ -47,7 +47,6 @@ final class ServerController: ObservableObject {
     @Published private(set) var shellVersion = ""
     @Published private(set) var localURL = ""
     @Published private(set) var networkURLs: [String] = []
-    @Published private(set) var modulesSummary = ""
     @Published private(set) var settingsDir = ""
     /// The server answered /api/modules — listening, not merely alive.
     @Published private(set) var healthy = false
@@ -125,7 +124,6 @@ final class ServerController: ObservableObject {
         message = ""
         localURL = ""
         networkURLs = []
-        modulesSummary = ""
         healthy = false
         healthMisses = 0
         openedDashboardThisRun = false
@@ -283,7 +281,6 @@ final class ServerController: ObservableObject {
         switch field {
         case "Local":    localURL = value
         case "Network":  if !networkURLs.contains(value) { networkURLs.append(value) }
-        case "Modules":  modulesSummary = value
         case "Settings": settingsDir = value
         default: break
         }
@@ -330,16 +327,14 @@ final class ServerController: ObservableObject {
                 : "ProdDash \(how)."
             let last = lastProblemLine.isEmpty ? "" : " Last message: \(lastProblemLine)"
             fail(why + last)
-            Notifier.shared.post(title: "ProdDash stopped", body: why, if: settings.notifyOnProblem)
+            Notifier.shared.post(title: "ProdDash stopped", body: why)
             return
         }
         let delay = [1.0, 2.0, 5.0, 10.0][min(crashTimes.count - 1, 3)]
         state = .stopped
         message = "ProdDash \(how) — restarting…"
         log.launcher("ProdDash \(how)\(detail); restarting in \(Int(delay))s")
-        Notifier.shared.post(title: "ProdDash stopped",
-                             body: "It \(how)\(detail). Restarting…",
-                             if: settings.notifyOnProblem)
+        Notifier.shared.post(title: "ProdDash stopped", body: "It \(how)\(detail). Restarting…")
         scheduleRestart(after: delay)
     }
 

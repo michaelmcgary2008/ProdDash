@@ -43,7 +43,7 @@ struct LauncherView: View {
                 case .settings:
                     SettingsPane(server: server, settings: settings)
                 case .permissions:
-                    PermissionsPane(server: server, settings: settings, permissions: permissions)
+                    PermissionsPane(server: server, permissions: permissions)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -86,7 +86,6 @@ struct LauncherView: View {
     private var subtitle: String {
         var parts: [String] = []
         if !server.shellVersion.isEmpty { parts.append("v\(server.shellVersion)") }
-        parts.append("port \(server.port)")
         if !server.nodeVersion.isEmpty { parts.append("node \(server.nodeVersion)") }
         return parts.joined(separator: "  ·  ")
     }
@@ -100,12 +99,6 @@ struct LauncherView: View {
                            ? "http://localhost:\(server.port)" : server.localURL)
                 ForEach(server.networkURLs, id: \.self) { url in
                     AddressRow(label: "Network", url: url)
-                }
-                if !server.modulesSummary.isEmpty {
-                    Text("Modules: \(server.modulesSummary)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
                 }
             } else {
                 Text("Not serving. ProdDash will come up on port " + String(server.port) + ".")
@@ -268,7 +261,7 @@ private struct SettingsPane: View {
 
     var body: some View {
         Form {
-            Section("ProdDash") {
+            Section("Network") {
                 HStack {
                     TextField("Port", text: $portText)
                         .frame(width: 90)
@@ -277,13 +270,9 @@ private struct SettingsPane: View {
                         .disabled(Int(portText) == server.port || Int(portText) == nil)
                     Spacer()
                 }
-                Text("Saved to ProdDash's own settings, so it keeps this port however it is started. "
-                     + "Changing it while the server runs restarts it.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
-            Section("Starting up") {
+            Section("Startup") {
                 Toggle("Open ProdDash at login", isOn: Binding(
                     get: { loginItemOn },
                     set: { setLoginItem($0) }))
@@ -309,9 +298,7 @@ private struct SettingsPane: View {
                 }
                 PathRow(title: "Node.js",
                         value: server.nodeURL.map { "\($0.path)  \(server.nodeVersion)" } ?? "Not found",
-                        missing: server.nodeURL == nil) {
-                    chooseNode()
-                }
+                        missing: server.nodeURL == nil, action: nil)
                 PathRow(title: "Settings", value: server.settingsDir.isEmpty
                         ? server.dataDir.path : server.settingsDir, missing: false, action: nil)
             }
@@ -356,17 +343,6 @@ private struct SettingsPane: View {
         server.refreshEnvironment()
     }
 
-    private func chooseNode() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.message = "Choose the node binary ProdDash should run on."
-        panel.prompt = "Choose"
-        panel.directoryURL = URL(fileURLWithPath: "/usr/local/bin")
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        settings.nodePath = url.path
-        server.refreshEnvironment()
-    }
 }
 
 private struct PathRow: View {

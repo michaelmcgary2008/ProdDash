@@ -237,8 +237,8 @@ it and ask for it before a service rather than during one:
 | `microphone` | The module reads an audio input (`ltc-capture` and anything like it). |
 | `local-network` | The module talks to gear on this building's network. Not needed for services out on the internet — Planning Center, say. |
 
-`reason` is one line, shown to the operator as-is; modules giving the same
-reason are listed together. A bare `"permissions": ["microphone"]` works when
+`reason` is one line, shown to the operator as-is when they hover the
+permission; modules giving the same reason are listed together. A bare `"permissions": ["microphone"]` works when
 the standing explanation is enough. A `kind` the launcher doesn't manage is
 still listed, so nothing goes unmentioned — the shell itself ignores the key
 entirely, and other platforms ignore it too.

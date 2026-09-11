@@ -40,10 +40,9 @@ final class Notifier {
 
     /// Posting never asks for permission: a prompt that appears because
     /// something just failed, unattended, is the worst possible moment for it.
-    /// Authorization is asked for on first run and when the setting is turned
-    /// on; until then this quietly does nothing.
-    func post(title: String, body: String, if enabled: Bool) {
-        guard enabled, available, authorized else { return }
+    /// It is asked for from the Permissions tab; until then this does nothing.
+    func post(title: String, body: String) {
+        guard available, authorized else { return }
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
@@ -92,4 +91,5 @@ enum SystemSettings {
     static let microphone = "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
     static let localNetwork = "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork"
     static let notifications = "x-apple.systempreferences:com.apple.Notifications-Settings.extension"
+    static let privacy = "x-apple.systempreferences:com.apple.preference.security?Privacy"
 }

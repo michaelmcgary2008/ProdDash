@@ -299,9 +299,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Ask for what the installed modules actually declare they need.
     func requestDeclaredPermissions() {
         permissions.refresh(root: server.rootURL, dataDir: server.dataDir)
-        // Notifications are the launcher's own ask, and they are on by default,
-        // so get the prompt over with now rather than at the first fault.
-        if settings.notifyOnProblem { permissions.requestNotifications() }
         for need in permissions.needs {
             switch need.kind {
             case .microphone:

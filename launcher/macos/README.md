@@ -78,9 +78,11 @@ it while the server runs restarts it.
 
 ### Permissions
 
-The pane lists what the installed modules declare in their manifests
-(`"permissions": [ … ]` — see [docs/MODULE-GUIDE.md](../../docs/MODULE-GUIDE.md)),
-with the module's own reason:
+One line per permission: a status dot, its name, and the one thing you can do
+about it. What appears is what the installed modules declare in their
+manifests (`"permissions": [ … ]` — see
+[docs/MODULE-GUIDE.md](../../docs/MODULE-GUIDE.md)); hover a row to see which
+module asked, and why.
 
 - **Microphone** — asked for directly, with the status macOS reports.
 - **Local Network** — macOS has no API that reports whether this was granted,
@@ -88,8 +90,9 @@ with the module's own reason:
   services (which is what raises the prompt) and tries every upstream the
   admin page is pointed at, then says what the result means. Nothing
   answering, when the gear is on, means macOS is withholding access.
-- **Notifications** — the launcher's own, for a server that stops while
-  nobody is watching.
+- **Notifications** — the launcher's own, so a server that stops while nobody
+  is watching still reaches someone. Turn them off for ProdDash in System
+  Settings if you'd rather not have them.
 
 On first run the launcher asks for what the modules declare, while someone is
 still at the keyboard, rather than halfway through a service.
@@ -121,7 +124,7 @@ still at the keyboard, rather than halfway through a service.
 | What you see | What it means |
 | --- | --- |
 | "Can't find the ProdDash folder" | Point it at the folder with `server.js` in it, under Settings. |
-| "Node.js 18 or newer isn't installed" | Install Node, or set the path under Settings. A GUI app inherits almost no `PATH`, so a node in an unusual place has to be named. |
+| "Node.js 18 or newer isn't installed" | Install Node. A GUI app inherits almost no `PATH`, so one in an unusual place may not be found — Settings shows which one is in use. |
 | "ProdDash stopped 4 times in two minutes" | The server is failing on startup — the Log tab has its own error. |
 | LTC shows no signal | Permissions tab → Microphone. If it says granted and the input is still silent, the server may be an older copy started outside the launcher — Stop, then Start. |
 | Nothing on the network answers | Permissions tab → **Check Access**. |

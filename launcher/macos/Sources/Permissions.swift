@@ -105,8 +105,6 @@ final class PermissionsModel: ObservableObject {
     @Published private(set) var notifications: UNAuthorizationStatus = .notDetermined
     @Published private(set) var hostChecks: [HostCheck] = []
     @Published private(set) var checking = false
-    /// Plain-language read on local network access, since macOS has no API for it.
-    @Published private(set) var localNetworkVerdict = ""
 
     private var browser: NWBrowser?
 
@@ -160,7 +158,6 @@ final class PermissionsModel: ObservableObject {
         guard !checking else { return }
         var checks = Self.configuredLocalHosts(root: root, dataDir: dataDir)
         checking = true
-        localNetworkVerdict = ""
         for index in checks.indices { checks[index].result = nil }
         hostChecks = checks
         startBonjourBrowse()
@@ -169,8 +166,7 @@ final class PermissionsModel: ObservableObject {
             // Nothing configured yet: the browse alone still raises the prompt.
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
                 self?.checking = false
-                self?.localNetworkVerdict = "No local gear is configured yet. Set up ProdCom or ProPresenter in the "
-                    + "admin page, then check again — approve the prompt if macOS asks."
+                LogStore.shared.launcher("local network check: nothing configured to try yet")
             }
             return
         }
@@ -189,16 +185,15 @@ final class PermissionsModel: ObservableObject {
             self.stopBonjourBrowse()
             let results = self.hostChecks.compactMap(\.result)
             let answered = results.filter(\.isReachableHost).count
+            let verdict: String
             if answered == results.count {
-                self.localNetworkVerdict = "Local network access is working — every configured host answered."
+                verdict = "every configured host answered"
             } else if answered == 0 {
-                self.localNetworkVerdict = "Nothing on this network answered. If the gear is powered on, macOS is "
-                    + "withholding local network access from ProdDash — turn it on in System Settings."
+                verdict = "nothing answered — if the gear is on, macOS is withholding local network access"
             } else {
-                self.localNetworkVerdict = "\(answered) of \(results.count) hosts answered. The rest are probably "
-                    + "off or on another network; a blanket failure would point at the permission."
+                verdict = "\(answered) of \(results.count) hosts answered"
             }
-            LogStore.shared.launcher("local network check: \(self.localNetworkVerdict)")
+            LogStore.shared.launcher("local network check: \(verdict)")
         }
     }
 
