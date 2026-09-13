@@ -822,8 +822,11 @@ module.exports = {
         service.state = 'running';
         service.startedAt = svc.startedAt;
         service.elapsedMs = elapsed;
+        // The live item is the headline; without one (not following
+        // ProPresenter, nothing matched yet) say how far behind, else when
+        // the service began.
         service.status = {
-          text: itemTitle || (behind >= BEHIND_WARN_MS ? `Behind ${fmtDur(behind)}` : ''),
+          text: itemTitle || (behind >= BEHIND_WARN_MS ? `Behind ${fmtDur(behind)}` : `Started ${fmtTime(svc.startedAt)}`),
           tone: serviceTone(elapsed, plannedMs, behind),
         };
         service.detail = [label, itemDetail].filter(Boolean).join(' · ');
@@ -851,11 +854,14 @@ module.exports = {
         currentItem.startedAt = hist.startedAt;
         currentItem.elapsedMs = elapsed;
         currentItem.targetMs = planned || null;
+        // With ProPresenter (or its module) unreachable this is the last item
+        // we knew of — still counting, but muted so the wall says "stale".
+        const stale = !live.available || !live.ppReachable;
         currentItem.status = {
           text: itemTitle,
-          tone: over > planned * 0.25 + 30000 ? 'danger' : over > 0 ? 'warn' : 'ok',
+          tone: stale ? 'muted' : over > planned * 0.25 + 30000 ? 'danger' : over > 0 ? 'warn' : 'ok',
         };
-        currentItem.detail = itemDetail;
+        currentItem.detail = stale ? `${itemDetail} · ProPresenter unreachable` : itemDetail;
       } else {
         currentItem.status = {
           text: !live.following ? 'Not following ProPresenter' : !live.available ? 'ProPresenter feed unavailable' : 'Nothing live',
