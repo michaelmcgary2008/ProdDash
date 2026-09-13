@@ -373,14 +373,17 @@ function mountModule(id) {
     // Re-require fresh config on every (re)mount; the module code itself stays cached.
     const mod = require(serverPath);
     const config = effectiveConfig(id);
+    // What a module needs to reach the rest of ProdDash — another module's
+    // routes over loopback, chiefly — without guessing.
+    const shell = { port: PORT };
     if (typeof mod.init === 'function') {
-      entry.handle = mod.init({ config, log }) || null;
+      entry.handle = mod.init({ config, log, shell }) || null;
     }
     if (typeof mod.routes === 'function') {
-      entry.routes = parseRouteTable(mod.routes({ config, log }));
+      entry.routes = parseRouteTable(mod.routes({ config, log, shell }));
     }
     if (typeof mod.tiles === 'function') {
-      entry.tiles = () => mod.tiles({ config, log });
+      entry.tiles = () => mod.tiles({ config, log, shell });
     }
     log('mounted' + (entry.routes.length ? ` (${entry.routes.length} routes)` : ''));
   } catch (err) {
@@ -510,6 +513,8 @@ async function clientManifest(id) {
     instanceSchema: man.instanceSchema || {},
     instanceGroups: man.instanceGroups && typeof man.instanceGroups === 'object' ? man.instanceGroups : {},
     hasServer: Boolean(man.server),
+    // capabilities other modules consume ("timers") — see the module guide
+    provides: Array.isArray(man.provides) ? man.provides.map(String) : [],
     config: clientConfig(id),
     tiles: await moduleTiles(id),
   };
