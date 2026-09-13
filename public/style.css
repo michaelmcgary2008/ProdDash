@@ -10,6 +10,7 @@
   --text: #e6edf3;
   --muted: #8b98a5;
   --accent: #2ee59a;
+  --accent-text: #06281a; /* text that sits on --accent (buttons, badges) */
   --danger: #f4433c;
   --warn: #f0b429;
   /* grid geometry (shell.js reads these) */
@@ -762,7 +763,7 @@ body.fullscreen #grid { padding-bottom: 0; }
 .btn.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #06281a;
+  color: var(--accent-text);
   font-weight: 600;
 }
 
@@ -866,6 +867,7 @@ html[data-theme="daylight"] {
   --text: #14181f;
   --muted: #5b6675;
   --accent: #0b8a5f;
+  --accent-text: #ffffff; /* dark text drowns on this accent */
   --danger: #d1242f;
   --warn: #b26a00;
 }

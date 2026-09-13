@@ -377,7 +377,9 @@ own in `stop()` anyway.
 
 2. **Style with the shell's CSS variables — no hardcoded colors.** The
    palette: `--bg` (page), `--panel` (tile), `--border`, `--text`,
-   `--muted`, `--accent`, `--danger`, `--warn`. Derive tints with
+   `--muted`, `--accent`, `--accent-text` (text that sits on the accent —
+   dark on most themes, white where the accent is deep), `--danger`,
+   `--warn`. Derive tints with
    `color-mix(in srgb, var(--accent) 20%, transparent)`. This is what makes
    every module look native — and what makes the dashboard's **themes**
    (Admin → Theme) reach into every tile: a theme swaps those variables and
