@@ -22,8 +22,9 @@
    Feedback — the state colours, and the thresholds behind them:
      running elapsed, no planned length            running
      running elapsed with a planned length         warning within
-         WARN_FLOOR_MS or WARN_FRACTION of the length (whichever is larger)
-         of the end; overrun once past it
+         WARN_FLOOR_MS or WARN_FRACTION of the length (whichever is larger,
+         but never more than half the length — a 20 s countdown warns
+         under 10 s, a 25 min one under 2:30) of the end; overrun past it
      running countdown                             warning with that much
          left; overrun at zero and below
      stopped countdown at zero ("complete")        warning
@@ -130,7 +131,8 @@ export function fmtDuration(ms) {
 }
 
 function warnWindow(targetMs) {
-  return targetMs ? Math.max(WARN_FLOOR_MS, targetMs * WARN_FRACTION) : WARN_FLOOR_MS;
+  if (!targetMs) return WARN_FLOOR_MS;
+  return Math.min(Math.max(WARN_FLOOR_MS, targetMs * WARN_FRACTION), targetMs / 2);
 }
 
 /** The state colour for a (non-clock) timer given its current value. */
@@ -242,9 +244,10 @@ export default function create({ root, moduleApi }) {
     label: 'Timers ▾',
     title: 'Choose which timers this tile shows',
     build(menu) {
+      // the shell hands over an emptied element on every open
       menu.classList.add('tm-menu');
       menuEl = menu;
-      rebuildMenu();
+      rebuildMenu(true);
     },
   });
 
@@ -277,11 +280,18 @@ export default function create({ root, moduleApi }) {
     itemsMenu.setLabel(visible === rows.length ? 'Timers ▾' : `Timers (${visible}/${rows.length}) ▾`);
   }
 
-  function rebuildMenu() {
+  let menuSignature = '';
+  function rebuildMenu(force = false) {
     updateMenuLabel();
     if (!menuEl) return; // menu not opened yet — the label is enough
-    menuEl.innerHTML = '';
     const rows = menuRows();
+    // Snapshots arrive several times a second; rebuilding the open menu's
+    // rows each time would replace them under the user's finger. Only a
+    // changed row set (or a toggled switch) is worth touching the DOM for.
+    const signature = JSON.stringify(rows.map((r) => [r.key, r.text, hidden.has(r.key)]));
+    if (!force && signature === menuSignature && menuEl.childElementCount) return;
+    menuSignature = signature;
+    menuEl.innerHTML = '';
     if (!rows.length) {
       const note = document.createElement('div');
       note.className = 'tm-menu-note';
@@ -356,6 +366,9 @@ export default function create({ root, moduleApi }) {
     el.className = 'tm-card';
     const nameEl = document.createElement('div');
     nameEl.className = 'tm-name';
+    const labelEl = document.createElement('span');
+    labelEl.className = 'tm-label';
+    nameEl.appendChild(labelEl);
     const timeEl = document.createElement('div');
     timeEl.className = 'tm-time';
     const statusEl = document.createElement('div');
@@ -363,7 +376,7 @@ export default function create({ root, moduleApi }) {
     const detailEl = document.createElement('div');
     detailEl.className = 'tm-detail';
     el.append(nameEl, timeEl, statusEl, detailEl);
-    return { key: item.key, el, nameEl, timeEl, statusEl, detailEl, item, chars: 5, cls: '' };
+    return { key: item.key, el, nameEl, labelEl, timeEl, statusEl, detailEl, item, chars: 5, cls: '' };
   }
 
   function setText(el, text) {
@@ -380,18 +393,16 @@ export default function create({ root, moduleApi }) {
   function updateCard(card, item) {
     card.item = item;
     const isLtc = item.source?.kind === 'ltc';
-    if (isLtc && !card.nameEl.querySelector('.tm-ltc-badge')) {
-      const badge = document.createElement('span');
-      badge.className = 'tm-ltc-badge';
-      badge.textContent = 'LTC';
-      card.nameEl.replaceChildren(badge, document.createTextNode(''));
-    } else if (!isLtc && card.nameEl.querySelector('.tm-ltc-badge')) {
-      card.nameEl.replaceChildren(document.createTextNode(''));
+    const badge = card.nameEl.querySelector('.tm-ltc-badge');
+    if (isLtc && !badge) {
+      const b = document.createElement('span');
+      b.className = 'tm-ltc-badge';
+      b.textContent = 'LTC';
+      card.nameEl.prepend(b);
+    } else if (!isLtc && badge) {
+      badge.remove();
     }
-    const label = item.missing ? (lastSoloLabel || 'Timer') : item.timer.label;
-    const textNode = card.nameEl.lastChild;
-    if (textNode && textNode.nodeType === Node.TEXT_NODE) setText(textNode, label);
-    else card.nameEl.appendChild(document.createTextNode(label));
+    setText(card.labelEl, item.missing ? (lastSoloLabel || 'Timer') : item.timer.label);
   }
 
   function updateMissingCard(card) {

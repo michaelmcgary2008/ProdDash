@@ -164,8 +164,15 @@
   text-transform: uppercase;
   color: var(--muted);
   white-space: nowrap;
+}
+
+/* The label is its own box so a long name ends in an ellipsis (a flex
+   container's bare text won't). */
+[data-module="propresenter-timers"] .tm-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 [data-module="propresenter-timers"] .tm-time {
@@ -306,7 +313,9 @@
 [data-module="propresenter-timers"] .tm-menu-item .name { font-weight: 600; }
 [data-module="propresenter-timers"] .tm-menu-item:not(.on) .name { color: var(--muted); }
 
-/* A small switch: off = hollow pill, on = filled with the running colour. */
+/* A small switch: off = hollow pill, on = filled with the accent. (The menu
+   hangs off the tile's title bar, outside .tm-wrap, so the tile's own colour
+   properties don't reach it — the shell's palette does.) */
 [data-module="propresenter-timers"] .tm-switch {
   flex: none;
   position: relative;
@@ -329,8 +338,8 @@
   transition: transform 0.15s ease;
 }
 [data-module="propresenter-timers"] .tm-menu-item.on .tm-switch {
-  border-color: var(--tm-ok);
-  background: var(--tm-ok);
+  border-color: var(--accent);
+  background: var(--accent);
 }
 [data-module="propresenter-timers"] .tm-menu-item.on .tm-switch::after {
   transform: translateX(12px);

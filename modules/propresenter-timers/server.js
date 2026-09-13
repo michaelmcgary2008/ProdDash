@@ -402,7 +402,7 @@ function createProPresenterSource({ config, log }) {
       lastError = '';
     } catch (err) {
       reachable = false;
-      lastError = err instanceof Error ? err.message : String(err);
+      lastError = errorText(err); // "ECONNREFUSED" beats fetch's "fetch failed"
     }
     publish();
     if (stopped) return;
@@ -949,11 +949,12 @@ module.exports = {
     function rebuild() {
       if (stopped) return;
       latest = buildState();
-      // updatedAt / serverNow move on every poll; the tiles extrapolate from
-      // them but don't need a frame for that alone.
+      // updatedAt / serverNow move on every poll, and a startedAt derived
+      // from a whole-second value jitters with them; the tiles extrapolate
+      // from the values but don't need a frame for that alone.
       let key;
       try {
-        key = JSON.stringify(latest.sources.map((v) => [v.id, v.label, v.status, v.message, v.timers]));
+        key = JSON.stringify(latest.sources.map((v) => [v.id, v.label, v.status, v.message, v.timers.map(({ startedAt, ...rest }) => rest)]));
       } catch {
         return;
       }
