@@ -295,12 +295,15 @@ details.field-group > summary.field-group-title:hover { color: var(--text); }
 }
 .field.switch-field .switch-label { font-size: 13px; }
 
+/* status on the left, Apply on the right */
 .module-actions {
   display: flex;
   align-items: center;
   gap: 10px;
   margin-top: 4px;
 }
+.module-actions .admin-status { flex: 1; margin-top: 0; }
+.module-actions .btn { margin-left: auto; }
 
 .admin-status { min-height: 16px; font-size: 12px; color: var(--muted); margin-top: 8px; }
 .admin-status.error { color: var(--danger); }

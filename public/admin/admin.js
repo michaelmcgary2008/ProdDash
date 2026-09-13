@@ -586,10 +586,10 @@ function buildModuleCard(mod) {
     actions.className = 'module-actions';
     const save = document.createElement('button');
     save.className = 'btn primary';
-    save.textContent = 'Save & re-init';
+    save.textContent = 'Apply';
     const status = document.createElement('span');
     status.className = 'admin-status';
-    actions.append(save, status);
+    actions.append(status, save);
     form.appendChild(actions);
     card.appendChild(form);
 
@@ -597,14 +597,14 @@ function buildModuleCard(mod) {
       const config = {};
       for (const [key, read] of readers) config[key] = read();
       save.disabled = true;
-      status.textContent = 'Saving…';
+      status.textContent = 'Applying…';
       status.className = 'admin-status';
       try {
         await api(`/api/admin/modules/${encodeURIComponent(mod.id)}/config`, {
           method: 'PUT',
           body: JSON.stringify({ config }),
         });
-        status.textContent = 'Saved — module re-initialised. Open tiles reconnect on their own.';
+        status.textContent = 'Applied — module re-initialised. Open tiles reconnect on their own.';
         status.className = 'admin-status ok';
         refreshStatus();
         // What the module can list may have changed (credentials just
