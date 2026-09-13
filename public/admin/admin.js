@@ -585,15 +585,37 @@ function buildModuleCard(mod) {
     const actions = document.createElement('div');
     actions.className = 'module-actions';
     const save = document.createElement('button');
-    save.className = 'btn primary';
-    save.textContent = 'Apply';
     const status = document.createElement('span');
     status.className = 'admin-status';
     actions.append(status, save);
-    form.appendChild(actions);
+    // A card is a status line until someone wants to change something: the
+    // form starts folded, and the row at the bottom holds one button that
+    // does both jobs — "Configure" opens the form and becomes "Apply", which
+    // saves without closing it. The name is the other way in and out.
     card.appendChild(form);
+    card.appendChild(actions);
+    const openKey = 'proddash:admin:open:' + mod.id;
+    const setOpen = (open) => {
+      form.hidden = !open;
+      status.hidden = !open;
+      save.textContent = open ? 'Apply' : 'Configure';
+      save.className = open ? 'btn primary' : 'btn';
+      try { sessionStorage.setItem(openKey, open ? '1' : '0'); } catch { /* fine */ }
+    };
+    let wasOpen = false;
+    try { wasOpen = sessionStorage.getItem(openKey) === '1'; } catch { /* fine */ }
+    setOpen(wasOpen);
+    name.classList.add('is-toggle');
+    name.title = 'Show or hide this module\'s settings';
+    name.tabIndex = 0;
+    name.setAttribute('role', 'button');
+    name.addEventListener('click', () => setOpen(form.hidden));
+    name.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(form.hidden); }
+    });
 
     save.addEventListener('click', async () => {
+      if (form.hidden) return setOpen(true);
       const config = {};
       for (const [key, read] of readers) config[key] = read();
       save.disabled = true;

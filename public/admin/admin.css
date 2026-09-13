@@ -295,13 +295,16 @@ details.field-group > summary.field-group-title:hover { color: var(--text); }
 }
 .field.switch-field .switch-label { font-size: 13px; }
 
-/* status on the left, Apply on the right */
+/* the card's one action row: status on the left, Configure / Apply on the right */
 .module-actions {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-top: 4px;
+  margin-top: 10px;
 }
+.module-name.is-toggle { cursor: pointer; }
+.module-name.is-toggle:hover,
+.module-name.is-toggle:focus-visible { color: var(--accent); outline: none; }
 .module-actions .admin-status { flex: 1; margin-top: 0; }
 .module-actions .btn { margin-left: auto; }
 
