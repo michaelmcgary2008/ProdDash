@@ -589,12 +589,15 @@ body.fullscreen #grid { padding-bottom: 0; }
 .tile-settings details.field-group[open] > summary.field-group-title::before { transform: rotate(90deg); }
 .tile-settings details.field-group[open] > summary.field-group-title { margin-bottom: 8px; }
 .tile-settings .field-group .field:last-child { margin-bottom: 0; }
+/* Settings apply as they change, so nothing sits under the last field — its
+   bottom margin would only pad the popover's own padding a second time. */
+.tile-settings > :last-child { margin-bottom: 0; }
 .tile-settings .field-group-body.is-columns {
   display: grid;
   grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr));
-  gap: 3px 14px;
+  gap: 6px 14px; /* the grid gap is the whole row spacing: no per-field margin */
 }
-.tile-settings .field-group-body.is-columns .field { margin-bottom: 3px; }
+.tile-settings .field-group-body.is-columns .field { margin-bottom: 0; }
 .tile-settings .field-group-body.is-columns .field-group-help { grid-column: 1 / -1; }
 @container (max-width: 420px) {
   .tile-settings .field-group-body.is-columns { grid-template-columns: 1fr 1fr; }
@@ -636,14 +639,64 @@ body.fullscreen #grid { padding-bottom: 0; }
   outline: none;
   border-color: var(--accent);
 }
+/* boolean / switch settings: label on the left, switch on the right (help,
+   when there is any, wraps under both) */
 .field.check {
   flex-direction: row;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 4px 10px;
   color: var(--text);
   cursor: pointer;
 }
-.field.check input { width: 15px; height: 15px; accent-color: var(--accent); }
+.field.check .check-label { flex: 1 1 0; min-width: 0; }
+.field.check .field-help { flex-basis: 100%; }
+
+/* The switch: the admin page's module switch, same track, knob and colours,
+   so a toggle reads the same on both surfaces. On = shown/enabled (accent),
+   off = hidden/disabled (border track, muted knob). The real checkbox lies
+   invisibly over the track — still focusable, so Tab reaches it and Space
+   flips it — and the label around it makes the text clickable too. */
+.switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  cursor: pointer;
+}
+.switch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.switch .track {
+  display: block;
+  position: relative;
+  width: 34px;
+  height: 19px;
+  border-radius: 999px;
+  background: var(--border);
+  transition: background 0.2s;
+}
+.switch .track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.2s, background 0.2s;
+}
+.switch input:checked + .track { background: var(--accent); }
+.switch input:checked + .track::after { transform: translateX(15px); background: var(--bg); }
+.switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* color fields: label on the left, swatch on the right */
 .field.color-field {

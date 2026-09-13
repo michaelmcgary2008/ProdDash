@@ -1176,14 +1176,26 @@ function toggleSettingsPopover(tile, el) {
       }
     }
 
+    const isSwitch = type === 'boolean' || type === 'switch';
     const field = document.createElement('label');
-    field.className = 'field' + (type === 'boolean' ? ' check' : '');
+    field.className = 'field' + (isSwitch ? ' check' : '');
 
-    if (type === 'boolean') {
+    if (isSwitch) {
+      // A switch: on is shown/enabled, off is hidden/disabled — the label
+      // names what it turns on. A real checkbox stays underneath (keyboard,
+      // label clicks and `change` all keep working); the track is the look.
+      const text = document.createElement('span');
+      text.className = 'check-label';
+      text.textContent = label;
+      const toggle = document.createElement('span');
+      toggle.className = 'switch';
       const input = document.createElement('input');
       input.type = 'checkbox';
       input.checked = Boolean(current);
-      field.append(input, document.createTextNode(label));
+      const track = document.createElement('span');
+      track.className = 'track';
+      toggle.append(input, track);
+      field.append(text, toggle);
       inputs.set(key, () => input.checked);
       live(input);
     } else if (type === 'select' && Array.isArray(spec.options)) {
