@@ -546,6 +546,60 @@ setInterval(() => {
   }
 }, 25000).unref();
 
+/* ── themes ─────────────────────────────────────────────────────────── */
+
+/* Preset palettes for the whole dashboard, chosen in Admin → Theme. The
+   variable sets themselves live in public/style.css (html[data-theme="…"]);
+   this list is the one authority on ids and names, and carries the three
+   colours the admin page previews a theme with. The choice is a shell
+   setting — `theme` in the data directory's proddash.json — and reaches open
+   dashboards live as a `theme` shell event. */
+const THEMES = [
+  { id: 'booth',    name: 'Booth',    colors: { bg: '#0b0e12', panel: '#131920', accent: '#2ee59a' } },
+  { id: 'harbor',   name: 'Harbor',   colors: { bg: '#06101f', panel: '#0c1a30', accent: '#2ad4ee' } },
+  { id: 'graphite', name: 'Graphite', colors: { bg: '#0f1012', panel: '#17191d', accent: '#6cb4ff' } },
+  { id: 'ember',    name: 'Ember',    colors: { bg: '#120c0a', panel: '#1d1411', accent: '#ff8f3a' } },
+  { id: 'daylight', name: 'Daylight', colors: { bg: '#eef1f5', panel: '#ffffff', accent: '#0b8a5f' } },
+];
+const DEFAULT_THEME = THEMES[0].id;
+
+function themeExists(id) {
+  return THEMES.some((t) => t.id === id);
+}
+
+let currentTheme = themeExists(shellConfig.theme) ? shellConfig.theme : DEFAULT_THEME;
+
+/** What GET /api/theme returns — public, since dashboards need it before anyone logs in. */
+function themeView() {
+  return {
+    theme: currentTheme,
+    themes: THEMES.map((t) => ({ id: t.id, name: t.name, colors: { ...t.colors } })),
+  };
+}
+
+/**
+ * Persist the theme into this machine's proddash.json (every other key there
+ * — port, adminPasscode, repo… — is kept), remember it, and tell every open
+ * dashboard and admin page. Throws an httpError for an unknown id or an
+ * unreadable settings file; the route turns that into the response.
+ */
+function setTheme(id) {
+  if (!themeExists(id)) throw httpError(400, `Unknown theme "${id}".`);
+  const file = path.join(DATA_DIR, 'proddash.json');
+  let existing = {};
+  if (fs.existsSync(file)) {
+    existing = readJson(file, null);
+    if (!existing || typeof existing !== 'object' || Array.isArray(existing)) {
+      throw httpError(500, `${file} is not a JSON object — fix it by hand before changing the theme.`);
+    }
+  }
+  writeJson(file, { ...existing, theme: id });
+  currentTheme = id;
+  shellConfig.theme = id;
+  broadcastShellEvent('theme', { theme: id });
+  return themeView();
+}
+
 /* ── the repo: module catalog and shell updates ──────────────────────── */
 
 /* The admin page installs modules from, and updates the shell against, the
@@ -1114,6 +1168,22 @@ async function handleAdminApi(req, res, urlPath) {
     return sendJson(res, 200, { ok: true, module: adminModuleView(id) });
   }
 
+  /* — theme: { "theme": "<id>" }, validated against THEMES — */
+  if (urlPath === '/api/admin/theme' && req.method === 'POST') {
+    if (refuseAdminWrite(req, res)) return;
+    let body = {};
+    try {
+      body = JSON.parse((await readBody(req)) || '{}');
+    } catch {
+      return sendJson(res, 400, { error: 'Malformed request.' });
+    }
+    try {
+      return sendJson(res, 200, { ok: true, ...setTheme(String(body.theme ?? '')) });
+    } catch (err) {
+      return sendJson(res, err.status || 500, { error: err.message || String(err) });
+    }
+  }
+
   sendJson(res, 404, { error: 'Unknown admin endpoint.' });
 }
 
@@ -1355,6 +1425,11 @@ function handleRequest(req, res) {
         if (!res.headersSent) sendJson(res, 500, { error: 'Server error.' });
       });
     return;
+  }
+
+  /* — theme: public (dashboards need it without a passcode); changed via POST /api/admin/theme — */
+  if (urlPath === '/api/theme' && req.method === 'GET') {
+    return sendJson(res, 200, themeView());
   }
 
   /* — shell events: open dashboards learn about admin changes live — */

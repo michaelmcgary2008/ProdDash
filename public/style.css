@@ -756,3 +756,63 @@ body.fullscreen #grid { padding-bottom: 0; }
 @media (max-width: 560px) {
   #topbar { padding: 0 8px; gap: 6px; }
 }
+
+/* ── themes ────────────────────────────────────────────────────────── */
+
+/* Preset palettes, chosen in Admin → Theme and applied by shell.js (and the
+   admin page) as html[data-theme="…"]. Each swaps exactly the eight palette
+   variables the module guide names — nothing else — so every module and
+   every shell element follows, and a colour a tile is configured with (set
+   on the tile itself) still wins. The :root block at the top of this file is
+   "booth", the default; the list of ids and names lives in server.js
+   (GET /api/theme). All four are booth-grade: high contrast, the accent
+   nowhere near the danger red or the warning amber, muted still readable. */
+
+/* Harbor — deep navy, cyan accent */
+html[data-theme="harbor"] {
+  --bg: #06101f;
+  --panel: #0c1a30;
+  --border: #1a2b48;
+  --text: #e6eefb;
+  --muted: #8ea4c8;
+  --accent: #2ad4ee;
+  --danger: #ff5a5f;
+  --warn: #f7b53b;
+}
+
+/* Graphite — neutral charcoal, electric-blue accent */
+html[data-theme="graphite"] {
+  --bg: #0f1012;
+  --panel: #17191d;
+  --border: #2a2d33;
+  --text: #f0f2f4;
+  --muted: #9ca3ad;
+  --accent: #6cb4ff;
+  --danger: #ff4d4f;
+  --warn: #ffb224;
+}
+
+/* Ember — warm broadcast black, orange accent (danger stays a cool red,
+   warn a pale yellow, so the three status colours never blur) */
+html[data-theme="ember"] {
+  --bg: #120c0a;
+  --panel: #1d1411;
+  --border: #35251e;
+  --text: #f6ede6;
+  --muted: #b39b8c;
+  --accent: #ff8f3a;
+  --danger: #f03247;
+  --warn: #ffd86b;
+}
+
+/* Daylight — the light one, for a front-of-house desk in daytime */
+html[data-theme="daylight"] {
+  --bg: #eef1f5;
+  --panel: #ffffff;
+  --border: #cfd6e0;
+  --text: #14181f;
+  --muted: #5b6675;
+  --accent: #0b8a5f;
+  --danger: #d1242f;
+  --warn: #b26a00;
+}
