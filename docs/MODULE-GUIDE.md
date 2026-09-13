@@ -92,6 +92,7 @@ the app); its settings are kept for a later reinstall.
 | `proddash` | yes | The ProdDash versions this module works with: `">=1.1.0"`, `"^1.1.0"`, `">=1.1.0 <2.0.0"`, or `"*"`. A module whose requirement the running shell doesn't meet is listed in the admin page but never loaded, and can't be installed from the catalog. |
 | `description` | no | Shown in the admin page / picker. |
 | `permissions` | no | What macOS must allow before this module can work — see **Permissions macOS has to grant**. Ignored by the shell; read by the macOS launcher. |
+| `provides` | no | Capabilities other modules can consume — `["timers"]` today. Forwarded in `/api/modules` so a consumer can find you. See **Working with other modules**. |
 | `client` | yes | Client entry file, loaded as an ES module. |
 | `server` | no | Server entry file (CommonJS), loaded with `require()`. |
 | `style` | no | A stylesheet the shell injects once per module. |
@@ -115,8 +116,13 @@ Both schemas map field names to specs:
 }
 ```
 
-`boolean` renders as a checkbox; `switch` is the same true/false value shown
-as a toggle (use it for a feature on/off that other fields depend on).
+`boolean` and `switch` are the same true/false value. In a tile's gear popover
+both render as a switch; in the admin page `switch` is the toggle and
+`boolean` the plainer checkbox (use `switch` for a feature on/off that other
+fields depend on). **Label a switch with the noun of what it turns on** —
+"Seconds", "Top bar", "Section headers" — never "Show seconds": on means
+shown or enabled, off means hidden or disabled, and the label shouldn't say
+so twice.
 `color` renders a swatch picker and stores a `#rrggbb` string (give it a hex
 default; the tile applies it as a CSS custom property — see `pco-plan`).
 
@@ -141,7 +147,15 @@ the group name:
   still empty. Omit it and the group is a plain, always-open block.
 - `columns`: 2–4 lays the group's fields out in a grid — the way to keep a
   long checklist of booleans compact.
-- `help`: a line of guidance at the top of the group.
+- `help`: guidance for the whole group. The admin page shows it as an
+  ⓘ beside the group title (click or hover to read), so a group can carry a
+  paragraph without pushing its fields down the page. Say where a value comes
+  from, not what a field is.
+- `toggle`: the key of a `switch` field in this group. It renders in the
+  group's title row, at the right, as the group's on/off; the rest of the group
+  dims while it is off, and the field is not repeated in the body. This is how
+  an integration is disabled without unmounting the module — ProPresenter
+  timers, say, on a Sunday when ProPresenter isn't running.
 
 `help` on a field puts one line of guidance under its control — allowed
 placeholders, where a value comes from. Keep labels short and put the
@@ -365,7 +379,11 @@ own in `stop()` anyway.
    palette: `--bg` (page), `--panel` (tile), `--border`, `--text`,
    `--muted`, `--accent`, `--danger`, `--warn`. Derive tints with
    `color-mix(in srgb, var(--accent) 20%, transparent)`. This is what makes
-   every module look native on the dark, high-contrast booth theme.
+   every module look native — and what makes the dashboard's **themes**
+   (Admin → Theme) reach into every tile: a theme swaps those variables and
+   nothing else. A colour a tile is configured with (a `color` instance
+   setting, applied as a custom property on the tile) is set closer than the
+   theme and wins over it, by design.
 
 3. **No external network calls from the client.** Browsers talk only to
    ProdDash. Anything upstream (your device, service, API) goes through your
@@ -385,7 +403,7 @@ ethos; Node 18+ so global `fetch` is available). Exports either or both of:
 
 ```js
 module.exports = {
-  init({ config, log }) {
+  init({ config, log, shell }) {
     // Called on startup / re-init, BEFORE routes(). Start your upstream
     // connection here. Return a handle:
     return {
@@ -394,7 +412,7 @@ module.exports = {
     };
   },
 
-  routes({ config, log }) {
+  routes({ config, log, shell }) {
     // Route table, mounted under /api/modules/<id>/
     return {
       'GET /state':     (req, res) => { … },
@@ -410,6 +428,9 @@ module.exports = {
 - `config` is your admin config: `configSchema` defaults overlaid with what
   the admin page saved — **including password fields**.
 - `log(...)` prefixes output with your module id.
+- `shell.port` is the port ProdDash is serving on — what you need to read
+  another module's routes over loopback (`http://127.0.0.1:${shell.port}/api/
+  modules/<id>/…`). Never guess it.
 - Handlers get plain Node `(req, res)`. On a prefix route, `req.wildcard` is
   the matched remainder (leading `/` included) and `req.search` is the query
   string (with `?`, or `''`) — so a proxy rebuilds the upstream path as
@@ -495,6 +516,71 @@ comment every ~15 s so idle connections survive sleepy Wi-Fi, and wrap every
 per-client `res.write` in try/catch (drop the client on failure). The
 `propresenter-now-next` module is the reference implementation of this
 pattern.
+
+## Working with other modules
+
+Modules don't import each other. When one needs what another knows, it reads
+that module's **own server routes over loopback**, exactly as a browser would:
+`http://127.0.0.1:${shell.port}/api/modules/<id>/…`. The PCO Plan module
+follows ProPresenter this way — it reads `propresenter-now-next`'s `/stream`
+rather than talking to ProPresenter a second time. A consumer must survive the
+provider being disabled, uninstalled, or restarting mid-service (404s and
+dropped connections are normal; retry with backoff and say so in `health()`).
+
+### Offering timers to the Timers module
+
+The Timers module shows timers from anywhere: ProPresenter, LTC, its own
+clock, and any module that offers some. A module offers timers by:
+
+1. Declaring it — `"provides": ["timers"]` in `module.json`. The shell
+   forwards `provides` in `/api/modules`, which is how the Timers module finds
+   providers without a list anyone maintains.
+2. Serving `GET /timers` from its server routes, returning a snapshot:
+
+```json
+{
+  "source": "pco-plan",
+  "label": "PCO Plan",
+  "updatedAt": 1757800000000,
+  "timers": [
+    {
+      "id": "service",
+      "label": "Service",
+      "kind": "elapsed",
+      "state": "running",
+      "startedAt": 1757799000000,
+      "elapsedMs": 1000000,
+      "remainingMs": null,
+      "targetMs": 4500000,
+      "status": { "text": "Welcome & Announcements", "tone": "ok" },
+      "detail": "Item 3 of 12"
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `source`, `label` | Your module id, and the heading the Timers module puts over your timers. |
+| `updatedAt` | ms since epoch when this snapshot was taken. Every duration below is *as of this instant*. |
+| `id` | Stable within your module — the Timers module keys tile settings (shown/hidden, colours) on `source` + `id`. |
+| `kind` | `elapsed` (counts up), `countdown` (counts down to zero), `clock` (a time of day; put the ISO time in `status.text`). |
+| `state` | `running`, `paused`, `stopped` (finished; value frozen), `idle` (exists, hasn't started — a timer that will start at 11:00). |
+| `startedAt` | ms epoch when it last started running; the consumer extrapolates from here, so a running timer never needs a fast poll. |
+| `elapsedMs`, `remainingMs` | The values at `updatedAt`; `null` when not meaningful for the kind. |
+| `targetMs` | Planned length (elapsed) or full length (countdown), or `null`. Lets the consumer colour overruns. |
+| `status` | Optional one-liner the consumer shows beside the time — the current item, "ahead 1:20". `tone`: `ok`, `warn`, `danger`, `muted`. |
+| `detail` | Optional second line. |
+
+The consumer derives the displayed time locally from `startedAt`/`elapsedMs`
+and its own clock, so a snapshot every couple of seconds is plenty — `/timers`
+must be cheap to answer (serve from state you already hold; never call
+upstream to answer it). Optionally also serve `GET /timers/stream` as SSE
+(`event: timers`, `data:` the same object, on every change plus a heartbeat
+comment every 15 s); the consumer uses the stream when it exists and polls
+`/timers` otherwise. Only offer timers a production tech would want on a
+wall — the Timers module lets them hide any of them per tile, but every entry
+you add is a decision someone has to make.
 
 ## Complete minimal example
 
