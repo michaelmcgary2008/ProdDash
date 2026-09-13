@@ -677,7 +677,7 @@ async function refreshStatus() {
   }
 }
 
-/* ── named layouts ──────────────────────────────────────────────────── */
+/* ── saved layouts ──────────────────────────────────────────────────── */
 
 async function loadLayouts() {
   let body;
@@ -693,7 +693,7 @@ async function loadLayouts() {
   if (!layouts.length) {
     const none = document.createElement('div');
     none.className = 'layouts-empty';
-    none.textContent = 'No named layouts saved yet. Save one from the dashboard’s Layout menu.';
+    none.textContent = 'No layouts saved yet. Save one from the dashboard’s Layout menu.';
     layoutsList.appendChild(none);
     return;
   }
