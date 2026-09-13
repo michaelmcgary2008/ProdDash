@@ -1627,6 +1627,7 @@ function subscribeEvents() {
   try { eventsSource?.close(); } catch { /* not open */ }
   eventsSource = new EventSource('/api/events');
   eventsSource.addEventListener('modules-changed', () => handleModulesChanged());
+  eventsSource.addEventListener('theme', handleThemeEvent);
   eventsSource.onerror = () => {
     if (eventsSource.readyState === EventSource.CLOSED) {
       clearTimeout(eventsRetry);
@@ -1662,6 +1663,43 @@ async function handleModulesChanged() {
     }
   }
 }
+
+/* ── theme ──────────────────────────────────────────────────────────── */
+
+/* The dashboard's palette is a server-wide choice (Admin → Theme). Five
+   preset variable sets live in style.css as html[data-theme="…"]; applying
+   one is setting that attribute. The last-known theme goes on synchronously
+   from localStorage so a reload never flashes the default palette, then the
+   server's answer (GET /api/theme) wins, and a `theme` shell event on
+   /api/events switches every open dashboard the moment an admin picks
+   another. Modules style with the shell variables, so they follow; a colour
+   a tile is configured with is set on the tile itself and stays as chosen. */
+
+const LS_THEME = 'proddash:theme';
+
+function applyTheme(id) {
+  const theme = String(id || '');
+  if (!/^[a-z][a-z0-9-]{0,31}$/.test(theme)) return;
+  document.documentElement.dataset.theme = theme;
+  try { localStorage.setItem(LS_THEME, theme); } catch { /* private mode — fine */ }
+}
+
+/** `theme` shell event from /api/events (wired in subscribeEvents). */
+function handleThemeEvent(e) {
+  try {
+    applyTheme(JSON.parse(e.data).theme);
+  } catch { /* a malformed frame changes nothing */ }
+}
+
+function initTheme() {
+  try { applyTheme(localStorage.getItem(LS_THEME)); } catch { /* fine */ }
+  fetch('/api/theme', { cache: 'no-store' })
+    .then((res) => (res.ok ? res.json() : null))
+    .then((body) => { if (body?.theme) applyTheme(body.theme); })
+    .catch(() => { /* offline: the remembered theme stands */ });
+}
+
+initTheme();
 
 /* ── boot ───────────────────────────────────────────────────────────── */
 
