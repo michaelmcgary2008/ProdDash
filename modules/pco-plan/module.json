@@ -1,9 +1,10 @@
 {
   "id": "pco-plan",
   "name": "PCO Plan",
-  "version": "1.3.0",
-  "proddash": ">=1.3.0",
-  "description": "Order of service from Planning Center Services, following ProPresenter live",
+  "version": "1.4.0",
+  "proddash": ">=1.4.0",
+  "description": "Order of service from Planning Center Services",
+  "provides": ["timers"],
   "client": "client.js",
   "server": "server.js",
   "style": "style.css",
@@ -12,13 +13,16 @@
   "configGroups": {
     "Planning Center credentials": {
       "collapsed": "whenSet",
-      "help": "Create a Personal Access Token at api.planningcenteronline.com (Application ID + Secret), or paste an OAuth 2.0 access token instead. Saved secrets never reach browsers."
+      "help": "Create a Personal Access Token at api.planningcenteronline.com and paste its Client ID + Secret here, or paste an OAuth 2.0 access token instead. Saved secrets never reach browsers."
+    },
+    "Service timing": {
+      "help": "A plan's services (9:00, 11:00…) take turns owning the service clock: the next one takes over Pre-roll minutes before its scheduled start, once the previous one has ended or was due to end, and the elapsed clock, item timing and countdown start afresh for it. A service starts at its scheduled time unless Service start is set to a ProPresenter document — then it starts the moment that document goes live in ProPresenter (the document that opens the service; from Pre-roll before the scheduled start), falling back to the scheduled time if the document has not appeared Start failsafe minutes after it. It ends when the End document goes live (the document that closes the service — a post-service loop, say), or, without one, when the next service takes over or an hour after the last one's scheduled end. Documents are matched by name the way plan items are, so a renamed \"Post-Service Loop\" still counts as \"Post Service Loop\". The document lists hold what the ProPresenter module has shown or listed since ProdDash started plus what is saved here; a saved name stays selectable even when ProPresenter is off."
     }
   },
   "configSchema": {
     "appId": {
       "type": "string",
-      "label": "Application ID",
+      "label": "Client ID",
       "default": "",
       "group": "Planning Center credentials"
     },
@@ -30,7 +34,7 @@
     },
     "accessToken": {
       "type": "password",
-      "label": "OAuth 2.0 access token (instead of Application ID + Secret)",
+      "label": "OAuth 2.0 access token (instead of Client ID + Secret)",
       "default": "",
       "group": "Planning Center credentials"
     },
@@ -38,8 +42,7 @@
       "type": "select",
       "label": "Service type",
       "default": "",
-      "optionsRoute": "/service-types",
-      "help": "Your Planning Center Services folders appear as groups in this list; pick the service type whose plans the tiles follow. Save the credentials first if the list is empty."
+      "optionsRoute": "/service-types"
     },
     "planId": {
       "type": "select",
@@ -47,18 +50,67 @@
       "default": "",
       "options": [{ "value": "", "label": "Automatic — today's plan, else the next upcoming" }],
       "optionsRoute": "/plans",
-      "optionsDependsOn": "serviceTypeId",
-      "help": "Leave on Automatic for services. Pin a specific plan for rehearsals or to review a past service."
+      "optionsDependsOn": "serviceTypeId"
     },
     "pollSeconds": {
       "type": "number",
-      "label": "Re-read the plan every N seconds",
+      "label": "Refresh Interval (s)",
       "default": 30
     },
     "followProPresenter": {
       "type": "switch",
-      "label": "Follow the ProPresenter module's live item to highlight the current plan item and time it",
+      "label": "Follow ProPresenter Module",
       "default": true
+    },
+    "preRollMinutes": {
+      "type": "number",
+      "label": "Pre-roll (min)",
+      "default": 30,
+      "group": "Service timing",
+      "help": "How long before a service's scheduled start the clock, item timing and countdown switch to it."
+    },
+    "useDocumentTriggers": {
+      "type": "switch",
+      "label": "ProPresenter document triggers",
+      "default": false,
+      "group": "Service timing"
+    },
+    "serviceStartTrigger": {
+      "type": "select",
+      "label": "Service start",
+      "default": "schedule",
+      "group": "Service timing",
+      "showWhen": "useDocumentTriggers",
+      "options": [
+        { "value": "schedule", "label": "Scheduled service time" },
+        { "value": "document", "label": "ProPresenter document" }
+      ]
+    },
+    "serviceStartDocument": {
+      "type": "select",
+      "label": "Start document",
+      "default": "",
+      "group": "Service timing",
+      "showWhen": "useDocumentTriggers",
+      "optionsRoute": "/documents",
+      "help": "The document that goes live as the service begins."
+    },
+    "startGraceMinutes": {
+      "type": "number",
+      "label": "Start failsafe (min)",
+      "default": 10,
+      "group": "Service timing",
+      "showWhen": "useDocumentTriggers",
+      "help": "Without the start document this long after the scheduled start, the service counts from the scheduled start anyway."
+    },
+    "serviceEndDocument": {
+      "type": "select",
+      "label": "End document",
+      "default": "",
+      "group": "Service timing",
+      "showWhen": "useDocumentTriggers",
+      "optionsRoute": "/documents",
+      "help": "The document that goes live as the service ends; it freezes the service clock."
     }
   },
   "instanceGroups": {
@@ -72,7 +124,7 @@
     "Show / hide": {
       "collapsed": true,
       "columns": 3,
-      "help": "Untick anything this tile should not show."
+      "help": "Switch off anything this tile should not show."
     }
   },
   "instanceSchema": {
