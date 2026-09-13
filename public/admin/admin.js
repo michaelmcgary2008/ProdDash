@@ -600,6 +600,10 @@ function buildModuleCard(mod) {
       status.hidden = !open;
       save.textContent = open ? 'Apply' : 'Configure';
       save.className = open ? 'btn primary' : 'btn';
+      // Folded, the readout shares the bottom row with Configure instead of
+      // taking a line of its own; open, it goes back above the form.
+      if (open) card.insertBefore(healthEl, mountError);
+      else actions.insertBefore(healthEl, status);
       try { sessionStorage.setItem(openKey, open ? '1' : '0'); } catch { /* fine */ }
     };
     let wasOpen = false;
