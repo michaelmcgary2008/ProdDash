@@ -1,11 +1,16 @@
-/* ProPresenter Timers module — scoped to its tiles, shell variables only.
-   The API exposes no per-timer color, so a card's color IS its state:
-   accent = running, muted = stopped, warn = complete, danger = overrun.
-   Overrun must be unmistakable at a distance — danger fill + pulse. */
+/* Timers module — scoped to its tiles, shell variables only.
+   A card's colour IS its state: running / warning / overrun / idle. The four
+   tones are custom properties on the tile root: they default to the shell's
+   palette (so a dashboard theme reaches them) and the tile's own colour
+   settings, when changed, are set inline on .tm-wrap and win — the
+   documented mechanism. Overrun must be unmistakable across the room:
+   danger fill + pulse. */
 
 [data-module="propresenter-timers"] .tm-wrap {
-  --tm-time-size: 32px;
-  --tm-ltc-size: 26px;
+  --tm-ok: var(--accent);
+  --tm-warn: var(--warn);
+  --tm-danger: var(--danger);
+  --tm-muted: var(--muted);
   --tm-meta-size: 11px;
   position: absolute;
   inset: 0;
@@ -15,7 +20,7 @@
   -webkit-user-select: none;
 }
 
-/* ── degraded-state banner (feed lost / ProPresenter unreachable) ── */
+/* ── degraded-state banner (the ProdDash feed itself is down) ── */
 
 [data-module="propresenter-timers"] .tm-banner {
   flex: none;
@@ -30,12 +35,11 @@
 }
 [data-module="propresenter-timers"] .tm-banner[hidden] { display: none; }
 
-/* Values still on screen while the feed is down are stale — say so visually.
-   Per-card, because the reader-fed LTC card is not stale when only
-   ProPresenter is unreachable; it dims only when the ProdDash feed itself
-   is down (is-feed-down) and everything on screen really is old. */
-[data-module="propresenter-timers"] .tm-wrap.is-stale .tm-card { opacity: 0.45; }
-[data-module="propresenter-timers"] .tm-wrap.is-stale:not(.is-feed-down) .tm-card-ltc.src-reader { opacity: 1; }
+/* Values still on screen while their source is down are stale — say so
+   visually, per group: the LTC card keeps ticking when only ProPresenter
+   is unreachable. When the ProdDash feed is down everything is old. */
+[data-module="propresenter-timers"] .tm-group.is-stale .tm-card,
+[data-module="propresenter-timers"] .tm-wrap.is-feed-down .tm-card { opacity: 0.45; }
 
 [data-module="propresenter-timers"] .tm-hint {
   flex: 1;
@@ -49,7 +53,69 @@
 }
 [data-module="propresenter-timers"] .tm-hint[hidden] { display: none; }
 
-/* ── card grid (column count set by client.js fit()) ── */
+/* ── source groups: heading + card grid (column count set by fit()) ── */
+
+[data-module="propresenter-timers"] .tm-groups {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--tm-gap, 8px);
+  padding: var(--tm-pad, 10px);
+}
+[data-module="propresenter-timers"] .tm-groups[hidden] { display: none; }
+
+[data-module="propresenter-timers"] .tm-group {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+}
+
+[data-module="propresenter-timers"] .tm-head {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  margin: 0 2px 4px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--muted);
+}
+[data-module="propresenter-timers"] .tm-head[hidden] { display: none; }
+
+[data-module="propresenter-timers"] .tm-title {
+  flex: none;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* The source's own word while it isn't OK ("Unreachable at …"). */
+[data-module="propresenter-timers"] .tm-note {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+[data-module="propresenter-timers"] .tm-group.is-down .tm-note { color: var(--tm-warn); }
+[data-module="propresenter-timers"] .tm-group.is-stale .tm-note { color: var(--tm-danger); }
+
+/* Headings off: a source in trouble, or with nothing to show, still says so. */
+[data-module="propresenter-timers"] .tm-empty {
+  flex: none;
+  padding: 2px 4px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+[data-module="propresenter-timers"] .tm-empty[hidden] { display: none; }
+[data-module="propresenter-timers"] .tm-group.is-down .tm-empty { color: var(--tm-warn); }
 
 [data-module="propresenter-timers"] .tm-grid {
   flex: 1;
@@ -57,16 +123,16 @@
   display: grid;
   grid-auto-rows: 1fr;
   gap: var(--tm-gap, 8px);
-  padding: var(--tm-pad, 10px);
 }
-[data-module="propresenter-timers"] .tm-grid[hidden] { display: none; }
+[data-module="propresenter-timers"] .tm-grid:empty { display: none; }
 
-/* Compact cards (short tiles): the state line goes, its color stays.
-   The one exception is the LTC card with no timecode API behind it —
-   that message must never be hidden. */
-[data-module="propresenter-timers"] .tm-compact .tm-card .tm-state { display: none; }
-[data-module="propresenter-timers"] .tm-compact .tm-card-ltc.is-ltc-unavailable .tm-state { display: block; }
-[data-module="propresenter-timers"] .tm-compact .tm-card.is-missing .tm-state { display: block; }
+/* Compact cards (short tiles) and "Status lines" off: the lines under the
+   digits go, the colour stays. A note that explains a missing value (no
+   LTC input, a solo timer no longer offered) must never be hidden. */
+[data-module="propresenter-timers"] .tm-compact .tm-status:not(.is-note),
+[data-module="propresenter-timers"] .tm-compact .tm-detail,
+[data-module="propresenter-timers"] .tm-nostatus .tm-status:not(.is-note),
+[data-module="propresenter-timers"] .tm-nostatus .tm-detail { display: none; }
 
 /* ── one timer card ── */
 
@@ -104,7 +170,7 @@
 
 [data-module="propresenter-timers"] .tm-time {
   flex: none;
-  font-size: var(--tm-time-size);
+  font-size: 32px; /* fit() sets the real size per card */
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
@@ -113,14 +179,14 @@
   white-space: nowrap;
 }
 
-/* Admin "Timer font: Monospace" — steadier digits as the numbers change.
-   Applies to timer and LTC values alike (both are .tm-time). */
+/* Admin "Timer font: Monospace" — steadier digits as the numbers change. */
 [data-module="propresenter-timers"] .tm-mono .tm-time {
   font-family: ui-monospace, "SF Mono", "Menlo", "Cascadia Mono", "Consolas", monospace;
   letter-spacing: 0;
 }
 
-[data-module="propresenter-timers"] .tm-state {
+[data-module="propresenter-timers"] .tm-status,
+[data-module="propresenter-timers"] .tm-detail {
   flex: none;
   max-width: 100%;
   font-size: var(--tm-meta-size);
@@ -132,102 +198,98 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+[data-module="propresenter-timers"] .tm-status[hidden],
+[data-module="propresenter-timers"] .tm-detail[hidden] { display: none; }
 
-/* ── state looks ── */
-
-[data-module="propresenter-timers"] .tm-card.is-running {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-}
-[data-module="propresenter-timers"] .tm-card.is-running .tm-time { color: var(--accent); }
-[data-module="propresenter-timers"] .tm-card.is-running .tm-state { color: var(--accent); }
-
-[data-module="propresenter-timers"] .tm-card.is-stopped .tm-time { color: var(--muted); }
-
-[data-module="propresenter-timers"] .tm-card.is-complete {
-  border-color: color-mix(in srgb, var(--warn) 55%, var(--border));
-  background: color-mix(in srgb, var(--warn) 10%, transparent);
-}
-[data-module="propresenter-timers"] .tm-card.is-complete .tm-time { color: var(--warn); }
-[data-module="propresenter-timers"] .tm-card.is-complete .tm-state { color: var(--warn); }
-
-/* A solo tile whose timer was deleted in ProPresenter. */
-[data-module="propresenter-timers"] .tm-card.is-missing { border-style: dashed; }
-[data-module="propresenter-timers"] .tm-card.is-missing .tm-time { color: var(--muted); }
-[data-module="propresenter-timers"] .tm-card.is-missing .tm-state { color: var(--warn); }
-
-/* Overrun: readable across the room even on a wall display. */
-[data-module="propresenter-timers"] .tm-card.is-overrun {
-  border-color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 22%, transparent);
-  animation: tm-overrun-pulse 1.2s ease-in-out infinite;
-}
-[data-module="propresenter-timers"] .tm-card.is-overrun .tm-time { color: var(--danger); }
-[data-module="propresenter-timers"] .tm-card.is-overrun .tm-state {
-  color: var(--danger);
-  font-weight: 800;
+[data-module="propresenter-timers"] .tm-detail {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  opacity: 0.85;
 }
 
-@keyframes tm-overrun-pulse {
-  50% { background: color-mix(in srgb, var(--danger) 38%, transparent); }
-}
+/* A provider's status line carries its own tone ("ahead 1:20" in green). */
+[data-module="propresenter-timers"] .tm-status[data-tone="ok"] { color: var(--tm-ok); }
+[data-module="propresenter-timers"] .tm-status[data-tone="warn"] { color: var(--tm-warn); }
+[data-module="propresenter-timers"] .tm-status[data-tone="danger"] { color: var(--tm-danger); }
+[data-module="propresenter-timers"] .tm-status[data-tone="muted"] { color: var(--tm-muted); }
 
-/* ── the LTC card: visually its own thing ── */
-
-[data-module="propresenter-timers"] .tm-card-ltc {
-  border-style: dashed;
-}
-[data-module="propresenter-timers"] .tm-card-ltc .tm-time {
-  font-size: var(--tm-ltc-size);
-}
-
-[data-module="propresenter-timers"] .tm-ltc-badge {
-  flex: none;
-  padding: 0.15em 0.55em;
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--accent) 24%, transparent);
-  color: var(--text);
-  font-size: 0.95em;
-  letter-spacing: 0.12em;
-}
-
-[data-module="propresenter-timers"] .tm-card-ltc.is-ltc-receiving {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-}
-[data-module="propresenter-timers"] .tm-card-ltc.is-ltc-receiving .tm-time { color: var(--accent); }
-[data-module="propresenter-timers"] .tm-card-ltc.is-ltc-receiving .tm-state { color: var(--accent); }
-
-[data-module="propresenter-timers"] .tm-card-ltc.is-ltc-nosignal {
-  border-color: color-mix(in srgb, var(--warn) 55%, var(--border));
-}
-[data-module="propresenter-timers"] .tm-card-ltc.is-ltc-nosignal .tm-time { color: var(--muted); }
-[data-module="propresenter-timers"] .tm-card-ltc.is-ltc-nosignal .tm-state {
-  color: var(--warn);
-  animation: tm-nosignal-blink 1.6s steps(2) infinite;
-}
-
-@keyframes tm-nosignal-blink { 50% { opacity: 0.35; } }
-
-/* LTC ceased mid-show: hold the last frame, quietly — no alarm colors,
-   stopping the clock is usually somebody doing their job. */
-[data-module="propresenter-timers"] .tm-card-ltc.is-ltc-stopped .tm-time { color: var(--muted); }
-
-/* No timecode API on this ProPresenter: say so, quietly. */
-[data-module="propresenter-timers"] .tm-card-ltc.is-ltc-unavailable .tm-time { color: var(--muted); }
-[data-module="propresenter-timers"] .tm-card-ltc.is-ltc-unavailable .tm-state {
+/* Explanatory notes read as sentences, not badges. */
+[data-module="propresenter-timers"] .tm-status.is-note {
   text-transform: none;
   letter-spacing: 0.02em;
   white-space: normal;
   text-align: center;
 }
 
+/* ── state looks (feedbacks) ── */
+
+[data-module="propresenter-timers"] .tm-card.is-ok {
+  border-color: color-mix(in srgb, var(--tm-ok) 55%, var(--border));
+  background: color-mix(in srgb, var(--tm-ok) 10%, transparent);
+}
+[data-module="propresenter-timers"] .tm-card.is-ok .tm-time { color: var(--tm-ok); }
+
+[data-module="propresenter-timers"] .tm-card.is-warn {
+  border-color: color-mix(in srgb, var(--tm-warn) 55%, var(--border));
+  background: color-mix(in srgb, var(--tm-warn) 10%, transparent);
+}
+[data-module="propresenter-timers"] .tm-card.is-warn .tm-time { color: var(--tm-warn); }
+
+[data-module="propresenter-timers"] .tm-card.is-muted .tm-time { color: var(--tm-muted); }
+
+/* The wall clock is information, not a state — plain text colour. */
+[data-module="propresenter-timers"] .tm-card.is-plain .tm-time { color: var(--text); }
+
+/* Overrun: readable across the room even on a wall display. */
+[data-module="propresenter-timers"] .tm-card.is-danger {
+  border-color: var(--tm-danger);
+  background: color-mix(in srgb, var(--tm-danger) 22%, transparent);
+}
+[data-module="propresenter-timers"] .tm-card.is-danger .tm-time { color: var(--tm-danger); }
+[data-module="propresenter-timers"] .tm-card.is-overrun {
+  animation: tm-overrun-pulse 1.2s ease-in-out infinite;
+}
+[data-module="propresenter-timers"] .tm-card.is-overrun .tm-status { font-weight: 800; }
+
+@keyframes tm-overrun-pulse {
+  50% { background: color-mix(in srgb, var(--tm-danger) 38%, transparent); }
+}
+
+/* A solo tile whose timer is no longer offered. */
+[data-module="propresenter-timers"] .tm-card.is-missing { border-style: dashed; }
+
+/* ── the LTC card: visually its own thing ── */
+
+[data-module="propresenter-timers"] .tm-card-ltc { border-style: dashed; }
+
+[data-module="propresenter-timers"] .tm-ltc-badge {
+  flex: none;
+  padding: 0.15em 0.55em;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--tm-ok) 24%, transparent);
+  color: var(--text);
+  font-size: 0.95em;
+  letter-spacing: 0.12em;
+}
+
+/* No signal: muted digits, a blinking warning line. */
+[data-module="propresenter-timers"] .tm-card.is-nosignal {
+  border-color: color-mix(in srgb, var(--tm-warn) 55%, var(--border));
+}
+[data-module="propresenter-timers"] .tm-card.is-nosignal .tm-status {
+  animation: tm-nosignal-blink 1.6s steps(2) infinite;
+}
+
+@keyframes tm-nosignal-blink { 50% { opacity: 0.35; } }
+
 /* ── the "Timers ▾" menu (container styled/positioned by the shell) ── */
 
 [data-module="propresenter-timers"] .tm-menu-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 14px;
   width: 100%;
   padding: 6px 9px;
   background: none;
@@ -241,16 +303,39 @@
   white-space: nowrap;
 }
 [data-module="propresenter-timers"] .tm-menu-item:hover { background: var(--border); }
-
-[data-module="propresenter-timers"] .tm-menu-item .check {
-  width: 14px;
-  flex: none;
-  color: var(--accent);
-  font-weight: 700;
-  visibility: hidden;
-}
-[data-module="propresenter-timers"] .tm-menu-item.on .check { visibility: visible; }
 [data-module="propresenter-timers"] .tm-menu-item .name { font-weight: 600; }
+[data-module="propresenter-timers"] .tm-menu-item:not(.on) .name { color: var(--muted); }
+
+/* A small switch: off = hollow pill, on = filled with the running colour. */
+[data-module="propresenter-timers"] .tm-switch {
+  flex: none;
+  position: relative;
+  width: 26px;
+  height: 14px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--muted) 25%, transparent);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+[data-module="propresenter-timers"] .tm-switch::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text);
+  transition: transform 0.15s ease;
+}
+[data-module="propresenter-timers"] .tm-menu-item.on .tm-switch {
+  border-color: var(--tm-ok);
+  background: var(--tm-ok);
+}
+[data-module="propresenter-timers"] .tm-menu-item.on .tm-switch::after {
+  transform: translateX(12px);
+  background: var(--bg);
+}
 
 [data-module="propresenter-timers"] .tm-menu-note {
   padding: 6px 9px;
