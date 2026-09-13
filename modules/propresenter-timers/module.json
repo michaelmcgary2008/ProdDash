@@ -1,9 +1,10 @@
 {
   "id": "propresenter-timers",
   "name": "Timers",
-  "version": "1.2.1",
-  "proddash": ">=1.2.0",
-  "description": "Live ProPresenter timers and LTC timecode",
+  "version": "1.3.0",
+  "proddash": ">=1.4.0",
+  "description": "Timers, Clocks, and LTC From configured Modules",
+  "provides": ["timers"],
   "permissions": [
     { "kind": "microphone", "reason": "Decoding SMPTE LTC timecode from an audio input on this machine" },
     { "kind": "local-network", "reason": "Reaching ProPresenter on this network" }
@@ -12,8 +13,32 @@
   "server": "server.js",
   "style": "style.css",
   "minSize": { "w": 2, "h": 1 },
-  "defaultSize": { "w": 4, "h": 2 },
+  "defaultSize": { "w": 4, "h": 3 },
+  "configGroups": {
+    "ProPresenter": {
+      "toggle": "ppEnabled",
+      "help": "The timers configured in ProPresenter, read over its network API. Enable the network in ProPresenter's Preferences › Network and enter the host and port shown there. Switch it off on a day ProPresenter isn't running and nothing is polled."
+    },
+    "LTC Timecode": {
+      "toggle": "ltcEnabled",
+      "help": "SMPTE LTC decoded from an audio input on this machine, shown as a running timecode. Pick the device and the channel the timecode arrives on; macOS has to grant ProdDash the microphone (see the launcher's Permissions)."
+    },
+    "PCO Plan": {
+      "toggle": "pcoEnabled",
+      "help": "Timers the PCO Plan module offers — service elapsed, current item, countdown to service — appear here under a PCO Plan heading when that module is installed and configured. Nothing to set up on this side."
+    },
+    "Other modules": {
+      "toggle": "moduleTimersEnabled",
+      "help": "Any other installed module that offers timers (\"provides\": [\"timers\"] in its manifest) is found automatically and listed under its own heading. Nothing to configure here."
+    }
+  },
   "configSchema": {
+    "ppEnabled": {
+      "type": "switch",
+      "label": "ProPresenter timers",
+      "group": "ProPresenter",
+      "default": true
+    },
     "propresenter": {
       "type": "endpoint",
       "label": "ProPresenter",
@@ -22,13 +47,14 @@
     },
     "password": {
       "type": "password",
-      "label": "API password (only if set in ProPresenter)",
+      "label": "API password",
       "group": "ProPresenter",
-      "default": ""
+      "default": "",
+      "help": "Only if a password is set in ProPresenter's network preferences."
     },
     "ltcEnabled": {
       "type": "switch",
-      "label": "LTC listener — decode timecode from an audio input on this machine",
+      "label": "LTC timecode",
       "group": "LTC Timecode",
       "default": false
     },
@@ -42,10 +68,23 @@
     },
     "ltcChannel": {
       "type": "number",
-      "label": "Channel on that device (1-based)",
+      "label": "Channel",
       "group": "LTC Timecode",
       "showWhen": "ltcEnabled",
-      "default": 1
+      "default": 1,
+      "help": "The channel on that device carrying the timecode, counted from 1."
+    },
+    "pcoEnabled": {
+      "type": "switch",
+      "label": "PCO Plan timers",
+      "group": "PCO Plan",
+      "default": true
+    },
+    "moduleTimersEnabled": {
+      "type": "switch",
+      "label": "Module timers",
+      "group": "Other modules",
+      "default": true
     },
     "timerFont": {
       "type": "select",
@@ -57,5 +96,38 @@
         { "value": "monospace", "label": "Monospace — steadier changing digits" }
       ]
     }
+  },
+  "instanceGroups": {
+    "Show": { "collapsed": false, "columns": 2 },
+    "Clock": { "collapsed": false },
+    "Colours": {
+      "collapsed": true,
+      "columns": 2,
+      "help": "The time's colour per state. Left at the default, a colour follows the dashboard theme; one you change here wins over it."
+    }
+  },
+  "instanceSchema": {
+    "showClock": { "type": "boolean", "label": "Clock", "default": true, "group": "Show" },
+    "showProPresenter": { "type": "boolean", "label": "ProPresenter timers", "default": true, "group": "Show" },
+    "showLtc": { "type": "boolean", "label": "LTC timecode", "default": true, "group": "Show" },
+    "showModules": { "type": "boolean", "label": "Module timers", "default": true, "group": "Show" },
+    "showHeadings": { "type": "boolean", "label": "Source headings", "default": true, "group": "Show" },
+    "showStatus": { "type": "boolean", "label": "Status lines", "default": true, "group": "Show" },
+    "clockFormat": {
+      "type": "select",
+      "label": "Clock format",
+      "default": "24h",
+      "group": "Clock",
+      "options": [
+        { "value": "24h", "label": "24-hour" },
+        { "value": "12h", "label": "12-hour" }
+      ]
+    },
+    "clockSeconds": { "type": "boolean", "label": "Seconds", "default": true, "group": "Clock" },
+    "clockDate": { "type": "boolean", "label": "Date", "default": false, "group": "Clock" },
+    "runningColor": { "type": "color", "label": "Running", "default": "#2ee59a", "group": "Colours" },
+    "warningColor": { "type": "color", "label": "Warning", "default": "#f0b429", "group": "Colours" },
+    "overrunColor": { "type": "color", "label": "Overrun", "default": "#f4433c", "group": "Colours" },
+    "idleColor": { "type": "color", "label": "Idle", "default": "#8b98a5", "group": "Colours" }
   }
 }
