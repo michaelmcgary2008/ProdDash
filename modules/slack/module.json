@@ -95,7 +95,6 @@
     "Transcript": { "collapsed": false }
   },
   "instanceSchema": {
-    "textSize": { "type": "number", "label": "Text size (px)", "default": 14 },
     "showTimes": { "type": "switch", "label": "Timestamps", "default": true, "group": "Transcript" },
     "showNames": { "type": "switch", "label": "Names", "default": true, "group": "Transcript" },
     "showSystem": { "type": "switch", "label": "System lines", "default": true, "group": "Transcript" }
