@@ -4,7 +4,9 @@
    ProPresenter module's live item; this tile only renders the plan it is
    streamed. What is shown is this tile's own choice (gear menu →
    moduleApi.instanceSettings: show/hide checklist, top-bar template,
-   colors, text size); /admin only holds the connection settings. */
+   colors, item-note categories); the text size is the title bar's A− / A+
+   (saved with the tile, 14 px until someone presses one); /admin only holds
+   the connection settings. */
 
 const REFRESH_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>';
 
@@ -121,10 +123,19 @@ export default function create({ root, moduleApi }) {
     });
   }
 
+  /**
+   * Which note categories this tile shows. Unset (never chosen in the gear
+   * window) means every category, including ones Planning Center gains
+   * later; an array is exactly those, by name. A layout saved before the
+   * categories were a list holds a comma-separated string — read as that
+   * list, blank as unset.
+   */
   function noteFilter() {
-    const raw = String(cfg().noteCategories || '');
-    const wanted = raw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
-    return wanted.length ? (note) => wanted.includes(String(note.category || '').toLowerCase()) : () => true;
+    const raw = cfg().noteCategories;
+    const names = Array.isArray(raw) ? raw : String(raw ?? '').split(',');
+    const wanted = new Set(names.map((s) => String(s).trim().toLowerCase()).filter(Boolean));
+    if (!Array.isArray(raw) && !wanted.size) return () => true;
+    return (note) => wanted.has(String(note.category || '').trim().toLowerCase());
   }
 
   /* ── status dot ─────────────────────────────────────────────────── */

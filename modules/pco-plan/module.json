@@ -121,6 +121,9 @@
       "collapsed": false,
       "columns": 2
     },
+    "Item notes": {
+      "toggle": "showNotes"
+    },
     "Show / hide": {
       "collapsed": true,
       "columns": 3,
@@ -128,25 +131,38 @@
     }
   },
   "instanceSchema": {
-    "textSize": { "type": "number", "label": "Text size (px)", "default": 14 },
     "autoScroll": { "type": "boolean", "label": "Keep the current item in view", "default": true },
-    "noteCategories": {
-      "type": "string",
-      "label": "Item note categories to show (comma-separated, blank = all)",
-      "default": ""
-    },
     "headerTemplate": {
-      "type": "string",
+      "type": "template",
       "label": "Top bar text",
       "default": "{series} • {part} | {serviceType} • {date}",
       "group": "Top bar",
-      "help": "Placeholders: {series} series name · {part} plan title / part number · {serviceType} · {date} · {shortDate} · {time} service start time · {length} planned length · {items} item count. Use • between items (an item whose placeholders are empty or hidden is dropped) and | to start a second line."
+      "variables": [
+        { "value": "{series}", "label": "Series" },
+        { "value": "{part}", "label": "Part / plan title" },
+        { "value": "{serviceType}", "label": "Service type" },
+        { "value": "{date}", "label": "Date" },
+        { "value": "{shortDate}", "label": "Short date" },
+        { "value": "{time}", "label": "Service time" },
+        { "value": "{length}", "label": "Planned length" },
+        { "value": "{items}", "label": "Item count" }
+      ],
+      "help": "Use • between items and | to start a second line."
     },
     "keyColor": { "type": "color", "label": "Song key", "default": "#4ea1ff", "group": "Colors" },
     "headerColor": { "type": "color", "label": "Section headers", "default": "#2ee59a", "group": "Colors" },
     "currentColor": { "type": "color", "label": "Current item", "default": "#2ee59a", "group": "Colors" },
     "headerGradient": { "type": "boolean", "label": "Fade header color to the right", "default": true, "group": "Colors" },
     "tintByType": { "type": "boolean", "label": "Tint items by type (song / media / other)", "default": false, "group": "Colors" },
+    "showNotes": { "type": "switch", "label": "Item notes", "default": true, "group": "Item notes" },
+    "noteCategories": {
+      "type": "multiselect",
+      "label": "Categories",
+      "group": "Item notes",
+      "optionsRoute": "/note-categories",
+      "columns": 3,
+      "allByDefault": true
+    },
     "showTopBar": { "type": "boolean", "label": "Top bar", "default": true, "group": "Show / hide" },
     "showSeries": { "type": "boolean", "label": "Series name", "default": true, "group": "Show / hide" },
     "showPart": { "type": "boolean", "label": "Part # / plan title", "default": true, "group": "Show / hide" },
@@ -165,7 +181,6 @@
     "showArrangement": { "type": "boolean", "label": "Song arrangement", "default": false, "group": "Show / hide" },
     "showSongAuthor": { "type": "boolean", "label": "Song author / CCLI", "default": false, "group": "Show / hide" },
     "showDescription": { "type": "boolean", "label": "Item description", "default": true, "group": "Show / hide" },
-    "showNotes": { "type": "boolean", "label": "Item notes", "default": true, "group": "Show / hide" },
     "showPreService": { "type": "boolean", "label": "Pre-service items", "default": true, "group": "Show / hide" },
     "showPostService": { "type": "boolean", "label": "Post-service items", "default": true, "group": "Show / hide" },
     "showNowIndicator": { "type": "boolean", "label": "Now indicator", "default": true, "group": "Show / hide" },

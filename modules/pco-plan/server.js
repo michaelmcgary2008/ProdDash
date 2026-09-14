@@ -15,6 +15,8 @@
  *   GET  /plans?serviceTypeId=… → { options } for the admin "Plan" select
  *   GET  /documents → { options } for the admin start / end document selects
  *                     (documents ProPresenter has shown or lists — see below)
+ *   GET  /note-categories → { options } for a tile's "Item notes" categories:
+ *                     the service type's item note categories, by name
  *   GET  /timers        → snapshot for the Timers module (guide: "Offering
  *   GET  /timers/stream → SSE, `timers` events   timers to the Timers module")
  *
@@ -26,6 +28,7 @@
  *   GET /service_types/{st}/plans/{id}                 (title, dates…)
  *   GET …/plans/{id}/plan_times                        (service start times)
  *   GET …/plans/{id}/items?include=song,arrangement,item_notes
+ *   GET /service_types/{st}/item_note_categories       (note category names)
  *
  * Following ProPresenter: instead of talking to ProPresenter a second time,
  * this module reads the propresenter-now-next module's own SSE feed over
@@ -78,6 +81,8 @@ const NOW_NEXT_RETRY_MS = 3000;
 const NOW_NEXT_MISSING_RETRY_MS = 15000;
 /** How many distinct documents seen live are remembered for the admin selects. */
 const SEEN_DOCUMENTS_MAX = 200;
+/** How long a service type's item note categories are believed before Planning Center is asked again. */
+const NOTE_CATEGORIES_TTL_MS = 10 * MINUTE;
 /**
  * Service timer tone (the Timers module colours by it): running behind the
  * plan — completed items over their planned length, plus the current item's
@@ -589,6 +594,44 @@ module.exports = {
       // Service selection, item schedule and the running clock all follow
       // from the plan's service times — decided in one place.
       syncServiceSafe(Date.now(), null);
+    }
+
+    /* — item note categories (a tile's "Item notes" → Categories switches) — */
+
+    let noteCategories = { at: 0, options: [] }; // the last good answer from Planning Center
+    let noteCategoriesInFlight = null;
+
+    /**
+     * The service type's item note categories, by name — notes are matched
+     * to categories by name, so the names are the values. Believed for
+     * NOTE_CATEGORIES_TTL_MS, read once however many tiles ask at the same
+     * moment; a failed re-read keeps serving the last good list. A module
+     * that cannot ask (no credentials, no service type) answers an empty
+     * list — the gear window then says there is nothing to choose from yet.
+     */
+    async function noteCategoryOptions() {
+      if (!pco.configured || !serviceTypeId) return [];
+      if (Date.now() - noteCategories.at < NOTE_CATEGORIES_TTL_MS) return noteCategories.options;
+      if (!noteCategoriesInFlight) {
+        noteCategoriesInFlight = (async () => {
+          const body = await pco.getAll(`${SERVICES}/service_types/${encodeURIComponent(serviceTypeId)}/item_note_categories`);
+          const seen = new Set();
+          const options = (body.data || [])
+            .filter((c) => !c?.attributes?.deleted_at)
+            .map((c) => ({ name: String(c.attributes?.name || '').trim(), sequence: Number(c.attributes?.sequence) || 0 }))
+            .sort((a, b) => a.sequence - b.sequence)
+            .filter((c) => c.name && !seen.has(c.name.toLowerCase()) && seen.add(c.name.toLowerCase()))
+            .map((c) => ({ value: c.name, label: c.name }));
+          noteCategories = { at: Date.now(), options };
+          return options;
+        })().finally(() => { noteCategoriesInFlight = null; });
+      }
+      try {
+        return await noteCategoriesInFlight;
+      } catch (err) {
+        log(`item note categories read failed: ${err?.message || err}`);
+        return noteCategories.options;
+      }
     }
 
     function schedulePoll(ms) {
@@ -1214,6 +1257,7 @@ module.exports = {
       pickPlan,
       timersSnapshot,
       documentOptions,
+      noteCategoryOptions,
     };
 
     return {
@@ -1310,6 +1354,23 @@ module.exports = {
       'GET /documents': (req, res) => {
         if (!current) return json(res, 200, { options: [{ value: '', label: 'None' }], note: 'Module not running.' });
         json(res, 200, current.documentOptions());
+      },
+
+      /**
+       * Options for a tile's "Item notes" → Categories switches: the
+       * configured service type's item note categories, by name. Always a
+       * 200 with a list — empty while the module is unconfigured, not
+       * running or cannot reach Planning Center — because the gear window
+       * has nothing better to do with an error than show an empty list.
+       */
+      'GET /note-categories': async (req, res) => {
+        let options = [];
+        try {
+          if (current) options = await current.noteCategoryOptions();
+        } catch (err) {
+          log(`note categories: ${err?.message || err}`);
+        }
+        json(res, 200, { options });
       },
 
       /**
