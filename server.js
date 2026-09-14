@@ -471,6 +471,12 @@ function sanitizeTileEntry(raw) {
   for (const key of ['instanceSchema', 'instanceGroups']) {
     if (raw[key] && typeof raw[key] === 'object') out[key] = raw[key];
   }
+  // Earlier variant ids this entry stands for, so a tile added under one of
+  // them (a layout from an older module version) gets this entry's settings.
+  if (Array.isArray(raw.aliases)) {
+    const aliases = raw.aliases.map((a) => String(a)).filter(Boolean);
+    if (aliases.length) out.aliases = aliases;
+  }
   for (const key of ['minSize', 'defaultSize']) {
     const size = raw[key];
     if (size && Number(size.w) > 0 && Number(size.h) > 0) {

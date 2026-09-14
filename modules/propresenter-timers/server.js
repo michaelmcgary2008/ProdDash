@@ -1136,7 +1136,9 @@ module.exports = {
         const description = src.kind === 'ltc' ? 'The incoming LTC timecode on its own'
           : src.kind === 'clock' ? 'The time of day on its own'
             : `This ${src.label} ${KIND_WORD[t.kind] || 'timer'} on its own`;
-        out.push({ id: `solo:${src.id}:${t.id}`, name: t.label, description, ...oneCard, ...gearFor(src, t) });
+        // Layouts from before 1.3.0 hold 'timer:<uuid>' / 'ltc' — the same tiles.
+        const aliases = src.id === 'propresenter' ? [`timer:${t.id}`] : src.kind === 'ltc' ? ['ltc'] : [];
+        out.push({ id: `solo:${src.id}:${t.id}`, name: t.label, description, ...oneCard, ...gearFor(src, t), ...(aliases.length ? { aliases } : {}) });
       }
     }
     return out;

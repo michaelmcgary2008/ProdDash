@@ -501,7 +501,7 @@ module.exports = {
     return config.pages.map((page) => ({
       id: page.name,                    // stable id, stored with the tile
       name: page.name,                  // picker label AND the tile's title
-      description: page.url,            // optional line under the label
+      description: page.url,            // optional; the picker's tooltip
       settings: { page: page.name },    // preset instance settings
       defaultSize: { w: 4, h: 3 },      // optional per-entry size overrides
       minSize: { w: 2, h: 2 },
@@ -516,6 +516,10 @@ module.exports = {
   so a dead upstream can't break the picker.
 - `instanceSchema` / `instanceGroups` on an entry replace the module's for
   tiles added from it — settings that fit that tile, nothing else.
+- `aliases: ['old-id', …]` on an entry names earlier variant ids it stands
+  for: a tile added under one of them (a layout saved by an older version of
+  your module) gets this entry's settings too. A tile whose variant matches
+  no entry and no alias falls back to the module's full `instanceSchema`.
 - Entry `description`s are tooltips in the ＋ picker now, not visible lines —
   one short sentence.
 - `single: true` on an entry allows at most one such tile per dashboard: the

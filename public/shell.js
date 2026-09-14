@@ -1094,8 +1094,10 @@ function colorHex(value, fallback) {
     Same for the groups that arrange them. */
 function tileSchema(tile, man) {
   const own = (v) => (v && typeof v === 'object' ? v : null);
-  const entry = tile?.variant && Array.isArray(man?.tiles)
-    ? man.tiles.find((e) => String(e.id) === String(tile.variant))
+  const variant = String(tile?.variant || '');
+  const entry = variant && Array.isArray(man?.tiles)
+    ? man.tiles.find((e) => String(e.id) === variant)
+      || man.tiles.find((e) => Array.isArray(e.aliases) && e.aliases.includes(variant))
     : null;
   return {
     schema: own(entry?.instanceSchema) || own(man?.instanceSchema) || {},
