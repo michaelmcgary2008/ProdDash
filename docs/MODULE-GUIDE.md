@@ -104,7 +104,7 @@ the app); its settings are kept for a later reinstall.
 Both schemas map field names to specs:
 
 ```
-{ "type": "string" | "text" | "number" | "boolean" | "switch" | "select" | "multiselect" | "color" | "password" | "endpoint",
+{ "type": "string" | "text" | "number" | "boolean" | "switch" | "select" | "multiselect" | "template" | "color" | "password" | "endpoint",
   "label": "Shown next to the field",
   "default": <value>,
   "group": "Section heading",                         // optional; see below
@@ -128,7 +128,17 @@ default; the tile applies it as a CSS custom property — see `pco-plan`).
 `multiselect` is several picks from one list — the same `options` /
 `optionsRoute` as `select`, rendered as one switch per option and stored as
 an array of values. A saved value the list no longer offers stays checked and
-marked, so nothing is dropped behind the admin's back (admin config only).
+marked, so nothing is dropped behind anyone's back. In a tile's gear popover
+it also takes `columns` (2–4) and `allByDefault: true`: a tile that has never
+chosen shows every option on and saves nothing until someone flips one, so
+options that turn up later are on as well (give it no `default` then).
+`select` and `multiselect` may use `optionsRoute` in `instanceSchema` too —
+the popover GETs `/api/modules/<id><optionsRoute>` like the admin page does.
+
+`template` (tile settings) is a text with placeholders, built by dragging or
+clicking the variables the module offers into it: `"variables": [ { "value":
+"{series}", "label": "Series" }, … ]`. Keep `help` to the joining rules; the
+chips carry the names.
 
 `text` is a multi-line string — a `<textarea>` in the admin page, stored with
 its newlines; one item per line is the convention (the `slack` module's quick
@@ -171,9 +181,17 @@ explanation there.
 
 `group` and `help` work on `instanceSchema` fields too, and a manifest
 `instanceGroups` map plays the `configGroups` role for the tile's gear
-popover (`collapsed: true | false`, `columns`, `help`). That is how a module
-with a long show/hide checklist keeps the popover usable — see `pco-plan`.
-Display choices belong there, per tile; admin config is for connections.
+popover (`collapsed: true | false`, `columns`, `help`, `toggle`). That is how
+a module with a long show/hide checklist keeps the popover usable — see
+`pco-plan`. Display choices belong there, per tile; admin config is for
+connections. The popover itself is a small window beside the tile (moved by
+its bar, closed by clicking away) so a tile never has to be big enough to
+hold its own settings, and a change can be watched as it lands.
+
+A picker entry (see **Presenting multiple tiles**) may carry its own
+`instanceSchema` and `instanceGroups`: tiles added from that entry get those
+instead of the module's. A tile that shows one ProPresenter timer has no use
+for a clock's format switches — give it a schema of what applies.
 
 `showWhen: "<key>"` hides a field until the boolean/`switch` field named
 `<key>` is on — e.g. the audio device and channel appear only once the LTC
@@ -490,6 +508,10 @@ module.exports = {
   keep it fast (answer from state you already hold; don't fetch upstream on
   demand). A throw or a hang (>2 s) falls back to the classic single entry,
   so a dead upstream can't break the picker.
+- `instanceSchema` / `instanceGroups` on an entry replace the module's for
+  tiles added from it — settings that fit that tile, nothing else.
+- Entry `description`s are tooltips in the ＋ picker now, not visible lines —
+  one short sentence.
 - `single: true` on an entry allows at most one such tile per dashboard: the
   picker greys the entry out once it is placed. Use it for a control surface
   that would only confuse in duplicate — a send box, a master switch.

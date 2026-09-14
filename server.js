@@ -466,6 +466,11 @@ function sanitizeTileEntry(raw) {
     // at most one tile of this entry per dashboard (the picker greys it out)
     single: raw.single === true,
   };
+  // An entry may offer its own gear settings — a solo timer wants none of a
+  // full tile's switches. Same shape as the manifest's instanceSchema/Groups.
+  for (const key of ['instanceSchema', 'instanceGroups']) {
+    if (raw[key] && typeof raw[key] === 'object') out[key] = raw[key];
+  }
   for (const key of ['minSize', 'defaultSize']) {
     const size = raw[key];
     if (size && Number(size.w) > 0 && Number(size.h) > 0) {

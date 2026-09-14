@@ -534,26 +534,109 @@ body.fullscreen #grid { padding-bottom: 0; }
 
 /* ── per-tile settings popover ─────────────────────────────────────── */
 
+/* A small window beside its tile (shell.js places and clamps it), not a
+   box inside the tile: a tile can be smaller than its own settings, and the
+   whole point of live settings is watching the tile change. */
 .tile-settings {
-  position: absolute;
-  top: 36px;
-  right: 6px;
-  z-index: 45;
-  min-width: 220px;
-  max-width: calc(100% - 12px);
-  max-height: calc(100% - 40px);
-  overflow-y: auto;
+  position: fixed;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  min-width: 260px;
+  max-width: min(560px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow: hidden;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 10px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55);
 }
+.tile-settings-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid var(--border);
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+.tile-settings-bar:active { cursor: grabbing; }
+.tile-settings-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tile-settings-close {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.tile-settings-close:hover { background: rgba(255, 255, 255, 0.08); color: var(--text); }
+.tile-settings-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px;
+}
+/* a group's on/off sits in its title row; the body dims while it is off */
+.tile-settings .field-group-title { display: flex; align-items: center; gap: 8px; }
+.tile-settings .field-group-name { flex: 1; min-width: 0; }
+.tile-settings .group-toggle { margin: 0 0 0 auto; }
+.tile-settings .group-toggle .check-label { display: none; }
+.tile-settings .field-group.is-off .field-group-body { opacity: 0.45; }
+/* several picks from a list (type `multiselect`) */
+.tile-settings .multiselect-field { display: flex; flex-direction: column; gap: 4px; }
+.tile-settings .multiselect { display: flex; flex-direction: column; gap: 3px; }
+.tile-settings .multiselect.is-columns {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr));
+  gap: 3px 14px;
+}
+.tile-settings .multiselect-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+}
+.tile-settings .multiselect-row .check-label { flex: 1 1 0; min-width: 0; }
+.tile-settings .multiselect-empty { color: var(--muted); font-size: 12px; }
+/* a text built from offered variables (type `template`) */
+.tile-settings .template-vars { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+.tile-settings .template-var {
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  cursor: grab;
+}
+.tile-settings .template-var:hover { border-color: var(--accent); }
+.tile-settings .template-var:active { cursor: grabbing; }
 
 /* A popover with grouped settings needs room for its columns; it still
    never grows past the tile (max-width above). */
 .tile-settings.has-groups {
-  min-width: min(540px, calc(100% - 12px));
+  min-width: min(540px, calc(100vw - 16px));
   container-type: inline-size;
 }
 .tile-settings .field-group {
@@ -593,7 +676,7 @@ body.fullscreen #grid { padding-bottom: 0; }
 .tile-settings .field-group .field:last-child { margin-bottom: 0; }
 /* Settings apply as they change, so nothing sits under the last field — its
    bottom margin would only pad the popover's own padding a second time. */
-.tile-settings > :last-child { margin-bottom: 0; }
+.tile-settings-body > :last-child { margin-bottom: 0; }
 .tile-settings .field-group-body.is-columns {
   display: grid;
   grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr));

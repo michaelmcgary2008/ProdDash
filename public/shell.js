@@ -108,10 +108,11 @@ function wireDropdown(btnId, menuId, rebuild) {
   return menu;
 }
 
-function menuItem(label, onClick, { sub = '', danger = false, disabled = false } = {}) {
+function menuItem(label, onClick, { sub = '', danger = false, disabled = false, title = '' } = {}) {
   const item = document.createElement('button');
   item.className = 'menu-item' + (danger ? ' danger' : '');
   item.disabled = disabled;
+  if (title) item.title = title;
   const span = document.createElement('span');
   span.textContent = label;
   if (sub) {
@@ -277,7 +278,7 @@ function buildTile(tile) {
 
   head.append(dot, title, controls);
 
-  const hasSettings = man && man.instanceSchema && Object.keys(man.instanceSchema).length;
+  const hasSettings = man && Object.keys(tileSchema(tile, man).schema).length;
   if (hasSettings) {
     const gear = document.createElement('button');
     gear.className = 'tile-btn';
@@ -718,7 +719,8 @@ function addTile(moduleId, entry = null) {
   };
   const spot = findSpot(size.w, size.h);
   const settings = {};
-  for (const [key, spec] of Object.entries(man?.instanceSchema || {})) {
+  const { schema: addSchema } = tileSchema({ variant: entry ? String(entry.id) : '' }, man);
+  for (const [key, spec] of Object.entries(addSchema)) {
     if (spec && 'default' in spec) settings[key] = spec.default;
   }
   Object.assign(settings, entry?.settings || {});
@@ -895,7 +897,7 @@ function buildModuleApi(tile, man, entry) {
     /** Per-tile settings: schema defaults overlaid with what this tile saved. */
     get instanceSettings() {
       const out = {};
-      for (const [key, spec] of Object.entries(man.instanceSchema || {})) {
+      for (const [key, spec] of Object.entries(tileSchema(tile, man).schema)) {
         if (spec && 'default' in spec) out[key] = spec.default;
       }
       return Object.assign(out, tile.settings || {});
@@ -1087,6 +1089,20 @@ function colorHex(value, fallback) {
   return fallback;
 }
 
+/** The settings a tile offers: its picker entry's own schema when it has one
+    — a solo timer wants none of a full tile's switches — else the module's.
+    Same for the groups that arrange them. */
+function tileSchema(tile, man) {
+  const own = (v) => (v && typeof v === 'object' ? v : null);
+  const entry = tile?.variant && Array.isArray(man?.tiles)
+    ? man.tiles.find((e) => String(e.id) === String(tile.variant))
+    : null;
+  return {
+    schema: own(entry?.instanceSchema) || own(man?.instanceSchema) || {},
+    groups: own(entry?.instanceGroups) || own(man?.instanceGroups) || {},
+  };
+}
+
 function closeSettingsPopovers() {
   document.querySelectorAll('.tile-settings').forEach((p) => {
     p._cleanup?.();
@@ -1094,21 +1110,76 @@ function closeSettingsPopovers() {
   });
 }
 
+/* ── the per-tile settings window ───────────────────────────────────── */
+
+/* It opens beside its tile — to the right when there is room, else the
+   left, else over it — and always inside the viewport. A window rather than
+   something inside the tile, because a tile can be smaller than its own
+   settings, and because the point of live settings is watching the tile
+   change while you change them: the window must not sit on top of it. */
+function placePopover(pop, anchor) {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const pad = 8;
+  const w = pop.offsetWidth;
+  const h = pop.offsetHeight;
+  let left = anchor.right + pad;
+  if (left + w > vw - pad) left = anchor.left - w - pad;
+  if (left < pad) left = Math.min(Math.max(pad, anchor.left), Math.max(pad, vw - w - pad));
+  let top = anchor.top;
+  if (top + h > vh - pad) top = vh - h - pad;
+  if (top < pad) top = pad;
+  pop.style.left = Math.round(left) + 'px';
+  pop.style.top = Math.round(top) + 'px';
+}
+
+function clampPopover(pop) {
+  const pad = 8;
+  const maxLeft = Math.max(pad, window.innerWidth - pop.offsetWidth - pad);
+  const maxTop = Math.max(pad, window.innerHeight - pop.offsetHeight - pad);
+  pop.style.left = Math.min(Math.max(pad, pop.offsetLeft), maxLeft) + 'px';
+  pop.style.top = Math.min(Math.max(pad, pop.offsetTop), maxTop) + 'px';
+}
+
 function toggleSettingsPopover(tile, el) {
-  const existing = el.querySelector('.tile-settings');
+  const existing = document.querySelector(`.tile-settings[data-tile-id="${tile.id}"]`);
   closeSettingsPopovers();
   if (existing) return;
   const man = registry.get(tile.module);
-  if (!man || !man.instanceSchema) return;
+  const { schema, groups: groupMeta } = tileSchema(tile, man);
+  if (!man || !Object.keys(schema).length) return;
 
   const pop = document.createElement('div');
   pop.className = 'tile-settings';
+  pop.dataset.tileId = tile.id;
+  pop.setAttribute('role', 'dialog');
+  pop.setAttribute('aria-label', `${tile.title || man.name} settings`);
+
+  // A bar to move it by, and the one control every window has.
+  const bar = document.createElement('div');
+  bar.className = 'tile-settings-bar';
+  const barTitle = document.createElement('span');
+  barTitle.className = 'tile-settings-title';
+  barTitle.textContent = tile.title || man.name;
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'tile-settings-close';
+  closeBtn.title = 'Close';
+  closeBtn.setAttribute('aria-label', 'Close settings');
+  closeBtn.textContent = '✕';
+  closeBtn.addEventListener('click', () => closeSettingsPopovers());
+  bar.append(barTitle, closeBtn);
+  const body = document.createElement('div');
+  body.className = 'tile-settings-body';
+  pop.append(bar, body);
+
   const inputs = new Map();
 
-  /* These are display choices — a text size, a filter, a colour — so they
-     apply as they are changed and save with the layout. There is nothing to
-     confirm, so there is no Apply. Typing is debounced because applying
-     means remounting the module, which shouldn't happen per keystroke. */
+  /* Display choices apply as they change and save with the layout — nothing
+     to confirm, so no Apply. Typing is debounced because applying means
+     remounting the module, which shouldn't happen per keystroke. */
+  const same = (a, b) => a === b
+    || (Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => v === b[i]));
   let applyTimer = null;
   const commit = (delay) => {
     clearTimeout(applyTimer);
@@ -1116,11 +1187,11 @@ function toggleSettingsPopover(tile, el) {
       applyTimer = null;
       // Only when something really moved: a text field fires `input` and then
       // `change` on the way out, and a module shouldn't be torn down twice
-      // over for one edit.
+      // over for one edit. A reader answering undefined has nothing to say.
       let changed = false;
       for (const [key, read] of inputs) {
         const value = read();
-        if (tile.settings[key] === value) continue;
+        if (value === undefined || same(tile.settings[key], value)) continue;
         tile.settings[key] = value;
         changed = true;
       }
@@ -1132,19 +1203,31 @@ function toggleSettingsPopover(tile, el) {
   const live = (input, event = 'change', delay = 0) => {
     input.addEventListener(event, () => commit(delay));
   };
+  /** Choices a module only knows at runtime, from one of its own routes. */
+  const fetchOptions = async (route) => {
+    try {
+      const res = await fetchWithTimeout(`/api/modules/${encodeURIComponent(man.id)}${route}`, 8000);
+      const data = res.ok ? await res.json() : null;
+      return Array.isArray(data?.options) ? data.options : null;
+    } catch {
+      return null;
+    }
+  };
+  const optValue = (opt) => String(typeof opt === 'object' ? opt.value : opt);
+  const optLabel = (opt) => String(typeof opt === 'object' ? (opt.label ?? opt.value) : opt);
 
   // Fields render in schema order; a field's `group` starts a labeled
-  // subsection that consecutive same-group fields share, and the manifest's
-  // optional `instanceGroups[name]` adds { collapsed, columns, help } —
-  // the same conventions as the admin page's config form.
-  const groupMeta = man.instanceGroups && typeof man.instanceGroups === 'object' ? man.instanceGroups : {};
+  // subsection that consecutive same-group fields share, and the groups map
+  // adds { collapsed, columns, help, toggle } — the same conventions as the
+  // admin page's config form.
   let groupName = null;
-  let container = pop;
+  let container = body;
+  let current = null; // the open group: { el, title, toggleKey }
 
-  for (const [key, spec] of Object.entries(man.instanceSchema)) {
+  for (const [key, spec] of Object.entries(schema)) {
     const type = spec?.type || 'string';
     const label = spec?.label || key;
-    const current = key in (tile.settings || {}) ? tile.settings[key] : spec?.default;
+    const value = key in (tile.settings || {}) ? tile.settings[key] : spec?.default;
 
     const g = spec?.group || '';
     if (g !== groupName) {
@@ -1157,33 +1240,41 @@ function toggleSettingsPopover(tile, el) {
         if (folds) group.open = !meta.collapsed;
         const title = document.createElement(folds ? 'summary' : 'div');
         title.className = 'field-group-title';
-        title.textContent = g;
+        const titleText = document.createElement('span');
+        titleText.className = 'field-group-name';
+        titleText.textContent = g;
+        title.appendChild(titleText);
         group.appendChild(title);
-        const body = document.createElement('div');
-        body.className = 'field-group-body';
+        const groupBody = document.createElement('div');
+        groupBody.className = 'field-group-body';
         const cols = Math.min(4, Math.trunc(Number(meta.columns)) || 0);
         if (cols > 1) {
-          body.classList.add('is-columns');
-          body.style.setProperty('--cols', String(cols));
+          groupBody.classList.add('is-columns');
+          groupBody.style.setProperty('--cols', String(cols));
         }
         if (meta.help) {
           const help = document.createElement('div');
           help.className = 'field-group-help';
           help.textContent = meta.help;
-          body.appendChild(help);
+          groupBody.appendChild(help);
         }
-        group.appendChild(body);
-        pop.appendChild(group);
+        group.appendChild(groupBody);
+        body.appendChild(group);
         pop.classList.add('has-groups');
-        container = body;
+        container = groupBody;
+        current = { el: group, title, toggleKey: typeof meta.toggle === 'string' ? meta.toggle : '' };
       } else {
-        container = pop;
+        container = body;
+        current = null;
       }
     }
 
     const isSwitch = type === 'boolean' || type === 'switch';
-    const field = document.createElement('label');
+    // A multiselect holds several controls, so it can't be a <label>: a click
+    // anywhere in one would flip the first control.
+    const field = document.createElement(type === 'multiselect' ? 'div' : 'label');
     field.className = 'field' + (isSwitch ? ' check' : '');
+    let switchInput = null;
 
     if (isSwitch) {
       // A switch: on is shown/enabled, off is hidden/disabled — the label
@@ -1196,27 +1287,104 @@ function toggleSettingsPopover(tile, el) {
       toggle.className = 'switch';
       const input = document.createElement('input');
       input.type = 'checkbox';
-      input.checked = Boolean(current);
+      input.checked = Boolean(value);
+      input.setAttribute('aria-label', label);
       const track = document.createElement('span');
       track.className = 'track';
       toggle.append(input, track);
       field.append(text, toggle);
       inputs.set(key, () => input.checked);
       live(input);
-    } else if (type === 'select' && Array.isArray(spec.options)) {
+      switchInput = input;
+    } else if (type === 'select' && (Array.isArray(spec.options) || spec.optionsRoute)) {
       const span = document.createElement('span');
       span.textContent = label;
       const select = document.createElement('select');
-      for (const opt of spec.options) {
-        const o = document.createElement('option');
-        o.value = String(typeof opt === 'object' ? opt.value : opt);
-        o.textContent = String(typeof opt === 'object' ? (opt.label ?? opt.value) : opt);
-        select.appendChild(o);
-      }
-      select.value = String(current ?? '');
+      const saved = value === undefined || value === null ? '' : String(value);
+      const fill = (options) => {
+        const wanted = select.options.length ? select.value : saved;
+        select.innerHTML = '';
+        // What this tile saved stays choosable even when the live list has
+        // moved on (a source that is off right now, say).
+        if (saved && !options.some((o) => optValue(o) === saved)) {
+          options = [{ value: saved, label: `${saved} (saved)` }, ...options];
+        }
+        for (const opt of options) {
+          const o = document.createElement('option');
+          o.value = optValue(opt);
+          o.textContent = optLabel(opt);
+          select.appendChild(o);
+        }
+        select.value = options.some((o) => optValue(o) === wanted) ? wanted : saved;
+      };
+      fill(Array.isArray(spec.options) ? spec.options : []);
+      if (spec.optionsRoute) fetchOptions(spec.optionsRoute).then((opts) => { if (opts) fill(opts); });
       field.append(span, select);
       inputs.set(key, () => select.value);
       live(select);
+    } else if (type === 'multiselect' && (Array.isArray(spec.options) || spec.optionsRoute)) {
+      // Several picks from a list, one switch each, stored as an array. With
+      // `allByDefault`, a tile that has never chosen shows every option on
+      // and saves nothing until someone flips one — so options that turn up
+      // later are on as well, until there is an explicit list.
+      field.classList.add('multiselect-field');
+      const span = document.createElement('span');
+      span.className = 'field-label';
+      span.textContent = label;
+      const list = document.createElement('div');
+      list.className = 'multiselect';
+      const cols = Math.min(4, Math.trunc(Number(spec.columns)) || 0);
+      if (cols > 1) {
+        list.classList.add('is-columns');
+        list.style.setProperty('--cols', String(cols));
+      }
+      const saved = Array.isArray(value) ? value.map(String) : null; // null: never chosen
+      let touched = false;
+      const chosen = new Set(saved || []);
+      const fill = (options) => {
+        for (const input of list.querySelectorAll('input')) {
+          if (input.checked) chosen.add(input.value);
+          else chosen.delete(input.value);
+        }
+        list.innerHTML = '';
+        const missing = [...chosen].filter((v) => !options.some((o) => optValue(o) === v));
+        const all = [...options, ...missing.map((v) => ({ value: v, label: `${v} (saved — not listed now)` }))];
+        for (const opt of all) {
+          const row = document.createElement('label');
+          row.className = 'multiselect-row';
+          const text = document.createElement('span');
+          text.className = 'check-label';
+          text.textContent = optLabel(opt);
+          const toggle = document.createElement('span');
+          toggle.className = 'switch';
+          const input = document.createElement('input');
+          input.type = 'checkbox';
+          input.value = optValue(opt);
+          input.checked = saved === null && !touched && spec.allByDefault ? true : chosen.has(input.value);
+          if (input.checked) chosen.add(input.value);
+          const track = document.createElement('span');
+          track.className = 'track';
+          toggle.append(input, track);
+          row.append(text, toggle);
+          input.addEventListener('change', () => {
+            touched = true;
+            commit(0);
+          });
+          list.appendChild(row);
+        }
+        if (!all.length) {
+          const none = document.createElement('div');
+          none.className = 'multiselect-empty';
+          none.textContent = 'Nothing to choose from yet.';
+          list.appendChild(none);
+        }
+      };
+      fill(Array.isArray(spec.options) ? spec.options : []);
+      if (spec.optionsRoute) fetchOptions(spec.optionsRoute).then((opts) => { if (opts) fill(opts); });
+      field.append(span, list);
+      inputs.set(key, () => (saved === null && !touched
+        ? undefined
+        : [...list.querySelectorAll('input:checked')].map((input) => input.value)));
     } else if (type === 'color') {
       // A swatch picker; the value is always a #rrggbb string.
       field.classList.add('color-field');
@@ -1224,16 +1392,54 @@ function toggleSettingsPopover(tile, el) {
       span.textContent = label;
       const input = document.createElement('input');
       input.type = 'color';
-      input.value = colorHex(current, colorHex(spec?.default, '#2ee59a'));
+      input.value = colorHex(value, colorHex(spec?.default, '#2ee59a'));
       field.append(span, input);
       inputs.set(key, () => input.value);
       live(input, 'input', 150);   // dragging the picker fires continuously
+    } else if (type === 'template') {
+      // Text with placeholders, built by dragging (or clicking) the variables
+      // the module offers into it — nobody should have to remember the names.
+      field.classList.add('template-field');
+      const span = document.createElement('span');
+      span.textContent = label;
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.spellcheck = false;
+      input.value = value === undefined || value === null ? '' : String(value);
+      const vars = document.createElement('div');
+      vars.className = 'template-vars';
+      for (const v of Array.isArray(spec.variables) ? spec.variables : []) {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'template-var';
+        chip.draggable = true;
+        const token = optValue(v);
+        chip.textContent = optLabel(v);
+        chip.title = `Drag or click to insert ${token}`;
+        chip.addEventListener('dragstart', (e) => {
+          e.dataTransfer.setData('text/plain', token);
+          e.dataTransfer.effectAllowed = 'copy';
+        });
+        chip.addEventListener('click', (e) => {
+          e.preventDefault();
+          const start = input.selectionStart ?? input.value.length;
+          const end = input.selectionEnd ?? start;
+          input.setRangeText(token, start, end, 'end');
+          input.focus();
+          commit(0);
+        });
+        vars.appendChild(chip);
+      }
+      field.append(span, input, vars);
+      inputs.set(key, () => input.value);
+      live(input, 'input', 400);
+      live(input, 'change');
     } else {
       const span = document.createElement('span');
       span.textContent = label;
       const input = document.createElement('input');
       input.type = type === 'number' ? 'number' : (type === 'password' ? 'password' : 'text');
-      input.value = current === undefined || current === null ? '' : String(current);
+      input.value = value === undefined || value === null ? '' : String(value);
       field.append(span, input);
       inputs.set(key, () => (type === 'number' ? Number(input.value) : input.value));
       live(input, 'input', 400);   // mid-word is not the moment to remount
@@ -1245,23 +1451,62 @@ function toggleSettingsPopover(tile, el) {
       help.textContent = spec.help;
       field.appendChild(help);
     }
-    container.appendChild(field);
+
+    if (current && switchInput && key === current.toggleKey) {
+      // The group's on/off lives in its title row, never in the body, and a
+      // click on it must not fold a <details>.
+      const grp = current;
+      field.classList.add('group-toggle');
+      field.addEventListener('click', (e) => e.stopPropagation());
+      const sync = () => grp.el.classList.toggle('is-off', !switchInput.checked);
+      switchInput.addEventListener('change', sync);
+      sync();
+      grp.title.appendChild(field);
+    } else {
+      container.appendChild(field);
+    }
   }
 
-  // Nothing to press: click away, press Escape, or click the gear again.
+  // Nothing to press: click away, press Escape, the ✕, or the gear again.
   // (The gear's own click stops propagating, so it toggles rather than
   // closing and reopening.)
   const closeOnClick = (e) => { if (!pop.contains(e.target)) closeSettingsPopovers(); };
   const closeOnEscape = (e) => { if (e.key === 'Escape') closeSettingsPopovers(); };
+  const keepInView = () => clampPopover(pop);
   pop._cleanup = () => {
     document.removeEventListener('click', closeOnClick);
     document.removeEventListener('keydown', closeOnEscape);
+    window.removeEventListener('resize', keepInView);
   };
   document.addEventListener('click', closeOnClick);
   document.addEventListener('keydown', closeOnEscape);
+  window.addEventListener('resize', keepInView);
+
+  // Moved by its bar.
+  bar.addEventListener('pointerdown', (e) => {
+    if (e.target === closeBtn || (e.button !== 0 && e.pointerType === 'mouse')) return;
+    e.preventDefault();
+    bar.setPointerCapture(e.pointerId);
+    const dx = e.clientX - pop.offsetLeft;
+    const dy = e.clientY - pop.offsetTop;
+    const onMove = (ev) => {
+      pop.style.left = (ev.clientX - dx) + 'px';
+      pop.style.top = (ev.clientY - dy) + 'px';
+      clampPopover(pop);
+    };
+    const onUp = () => {
+      bar.removeEventListener('pointermove', onMove);
+      bar.removeEventListener('pointerup', onUp);
+      bar.removeEventListener('pointercancel', onUp);
+    };
+    bar.addEventListener('pointermove', onMove);
+    bar.addEventListener('pointerup', onUp);
+    bar.addEventListener('pointercancel', onUp);
+  });
 
   pop.addEventListener('pointerdown', (e) => e.stopPropagation());
-  el.appendChild(pop);
+  document.body.appendChild(pop);
+  placePopover(pop, el.getBoundingClientRect());
 }
 
 /** Tear a tile's module down and start it again (settings changed). */
@@ -1324,16 +1569,17 @@ function renderAddMenu(menu) {
         // An entry that allows one tile at most is offered greyed out once
         // that tile exists — a second Send box would only confuse.
         const placed = entry.single && tiles.some((t) => t.module === man.id && t.variant === String(entry.id));
+        // Descriptions ride along as tooltips: the list stays a list.
         menu.appendChild(menuItem(entry.name, () => {
           menu.hidden = true;
           addTile(man.id, entry);
-        }, { sub: placed ? 'Already on this dashboard' : (entry.description || ''), disabled: placed }));
+        }, { disabled: placed, title: placed ? 'Already on this dashboard' : (entry.description || '') }));
       }
     } else {
       menu.appendChild(menuItem(man.name, () => {
         menu.hidden = true;
         addTile(man.id);
-      }, { sub: man.description || '' }));
+      }, { title: man.description || '' }));
     }
   }
 }
