@@ -239,6 +239,17 @@ function fieldFor(key, spec, value, passwordSet, moduleId) {
     input.value = hex(value, hex(spec?.default, '#2ee59a'));
     field.append(span, input);
     read = () => input.value;
+  } else if (type === 'text') {
+    // A multi-line string — one item per line by convention (a list of
+    // presets, say). Stored as-is, newlines included.
+    const span = document.createElement('span');
+    span.textContent = label;
+    const textarea = document.createElement('textarea');
+    textarea.rows = 5;
+    textarea.spellcheck = false;
+    textarea.value = value === undefined || value === null ? '' : String(value);
+    field.append(span, textarea);
+    read = () => textarea.value;
   } else {
     const span = document.createElement('span');
     span.textContent = label;

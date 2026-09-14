@@ -135,6 +135,22 @@ body { overflow: auto; }
 .module-form { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px; }
 .module-form .field { max-width: 420px; }
 
+/* a multi-line string (manifest type `text`): the same box as the other
+   inputs (those rules live in the shell's style.css), a few lines tall */
+.field textarea {
+  padding: 7px 9px;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.4;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  resize: vertical;
+  min-height: 72px;
+}
+.field textarea:focus { outline: none; border-color: var(--accent); }
+
 /* endpoint fields: every module's upstream is entered the same way */
 .field .endpoint-row { display: flex; align-items: center; gap: 7px; }
 .endpoint-row .ep-host { flex: 1; min-width: 0; }

@@ -104,7 +104,7 @@ the app); its settings are kept for a later reinstall.
 Both schemas map field names to specs:
 
 ```
-{ "type": "string" | "number" | "boolean" | "switch" | "select" | "color" | "password" | "endpoint",
+{ "type": "string" | "text" | "number" | "boolean" | "switch" | "select" | "color" | "password" | "endpoint",
   "label": "Shown next to the field",
   "default": <value>,
   "group": "Section heading",                         // optional; see below
@@ -125,6 +125,9 @@ shown or enabled, off means hidden or disabled, and the label shouldn't say
 so twice.
 `color` renders a swatch picker and stores a `#rrggbb` string (give it a hex
 default; the tile applies it as a CSS custom property — see `pco-plan`).
+`text` is a multi-line string — a `<textarea>` in the admin page, stored with
+its newlines; one item per line is the convention (the `slack` module's quick
+replies). Admin config only.
 
 `group` gathers consecutive fields under a labeled subsection in the admin
 page, so a module with several distinct concerns (e.g. a ProPresenter

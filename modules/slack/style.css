@@ -1,0 +1,424 @@
+/* Slack module — scoped to its tiles, shell variables only.
+   --sl-size (per tile, from the Text size setting) drives every font size. */
+
+[data-module="slack"] .sl-wrap {
+  --sl-size: 14px;
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  container-type: size;
+  font-size: var(--sl-size);
+  color: var(--text);
+}
+[data-module="slack"] .sl-wrap:focus { outline: none; }
+[data-module="slack"] [hidden] { display: none !important; }
+
+/* ── degraded banner (transcript) ── */
+
+[data-module="slack"] .sl-banner {
+  flex: none;
+  padding: 4px 10px;
+  font-size: 0.8em;
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 35%, var(--border));
+}
+[data-module="slack"] .sl-banner.is-error {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+}
+
+/* ── transcript stream ── */
+
+[data-module="slack"] .sl-stream {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 6px 10px 10px;
+  overscroll-behavior: contain;
+}
+
+[data-module="slack"] .sl-empty {
+  color: var(--muted);
+  font-size: 0.9em;
+  text-align: center;
+  padding: 14% 10px 0;
+  line-height: 1.45;
+}
+[data-module="slack"] .sl-empty.is-error { color: var(--danger); }
+
+[data-module="slack"] .sl-entry {
+  padding: 4px 6px;
+  border-radius: 8px;
+  line-height: 1.4;
+}
+[data-module="slack"] .sl-entry:hover { background: var(--bg); }
+[data-module="slack"] .sl-entry.sl-new { animation: sl-fade-in 0.25s ease-out; }
+@keyframes sl-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* a message from this machine's own account */
+[data-module="slack"] .sl-entry.sl-me {
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+[data-module="slack"] .sl-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  margin-bottom: 1px;
+}
+[data-module="slack"] .sl-name {
+  font-weight: 700;
+  font-size: 0.86em;
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-module="slack"] .sl-bot .sl-name { color: var(--muted); }
+[data-module="slack"] .sl-time {
+  flex: none;
+  font-size: 0.72em;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+[data-module="slack"] .sl-wrap:not(.show-times) .sl-time { display: none; }
+[data-module="slack"] .sl-wrap:not(.show-names) .sl-msg > .sl-meta,
+[data-module="slack"] .sl-wrap:not(.show-names) .sl-reply > .sl-meta { display: none; }
+[data-module="slack"] .sl-wrap.show-times:not(.show-names) .sl-msg > .sl-meta,
+[data-module="slack"] .sl-wrap.show-times:not(.show-names) .sl-reply > .sl-meta { display: flex; }
+[data-module="slack"] .sl-wrap.show-times:not(.show-names) .sl-name { display: none; }
+[data-module="slack"] .sl-wrap:not(.show-system) .sl-entry.sl-system { display: none; }
+
+[data-module="slack"] .sl-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+[data-module="slack"] .sl-text b { font-weight: 700; }
+[data-module="slack"] .sl-text i { font-style: italic; }
+[data-module="slack"] .sl-text s { color: var(--muted); }
+[data-module="slack"] .sl-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  border: 1px solid var(--border);
+}
+[data-module="slack"] .sl-code.sl-block {
+  display: block;
+  padding: 4px 8px;
+  margin: 3px 0;
+  white-space: pre-wrap;
+}
+[data-module="slack"] .sl-edited {
+  font-size: 0.75em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* thread replies nest under their parent; without them, a muted count */
+[data-module="slack"] .sl-replies {
+  margin: 4px 0 0 10px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+[data-module="slack"] .sl-reply { font-size: 0.92em; }
+[data-module="slack"] .sl-replycount {
+  margin-top: 2px;
+  font-size: 0.75em;
+  color: var(--muted);
+}
+
+/* system lines: joins, leaves, topic changes */
+[data-module="slack"] .sl-sysline {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 0.82em;
+  color: var(--muted);
+  font-style: italic;
+}
+[data-module="slack"] .sl-sysline .sl-time { font-style: normal; }
+
+[data-module="slack"] .sl-jump {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font: inherit;
+  font-size: 0.8em;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+/* ── send / quick replies: the gate ── */
+
+[data-module="slack"] .sl-gate,
+[data-module="slack"] .sl-compose {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 10px;
+  overflow: auto;
+}
+
+[data-module="slack"] .sl-note {
+  margin: auto;
+  padding: 10px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.9em;
+  line-height: 1.45;
+}
+[data-module="slack"] .sl-note.is-error { color: var(--danger); }
+
+/* The pad never shrinks below its content (min-height stays `auto` on it
+   and on the key grid) — a shrunken grid would spill its rows under the
+   message line, which then swallows the taps. A tile too short for it
+   scrolls instead (.sl-gate has overflow: auto). */
+[data-module="slack"] .sl-pad {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-width: 340px;
+  width: 100%;
+  margin: 0 auto;
+}
+[data-module="slack"] .sl-pad.sl-shake { animation: sl-shake 0.4s ease; }
+@keyframes sl-shake {
+  10%, 90% { transform: translateX(-2px); }
+  20%, 80% { transform: translateX(3px); }
+  30%, 50%, 70% { transform: translateX(-5px); }
+  40%, 60% { transform: translateX(5px); }
+}
+
+/* one line: "Enter PIN · sending as Apollo Beach → #production" */
+[data-module="slack"] .sl-pad-head {
+  flex: none;
+  text-align: center;
+  font-size: 0.8em;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-module="slack"] .sl-pad-head b { font-weight: 700; color: var(--text); }
+
+[data-module="slack"] .sl-dots {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  height: 14px;
+}
+[data-module="slack"] .sl-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid var(--muted);
+  transition: background 0.12s, border-color 0.12s;
+}
+[data-module="slack"] .sl-dot.on { background: var(--accent); border-color: var(--accent); }
+
+[data-module="slack"] .sl-keys {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(4, minmax(24px, 1fr));
+  gap: 5px;
+}
+[data-module="slack"] .sl-key {
+  min-width: 0;
+  min-height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text) 5%, var(--panel));
+  color: var(--text);
+  font: inherit;
+  font-size: clamp(13px, 9cqh, 26px);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.1s;
+}
+[data-module="slack"] .sl-key:hover { background: var(--border); }
+[data-module="slack"] .sl-key:active { background: color-mix(in srgb, var(--accent) 30%, var(--panel)); }
+[data-module="slack"] .sl-key svg { width: 1.1em; height: 1.1em; }
+[data-module="slack"] .sl-key-back { color: var(--muted); }
+[data-module="slack"] .sl-key-ok { background: var(--accent); color: var(--accent-text); border-color: transparent; }
+[data-module="slack"] .sl-key-ok:hover { background: color-mix(in srgb, var(--accent) 85%, var(--text)); }
+[data-module="slack"] .sl-key-ok:disabled {
+  background: color-mix(in srgb, var(--accent) 25%, var(--panel));
+  color: var(--muted);
+  cursor: default;
+}
+
+[data-module="slack"] .sl-pad-msg {
+  flex: none;
+  min-height: 1.1em;
+  text-align: center;
+  font-size: 0.78em;
+  line-height: 1.1;
+  color: var(--muted);
+}
+[data-module="slack"] .sl-pad-msg.is-error { color: var(--danger); font-weight: 600; }
+
+/* ── send / quick replies: unlocked ── */
+
+[data-module="slack"] .sl-compose { gap: 6px; }
+
+[data-module="slack"] .sl-compose-head {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.8em;
+  color: var(--muted);
+}
+[data-module="slack"] .sl-sending {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-module="slack"] .sl-lock-link {
+  flex: none;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+[data-module="slack"] .sl-lock-link:hover { color: var(--text); background: var(--border); }
+
+[data-module="slack"] .sl-input {
+  flex: 1;
+  min-height: 2.6em;
+  width: 100%;
+  resize: none;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.4;
+}
+[data-module="slack"] .sl-input:focus { outline: none; border-color: var(--accent); }
+
+[data-module="slack"] .sl-compose-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 1.6em;
+}
+[data-module="slack"] .sl-msg {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.8em;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-module="slack"] .sl-msg.is-flash { color: var(--accent); font-weight: 700; }
+[data-module="slack"] .sl-msg.is-error { color: var(--danger); white-space: normal; font-weight: 600; }
+[data-module="slack"] .sl-countdown {
+  flex: none;
+  font-size: 0.75em;
+  color: var(--warn);
+  font-variant-numeric: tabular-nums;
+}
+[data-module="slack"] .sl-sendbtn {
+  flex: none;
+  padding: 6px 16px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+[data-module="slack"] .sl-sendbtn:hover { background: color-mix(in srgb, var(--accent) 85%, var(--text)); }
+[data-module="slack"] .sl-sendbtn:disabled { opacity: 0.6; cursor: default; }
+
+/* the preset grid: big targets, labels wrap */
+[data-module="slack"] .sl-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr));
+  grid-auto-rows: minmax(44px, auto);
+  gap: 6px;
+  align-content: start;
+  overflow-y: auto;
+}
+[data-module="slack"] .sl-grid .sl-note { grid-column: 1 / -1; }
+[data-module="slack"] .sl-quick {
+  min-width: 0;
+  min-height: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.1s;
+}
+[data-module="slack"] .sl-quick:hover { background: color-mix(in srgb, var(--accent) 22%, var(--panel)); }
+[data-module="slack"] .sl-quick:active { background: color-mix(in srgb, var(--accent) 40%, var(--panel)); }
+[data-module="slack"] .sl-quick.is-busy { opacity: 0.7; }
+[data-module="slack"] .sl-quick.is-sent {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--accent-text);
+}
+[data-module="slack"] .sl-quick-label { overflow-wrap: anywhere; }
+[data-module="slack"] .sl-quick-chan {
+  font-size: 0.72em;
+  font-weight: 500;
+  color: var(--muted);
+}
+[data-module="slack"] .sl-quick.is-sent .sl-quick-chan { color: inherit; }

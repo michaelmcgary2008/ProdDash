@@ -1,0 +1,100 @@
+{
+  "id": "slack",
+  "name": "Slack",
+  "version": "1.0.0",
+  "proddash": ">=1.4.0",
+  "description": "A Slack channel's live transcript, plus PIN-protected sending as this location",
+  "client": "client.js",
+  "server": "server.js",
+  "style": "style.css",
+  "minSize": { "w": 2, "h": 2 },
+  "defaultSize": { "w": 4, "h": 4 },
+  "configGroups": {
+    "Slack account": {
+      "collapsed": "whenSet",
+      "help": "Create a Slack app in the workspace (api.slack.com/apps → Create New App → From scratch) and, under OAuth & Permissions → User Token Scopes, add channels:history, channels:read, groups:history, groups:read, chat:write and users:read (users:read.email is not needed). Sign in to Slack as this location's account — the one named for the campus — open the app's OAuth & Permissions page and press Install to Workspace (or Reinstall to Workspace), then copy the User OAuth Token (xoxp-…) it shows and paste it here: messages from this machine are then literally from the location. A bot token (xoxb-…) works too; it posts as the app, with \"Send as\" naming the location."
+    },
+    "Sending": {
+      "toggle": "sendEnabled",
+      "help": "Messages leave this machine only from a Send or Quick replies tile, and only after the PIN is entered on that tile — every tile asks again after Auto-lock minutes without a send. Sending stays refused until a 4–8 digit PIN is set here. Quick replies are one per line, Label | Message, with an optional | #channel-name to send that one somewhere other than the transcript channel."
+    }
+  },
+  "configSchema": {
+    "token": {
+      "type": "password",
+      "label": "Token",
+      "default": "",
+      "group": "Slack account",
+      "help": "The location account's User OAuth Token (xoxp-…, recommended) or a Bot User OAuth Token (xoxb-…)."
+    },
+    "sendAs": {
+      "type": "string",
+      "label": "Send as",
+      "default": "",
+      "group": "Slack account",
+      "help": "Only used with a bot token — a user token always sends as its own account; needs the chat:write.customize scope."
+    },
+    "channel": {
+      "type": "select",
+      "label": "Channel",
+      "default": "",
+      "group": "Channel",
+      "optionsRoute": "/channels",
+      "help": "The channel the transcript shows and messages go to by default. Only channels the account has joined are listed — join one in Slack first."
+    },
+    "pollSeconds": {
+      "type": "number",
+      "label": "Refresh interval (s)",
+      "default": 2,
+      "group": "Transcript",
+      "help": "How often the channel is re-read (1 s at the fastest)."
+    },
+    "historyCount": {
+      "type": "number",
+      "label": "Messages kept",
+      "default": 40,
+      "group": "Transcript"
+    },
+    "includeReplies": {
+      "type": "switch",
+      "label": "Thread replies",
+      "default": false,
+      "group": "Transcript"
+    },
+    "sendEnabled": {
+      "type": "switch",
+      "label": "Sending",
+      "default": false,
+      "group": "Sending"
+    },
+    "pin": {
+      "type": "password",
+      "label": "PIN",
+      "default": "",
+      "group": "Sending",
+      "help": "4–8 digits; asked every time a send tile opens."
+    },
+    "pinIdleMinutes": {
+      "type": "number",
+      "label": "Auto-lock (min)",
+      "default": 10,
+      "group": "Sending"
+    },
+    "quickReplies": {
+      "type": "text",
+      "label": "Quick replies",
+      "default": "",
+      "group": "Sending",
+      "help": "One per line: Label | Message. Add | #channel-name to send one somewhere else."
+    }
+  },
+  "instanceGroups": {
+    "Transcript": { "collapsed": false }
+  },
+  "instanceSchema": {
+    "textSize": { "type": "number", "label": "Text size (px)", "default": 14 },
+    "showTimes": { "type": "switch", "label": "Timestamps", "default": true, "group": "Transcript" },
+    "showNames": { "type": "switch", "label": "Names", "default": true, "group": "Transcript" },
+    "showSystem": { "type": "switch", "label": "System lines", "default": true, "group": "Transcript" }
+  }
+}
