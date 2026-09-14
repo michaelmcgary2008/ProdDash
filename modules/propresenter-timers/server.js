@@ -82,6 +82,7 @@ const http = require('http');
 const path = require('path');
 const { spawn } = require('child_process');
 const { createLtcListener } = require('./ltc-listener');
+const manifest = require('./module.json');
 
 /** This module's id — left out of provider discovery (we don't consume ourselves). */
 const SELF_ID = 'propresenter-timers';
@@ -873,6 +874,67 @@ function createModuleDiscovery({ shellPort, log, flags, onAdd, onRemove }) {
   };
 }
 
+/* ── what each tile's gear offers ─────────────────────────────────────
+   module.json's instanceSchema is the full set — what an "All timers" tile
+   offers, and what the shell falls back to for a tile with no picker entry
+   (one added before the picker listed timers). A solo tile shows one card,
+   so its picker entry carries a schema of just what that card can use, and
+   the shell renders that instead (module guide, "Presenting multiple
+   tiles"): a Message Timer has no use for the clock's format switches.
+   Every field is drawn from the manifest so it is defined once; the client
+   falls back to its own defaults for keys a slimmer schema leaves out. */
+
+const FULL_SCHEMA = manifest.instanceSchema || {};
+const FULL_GROUPS = manifest.instanceGroups || {};
+
+/**
+ * A gear schema of just `keys` (manifest order kept) with the groups they
+ * use. `loose` names keys shown outside their group; `groups` overrides a
+ * group's meta. A group toggle whose switch isn't among the keys is dropped.
+ */
+function gearOf(keys, { loose = [], groups = {} } = {}) {
+  const instanceSchema = {};
+  for (const key of Object.keys(FULL_SCHEMA)) {
+    if (!keys.includes(key)) continue;
+    const spec = { ...FULL_SCHEMA[key] };
+    if (loose.includes(key)) delete spec.group;
+    instanceSchema[key] = spec;
+  }
+  const instanceGroups = {};
+  for (const spec of Object.values(instanceSchema)) {
+    if (!spec.group || instanceGroups[spec.group]) continue;
+    const meta = { ...(FULL_GROUPS[spec.group] || {}), ...(groups[spec.group] || {}) };
+    if (meta.toggle && !(meta.toggle in instanceSchema)) delete meta.toggle;
+    instanceGroups[spec.group] = meta;
+  }
+  return { instanceSchema, instanceGroups };
+}
+
+const COLOURS = ['runningColor', 'warningColor', 'overrunColor', 'idleColor'];
+/** With one card there is little else to see: the colours start unfolded. */
+const OPEN_COLOURS = { groups: { Colours: { collapsed: false } } };
+
+const GEAR = {
+  /** Every source, the headings, the clock's format, the tones. */
+  all: { instanceSchema: FULL_SCHEMA, instanceGroups: FULL_GROUPS },
+  /** One ProPresenter or module timer: its lines, and the tone its digits take per state. */
+  timer: gearOf(['showStatus', ...COLOURS], { loose: ['showStatus'], ...OPEN_COLOURS }),
+  /** The timecode: running, no signal (warning) and stopped (idle) — it never overruns. */
+  ltc: gearOf(['showStatus', 'runningColor', 'warningColor', 'idleColor'], { loose: ['showStatus'], ...OPEN_COLOURS }),
+  /** The time of day: plain digits, so only how they read. */
+  clock: gearOf(['clockFormat', 'clockSeconds', 'clockDate']),
+  /** A clock another module offers: read like the clock, muted while it isn't running. */
+  providerClock: gearOf(['showStatus', 'clockFormat', 'clockSeconds', 'idleColor'], { loose: ['showStatus'], ...OPEN_COLOURS }),
+};
+
+/** The gear a solo card of this timer gets — by what the card can show. */
+function gearFor(source, timer) {
+  if (source.kind === 'ltc') return GEAR.ltc;
+  if (source.kind === 'clock') return GEAR.clock;
+  if (timer.kind === 'clock') return GEAR.providerClock;
+  return GEAR.timer;
+}
+
 /* ── the module ───────────────────────────────────────────────────────── */
 
 /** Sort order of the sources in the tile: fixed ones first, then PCO Plan, then other modules by name. */
@@ -1058,19 +1120,23 @@ module.exports = {
    * The Add-tile picker's entries: "All timers" plus one solo card per known
    * timer from any source (moduleApi.variant carries the entry id — 'all',
    * or 'solo:<source>:<timer id>'; the older 'timer:<uuid>' / 'ltc' ids keep
-   * working). Answered from the merged state, never from upstream — the
-   * picker must stay instant and a dead upstream must not stall it.
+   * working). Each entry carries the gear settings that fit its tile (see
+   * GEAR above); descriptions are the picker's tooltips, one sentence each.
+   * Answered from the merged state, never from upstream — the picker must
+   * stay instant and a dead upstream must not stall it.
    */
   tiles() {
     const state = current ? current.getState() : null;
     if (!state) return [];
-    const KIND_LABEL = { countdown: 'Countdown', elapsed: 'Elapsed timer', clock: 'Clock' };
+    const KIND_WORD = { countdown: 'countdown', elapsed: 'elapsed timer', clock: 'clock' };
     const oneCard = { defaultSize: { w: 3, h: 2 }, minSize: { w: 2, h: 1 } };
-    const out = [{ id: 'all', name: 'All timers', description: 'Every timer, clock and timecode — choose which per tile' }];
+    const out = [{ id: 'all', name: 'All timers', description: 'Every timer and clock, grouped by source', ...GEAR.all }];
     for (const src of state.sources) {
       for (const t of src.timers) {
-        const what = src.id === 'ltc' ? 'Incoming timecode (HH:MM:SS:FF)' : src.id === 'clock' ? 'Time of day' : KIND_LABEL[t.kind] || 'Timer';
-        out.push({ id: `solo:${src.id}:${t.id}`, name: t.label, description: `${src.label} · ${what}`, ...oneCard });
+        const description = src.kind === 'ltc' ? 'The incoming LTC timecode on its own'
+          : src.kind === 'clock' ? 'The time of day on its own'
+            : `This ${src.label} ${KIND_WORD[t.kind] || 'timer'} on its own`;
+        out.push({ id: `solo:${src.id}:${t.id}`, name: t.label, description, ...oneCard, ...gearFor(src, t) });
       }
     }
     return out;

@@ -18,6 +18,10 @@
    "Timers ▾" header menu, which hides any single timer — keyed `source:id`
    and saved with the layout via saveInstanceSettings. The header can be
    hidden by the user, so the static switches stay the primary controls.
+   A solo tile's gear carries only the settings its one card can use (the
+   picker entry's own schema — see tiles() in server.js), so a setting may
+   simply be absent here: every read goes through pref(), which falls back
+   to DEFAULTS rather than to whatever schema the tile happens to have.
 
    Feedback — the state colours, and the thresholds behind them:
      running elapsed, no planned length            running
@@ -55,6 +59,22 @@ const WARN_FRACTION = 0.1;
 const PAINT_MS = 200;
 
 const LTC_KEY = 'ltc:ltc';
+
+/** What the tile assumes for a setting its schema doesn't carry (a solo
+    tile offers only what applies to its card) or that was never saved. The
+    switches default to on, the clock to 24-hour with seconds and no date —
+    the same values module.json gives the full "All timers" schema. */
+const DEFAULTS = {
+  showClock: true,
+  showProPresenter: true,
+  showLtc: true,
+  showModules: true,
+  showHeadings: true,
+  showStatus: true,
+  clockFormat: '24h',
+  clockSeconds: true,
+  clockDate: false,
+};
 
 /* ── SMPTE timecode math (module-scope, exported for tests) ─────────
    The server anchors us ~4×/s with { time, fps, df, ageMs }; the card
@@ -174,6 +194,12 @@ export default function create({ root, moduleApi }) {
   let needFit = true;
 
   const settings = () => moduleApi.instanceSettings;
+  /** One setting, resolved here: what this tile saved, else DEFAULTS — never
+      whatever its (possibly slimmer) schema would or wouldn't default. */
+  const pref = (key) => {
+    const v = settings()[key];
+    return v === undefined || v === null ? DEFAULTS[key] : v;
+  };
   const keyOf = (source, timer) => `${source.id}:${timer.id}`;
 
   /* Per-tile hidden timers, keyed source:id. Layouts saved by the earlier
@@ -324,7 +350,7 @@ export default function create({ root, moduleApi }) {
 
   function sourceShown(source) {
     const key = SOURCE_SWITCH[source.kind] || 'showModules';
-    return settings()[key] !== false;
+    return pref(key) !== false;
   }
 
   /** [{ id, source, items: [{ key, source, timer } | { key, missing }] }] */
@@ -424,13 +450,12 @@ export default function create({ root, moduleApi }) {
   /* ── clocks ─────────────────────────────────────────────────────── */
 
   function clockOptions() {
-    const s = settings();
-    const h12 = s.clockFormat === '12h';
+    const h12 = pref('clockFormat') === '12h';
     return {
       hour12: h12,
       hour: h12 ? 'numeric' : '2-digit',
       minute: '2-digit',
-      ...(s.clockSeconds !== false ? { second: '2-digit' } : {}),
+      ...(pref('clockSeconds') !== false ? { second: '2-digit' } : {}),
     };
   }
 
@@ -529,7 +554,7 @@ export default function create({ root, moduleApi }) {
   function paint() {
     if (!state) return;
     const now = serverNow();
-    const showStatus = settings().showStatus !== false;
+    const showStatus = pref('showStatus') !== false;
     let charsChanged = false;
     for (const card of cards.values()) {
       const { item } = card;
@@ -559,7 +584,7 @@ export default function create({ root, moduleApi }) {
         } else if (source.kind === 'clock') {
           text = wallClockText();
           tone = 'plain';
-          statusText = settings().clockDate ? dateText() : '';
+          statusText = pref('clockDate') ? dateText() : '';
           statusTone = 'muted';
         } else {
           text = providerClockText(timer, source, now);
@@ -664,9 +689,8 @@ export default function create({ root, moduleApi }) {
       wrap.classList.toggle('tm-mono', mono);
       needFit = true;
     }
-    const s = settings();
-    const showHeadings = !solo && s.showHeadings !== false;
-    const showStatus = s.showStatus !== false;
+    const showHeadings = !solo && pref('showHeadings') !== false;
+    const showStatus = pref('showStatus') !== false;
     wrap.classList.toggle('tm-headings', showHeadings);
     wrap.classList.toggle('tm-nostatus', !showStatus);
 
