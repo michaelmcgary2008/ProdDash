@@ -350,6 +350,12 @@ Everything you add is removed automatically when your instance stops, so a
 remount never duplicates controls. Keep them compact (icon buttons, short
 labels): the title bar is 32 px tall and shared with the tile's name.
 
+**Text size lives here, not in the gear popover.** A module whose text can
+be sized offers A− / A+ header buttons that persist through
+`saveInstanceSettings({ textSize })` and reads the value back with a sane
+fallback; it does not also expose a "Text size" number field in
+`instanceSchema` — one control per setting.
+
 One more thing to know: the user can hide the whole title bar with the
 small notch on its bottom edge (a clean-view mode for wall displays). Your
 controls disappear with it, so nothing essential — status, reconnects,
