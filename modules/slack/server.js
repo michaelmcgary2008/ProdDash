@@ -4,19 +4,40 @@
  * Slack — server part.
  *
  * One Slack Web API connection per ProdDash machine — the campus's shared
- * location account (a user token), or a bot — polled for the configured
- * channel's recent history and fanned out to every tile over SSE, plus
- * PIN-gated sending from this machine so a message reads as coming from the
- * location. Browsers never talk to Slack; the token and the PIN stay here.
+ * location account (a user token), or a bot — polling the configured
+ * channels' recent history (one poller per channel, all inside one rate
+ * budget) and fanning the lot out to every tile over SSE, plus PIN-gated
+ * sending from this machine so a message reads as coming from the location.
+ * Browsers never talk to Slack; the token and the PIN stay here.
  *
- *   GET  /state      snapshot: identity, channel, messages, sending state
+ *   GET  /state      snapshot: identity, channels (keyed by id), sending state
  *   GET  /stream     SSE `state` events (change-detected, heartbeated)
- *   GET  /channels   admin select options — the channels the account is in
+ *   GET  /channels   admin multiselect options — the channels the account is in
  *   POST /unlock     { pin } → { token, expiresAt }   (constant-time, lockout)
  *   POST /lock       Bearer → forget that unlock token
  *   GET  /quick      Bearer → preset labels + indexes (never the message text)
- *   POST /send       Bearer, { text, channel? } → chat.postMessage
- *   POST /quick      Bearer, { index } → post that preset
+ *   POST /send       Bearer, { text, channel } → chat.postMessage
+ *   POST /quick      Bearer, { index, channel } → post that preset
+ *
+ * `channel` on /send and /quick must be one of the configured channel ids
+ * (400 otherwise): a PIN-unlocked browser chooses among the admin's channels,
+ * never an arbitrary one. A quick reply with its own "| #channel" ignores the
+ * request's channel — an explicit binding wins over the selection.
+ *
+ * Rate budget. Slack allows an internal app roughly 50+ conversations.history
+ * calls a minute per token (Tier 3). The module keeps all its pollers under
+ * HISTORY_BUDGET_PER_MIN (40) so conversations.replies, users.info and sends
+ * have room:
+ *
+ *   interval per channel = max(pollSeconds, ceil(channels × 60 / 40)) seconds
+ *
+ *   1 channel  → max(2, ceil(1.5)) = 2 s   (30 history calls/min)
+ *   2 channels → max(2, ceil(3))   = 3 s   (40/min)
+ *   3 channels → max(2, ceil(4.5)) = 5 s   (36/min)
+ *   5 channels → max(2, ceil(7.5)) = 8 s   (37.5/min)
+ *
+ * Pollers are phase-staggered across that interval so they never fire in a
+ * burst; with no tile watching, every channel drops to IDLE_POLL_S.
  *
  * SLACK_API_BASE=http://127.0.0.1:24716/api points the module at
  * tools/slack-mock.js for development.
@@ -33,13 +54,20 @@ const REQUEST_TIMEOUT_MS = 10000;
 const HEARTBEAT_MS = 15000;
 /** Fastest allowed history poll; the admin default is 2 s. */
 const MIN_POLL_S = 1;
+/**
+ * conversations.history calls per minute the whole module allows itself.
+ * Slack gives an internal app's token roughly 50+ a minute (Tier 3); the
+ * rest is headroom for conversations.replies, users.info and sends. The
+ * per-channel interval follows from it — see pollIntervalMs().
+ */
+const HISTORY_BUDGET_PER_MIN = 40;
 /** With no tile watching, poll this slowly instead — the API budget is shared with sends. */
 const IDLE_POLL_S = 15;
 /** …once nothing has asked for /state or /stream for this long. */
 const IDLE_AFTER_MS = 30000;
 const HISTORY_MIN = 5;
 const HISTORY_MAX = 200;
-/** Thread fetches per poll (oldest parent first) — keeps a busy channel inside Tier 3. */
+/** Thread fetches per poll across the module, split between channels (at least one each). */
 const THREAD_FETCHES_PER_POLL = 3;
 const THREAD_REPLIES_LIMIT = 50;
 const USER_LOOKUPS_PER_POLL = 15;
@@ -50,6 +78,13 @@ const RETRY_NETWORK_MS = 10000;
 const RETRY_CONFIG_MS = 60000;
 /** "Join it in Slack" — someone may just have. */
 const RETRY_MEMBERSHIP_MS = 30000;
+/** The first read of each channel right after boot, one after another (then the phase-locked cadence). */
+const FIRST_READ_MS = 50;
+const FIRST_READ_STAGGER_MS = 250;
+/** A slot that has (nearly) passed is skipped rather than fired late. */
+const MIN_SLOT_GAP_MS = 200;
+/** tiles() waits at most this long for the first conversations.info answers after boot. */
+const NAMES_WAIT_MS = 1500;
 const PIN_RE = /^\d{4,8}$/;
 const PIN_MAX_WRONG = 5;
 const PIN_LOCKOUT_MS = 30000;
@@ -61,6 +96,38 @@ const UNLOCK_SWEEP_MS = 30000;
 
 /** Set by init(), read by routes() and tiles() — all rebuilt together on remount. */
 let current = null;
+
+/* ── config ─────────────────────────────────────────────────────────── */
+
+/**
+ * The configured channel ids, in admin order. `channels` is the multiselect
+ * (an array); a `channel` string is what 1.0.0 saved and is honoured as a
+ * one-item list until the admin saves the new field — the module never
+ * rewrites admin config itself.
+ */
+function configuredChannels(config) {
+  const out = [];
+  const add = (v) => {
+    const s = String(v ?? '').trim();
+    if (s && !out.includes(s)) out.push(s);
+  };
+  if (Array.isArray(config?.channels) && config.channels.length) config.channels.forEach(add);
+  else add(config?.channel);
+  return out;
+}
+
+/**
+ * Effective per-channel poll interval, in ms:
+ *
+ *   max(pollSeconds, ceil(channels × 60 / HISTORY_BUDGET_PER_MIN)) seconds
+ *
+ * so all channels together stay at or under the budget. With the default
+ * 2 s: 1 channel → 2 s, 2 → 3 s, 3 → 5 s, 4 → 6 s, 5 → 8 s, 10 → 15 s.
+ */
+function pollIntervalMs(pollSeconds, channelCount) {
+  const budgeted = Math.ceil((Math.max(1, channelCount) * 60) / HISTORY_BUDGET_PER_MIN);
+  return Math.max(MIN_POLL_S, pollSeconds, budgeted) * 1000;
+}
 
 /* ── Slack Web API ──────────────────────────────────────────────────── */
 
@@ -133,7 +200,7 @@ function describeError(err, ctx = {}) {
     case 'account_inactive': return 'The Slack account behind the token is deactivated (account_inactive)';
     case 'missing_scope': return `The token is missing the ${err.needed || 'required'} scope (missing_scope) — add it under OAuth & Permissions, reinstall, paste the new token`;
     case 'not_in_channel': return `${who} isn't a member of ${chan} — join it in Slack`;
-    case 'channel_not_found': return 'Channel not found (channel_not_found) — pick it again in Admin → Slack → Channel';
+    case 'channel_not_found': return `${chan} was not found (channel_not_found) — pick it again in Admin → Slack → Channels`;
     case 'is_archived': return `${chan} is archived (is_archived)`;
     case 'msg_too_long': return 'Message too long for Slack (msg_too_long)';
     case 'no_text': return 'Nothing to send (no_text)';
@@ -284,7 +351,8 @@ function pinMatches(given, expected) {
 
 /**
  * "Label | Message | #channel" per line. A line with no "|" is both its label
- * and its message; the channel (optional) is a name the account can see.
+ * and its message; the channel (optional) is a name the account can see —
+ * a reply that carries one always goes there, whatever transcript is selected.
  */
 function parseQuickReplies(text) {
   const out = [];
@@ -315,10 +383,13 @@ module.exports = {
     /* ── config ── */
     const token = String(config.token || '').trim();
     const sendAs = String(config.sendAs || '').trim();
-    const channelId = String(config.channel || '').trim();
-    const pollMs = Math.max(MIN_POLL_S, Number(config.pollSeconds) || 2) * 1000;
+    const channelIds = configuredChannels(config);
+    const pollSeconds = Math.max(MIN_POLL_S, Number(config.pollSeconds) || 2);
+    const pollMs = pollSeconds * 1000;
+    const intervalMs = pollIntervalMs(pollSeconds, channelIds.length);
     const historyCount = Math.min(HISTORY_MAX, Math.max(HISTORY_MIN, Math.trunc(Number(config.historyCount)) || 40));
     const includeReplies = Boolean(config.includeReplies);
+    const threadFetchesPerPoll = Math.max(1, Math.floor(THREAD_FETCHES_PER_POLL / Math.max(1, channelIds.length)));
     const sendEnabled = Boolean(config.sendEnabled);
     const pin = String(config.pin || '').trim();
     const pinOk = PIN_RE.test(pin);
@@ -329,27 +400,49 @@ module.exports = {
     let stopped = false;
     let identity = null;        // { kind: 'user'|'bot', name, handle, userId, team, botId }
     let authError = '';
-    let channel = null;         // { id, name, isMember, isPrivate }
-    let channelError = '';
-    let pollError = '';
-    let lastPollAt = 0;
-    let rawWindow = [];         // conversations.history messages, as Slack sent them (newest first)
-    const threads = new Map();  // parent ts -> { latestReply, replyCount, replies: [raw…] }
+    let authPromise = null;     // one auth.test in flight, shared by every poller
+    let rateLimitedUntil = 0;   // a 429 applies to the token, so every poller waits
+    const pollers = new Map();  // channel id -> poller (configured order)
     const users = new Map();    // user id -> { name, at }
     const pendingUsers = new Set();
     const channelNames = new Map(); // channel id -> name (from list/info calls)
     let channelList = { at: 0, channels: [] };
     let channelListPromise = null;
-    let snapshotCache = null;
     let lastSig = '';
     let lastInterest = Date.now();
-    let pollTimer = null;
-    let polling = false;
-    let pollAgain = false;
-    let currentIntervalMs = pollMs;
+    const epoch = Date.now();   // the phase-locked slots count from here
     const streams = new Set();
     const unlocks = new Map();     // token -> { expiresAt, lastSendAt, ip }
     const pinAttempts = new Map(); // ip -> { count, lockedUntil }
+
+    /**
+     * One channel's poller: its own window, thread cache, timer and error,
+     * sharing the token, the name caches and the SSE fan-out with the rest.
+     */
+    function makePoller(id, index) {
+      const ch = {
+        id,
+        index,
+        name: '',            // from conversations.info (or the channel list)
+        isMember: null,      // null until conversations.info has answered
+        isPrivate: false,
+        checked: false,      // conversations.info succeeded at least once
+        error: '',           // one sentence a tech can act on; '' while fine
+        errorKind: '',       // 'config' | 'membership' | 'poll' — decides the retry
+        lastPollAt: 0,
+        periodMs: intervalMs, // the cadence the last schedule used (for staleness)
+        rawWindow: [],       // conversations.history messages, as Slack sent them (newest first)
+        threads: new Map(),  // parent ts -> { latestReply, replyCount, replies: [raw…] }
+        messagesCache: null, // normalised window, rebuilt when it or a name changed
+        timer: null,
+        polling: false,
+        pollAgain: false,
+        settleFirst: null,
+      };
+      ch.firstRead = new Promise((resolve) => { ch.settleFirst = resolve; });
+      return ch;
+    }
+    channelIds.forEach((id, index) => pollers.set(id, makePoller(id, index)));
 
     /* ── names ── */
     function lookupUser(id) {
@@ -361,7 +454,11 @@ module.exports = {
     }
 
     function lookupChannel(id) {
-      return channelNames.get(id) || '';
+      return channelNames.get(id) || pollers.get(id)?.name || '';
+    }
+
+    function invalidateAll() {
+      for (const ch of pollers.values()) ch.messagesCache = null;
     }
 
     async function resolveUsers() {
@@ -382,6 +479,7 @@ module.exports = {
           if (err.code !== 'network' && err.code !== 'ratelimited') users.set(id, { name: id, at: Date.now() });
         }
       }));
+      if (changed) invalidateAll();
       return changed;
     }
 
@@ -409,6 +507,9 @@ module.exports = {
         }
         all.sort((a, b) => a.name.localeCompare(b.name));
         channelList = { at: Date.now(), channels: all };
+        // A poller that hasn't heard from conversations.info yet can take its name from here.
+        for (const ch of pollers.values()) if (!ch.name && channelNames.get(ch.id)) ch.name = channelNames.get(ch.id);
+        invalidateAll();
         return all;
       })();
       try {
@@ -419,9 +520,9 @@ module.exports = {
     }
 
     /** "#name" or a channel id → the channel id, or '' when the account can't see it. */
-    async function resolveChannel(ref) {
+    async function resolveChannelRef(ref) {
       const s = String(ref || '').trim();
-      if (!s) return channelId;
+      if (!s) return '';
       if (/^[CG][A-Z0-9]{6,}$/.test(s)) return s;
       const name = s.replace(/^#/, '').toLowerCase();
       let list = await loadChannelList();
@@ -461,14 +562,15 @@ module.exports = {
       return text;
     }
 
-    function normalize(m, parentTs = '') {
+    function normalize(m, ch, parentTs = '') {
       if (!m || typeof m !== 'object' || !m.ts) return null;
       if (m.subtype === 'tombstone') return null;
       const name = nameFor(m);
       const system = SYSTEM_SUBTYPES.has(m.subtype || '');
+      const chanLabel = ch.name ? '#' + ch.name : 'the channel';
       let text = textFor(m);
-      if (m.subtype === 'channel_join' || m.subtype === 'group_join') text = `${name} joined ${channel ? '#' + channel.name : 'the channel'}`;
-      else if (m.subtype === 'channel_leave' || m.subtype === 'group_leave') text = `${name} left ${channel ? '#' + channel.name : 'the channel'}`;
+      if (m.subtype === 'channel_join' || m.subtype === 'group_join') text = `${name} joined ${chanLabel}`;
+      else if (m.subtype === 'channel_leave' || m.subtype === 'group_leave') text = `${name} left ${chanLabel}`;
       const out = {
         id: String(m.ts),
         ts: String(m.ts),
@@ -485,11 +587,21 @@ module.exports = {
       else {
         out.replyCount = Math.max(0, Math.trunc(Number(m.reply_count)) || 0);
         if (includeReplies && out.replyCount) {
-          const t = threads.get(out.ts);
-          out.replies = t ? t.replies.map((r) => normalize(r, out.ts)).filter(Boolean) : [];
+          const t = ch.threads.get(out.ts);
+          out.replies = t ? t.replies.map((r) => normalize(r, ch, out.ts)).filter(Boolean) : [];
         }
       }
       return out;
+    }
+
+    function messagesOf(ch) {
+      if (!ch.messagesCache) {
+        ch.messagesCache = ch.rawWindow
+          .map((m) => normalize(m, ch))
+          .filter(Boolean)
+          .sort((a, b) => Number(a.ts) - Number(b.ts));
+      }
+      return ch.messagesCache;
     }
 
     function identityLabel() {
@@ -503,57 +615,89 @@ module.exports = {
       return identity.kind === 'bot' && sendAs ? sendAs : identity.name;
     }
 
+    function labelOf(ch) {
+      return `#${ch.name || lookupChannel(ch.id) || ch.id}`;
+    }
+
+    function isStale(ch) {
+      return ch.lastPollAt > 0 && Date.now() - ch.lastPollAt > 3 * ch.periodMs + 5000;
+    }
+
+    /** One channel's status as its transcript tile shows it (token trouble folded in). */
+    function channelStatus(ch) {
+      if (!token) return { state: 'error', message: 'No Slack token — paste the location account’s User OAuth Token in Admin → Slack' };
+      if (authError) return { state: 'error', message: authError };
+      if (!identity) return { state: 'connecting', message: 'Checking the Slack token…' };
+      if (ch.error) return { state: 'error', message: ch.error };
+      if (!ch.lastPollAt) return { state: 'connecting', message: `${labelOf(ch)} · first read…` };
+      if (isStale(ch)) return { state: 'connecting', message: `${labelOf(ch)} · last read ${Math.round((Date.now() - ch.lastPollAt) / 1000)} s ago` };
+      return { state: 'ok', message: `${labelOf(ch)} · live` };
+    }
+
+    /** The admin health line: who, which channels, what's wrong, sending. */
     function health() {
       if (!token) return { status: 'error', message: 'No Slack token — paste the location account’s User OAuth Token in Admin → Slack' };
       if (authError) return { status: 'error', message: authError };
       if (!identity) return { status: 'connecting', message: 'Checking the Slack token…' };
       const who = identityLabel();
-      if (!channelId) return { status: 'error', message: `${who} · pick a channel in Admin → Slack → Channel` };
-      if (channelError) return { status: 'error', message: `${who} · ${channelError}` };
-      if (!channel) return { status: 'connecting', message: `${who} · looking up the channel…` };
+      const list = [...pollers.values()];
+      if (!list.length) return { status: 'error', message: `${who} · pick channels in Admin → Slack → Channels` };
+      const names = list.map(labelOf).join(', ');
       const sending = !sendEnabled ? 'sending off' : !pinOk ? 'sending on — set a 4–8 digit PIN' : 'sending on';
-      if (pollError) return { status: 'error', message: `${who} · #${channel.name} · ${pollError}` };
-      if (!lastPollAt) return { status: 'connecting', message: `${who} · #${channel.name} · first read…` };
-      const age = Date.now() - lastPollAt;
-      if (age > 3 * currentIntervalMs + 5000) {
-        return { status: 'connecting', message: `${who} · #${channel.name} · last read ${Math.round(age / 1000)} s ago` };
+      const problems = [...new Set(list.filter((ch) => ch.error).map((ch) => (ch.error.includes(labelOf(ch)) ? ch.error : `${labelOf(ch)}: ${ch.error}`)))];
+      if (problems.length) return { status: 'error', message: `${who} · ${names} · ${problems.join(' · ')} · ${sending}` };
+      if (list.some((ch) => !ch.lastPollAt)) return { status: 'connecting', message: `${who} · ${names} · first read…` };
+      const stale = list.filter(isStale);
+      if (stale.length) {
+        const ago = stale.map((ch) => `${labelOf(ch)} last read ${Math.round((Date.now() - ch.lastPollAt) / 1000)} s ago`).join(', ');
+        return { status: 'connecting', message: `${who} · ${names} · ${ago}` };
       }
-      return { status: 'ok', message: `${who} · #${channel.name} · ${sending}` };
+      const cadence = intervalMs > pollMs ? ` · every ${intervalMs / 1000} s (rate budget)` : '';
+      return { status: 'ok', message: `${who} · ${names}${cadence} · ${sending}` };
+    }
+
+    function channelView(ch) {
+      return {
+        id: ch.id,
+        name: ch.name || lookupChannel(ch.id) || '',
+        isMember: ch.isMember,
+        isPrivate: ch.isPrivate,
+        messages: messagesOf(ch),
+        lastPollAt: ch.lastPollAt,
+        pollAge: ch.lastPollAt ? Date.now() - ch.lastPollAt : null,
+        error: ch.error,
+        status: channelStatus(ch),
+      };
     }
 
     function snapshot() {
-      if (snapshotCache) return snapshotCache;
-      const messages = rawWindow
-        .map((m) => normalize(m))
-        .filter(Boolean)
-        .sort((a, b) => Number(a.ts) - Number(b.ts));
       const h = health();
-      snapshotCache = {
+      const channels = {};
+      let lastPollAt = 0;
+      for (const ch of pollers.values()) {
+        channels[ch.id] = channelView(ch);
+        lastPollAt = Math.max(lastPollAt, ch.lastPollAt);
+      }
+      return {
         identity: identity
           ? { kind: identity.kind, name: identity.name, team: identity.team, sendAs: identity.kind === 'bot' ? sendAs : '' }
           : null,
         sendingAs: sendingAs(),
-        channel: channel ? { id: channel.id, name: channel.name, isMember: channel.isMember } : (channelId ? { id: channelId, name: lookupChannel(channelId), isMember: null } : null),
-        messages,
+        channelOrder: [...pollers.keys()],
+        channels,
         includeReplies,
         historyCount,
+        pollSeconds: intervalMs / 1000,
         sending: { enabled: sendEnabled, pinSet: pinOk, idleMinutes: idleMs / 60000 },
         status: { state: h.status, message: h.message, lastPollAt },
         apiBase: API_BASE,
       };
-      return snapshotCache;
     }
 
-    function invalidate() {
-      snapshotCache = null;
-    }
-
-    /** Broadcast the snapshot when anything a tile shows has changed. */
+    /** Broadcast the snapshot when anything a tile shows has changed (ages don't count). */
     function broadcastIfChanged() {
-      invalidate();
       const snap = snapshot();
-      const { lastPollAt: _ignored, ...statusSig } = snap.status;
-      const sig = JSON.stringify({ ...snap, status: statusSig });
+      const sig = JSON.stringify(snap, (key, value) => (key === 'pollAge' || key === 'lastPollAt' ? undefined : value));
       if (sig === lastSig) return;
       lastSig = sig;
       if (!streams.size) return;
@@ -567,28 +711,47 @@ module.exports = {
       }
     }
 
-    /* ── the poll loop: token → channel → history (+ threads, names) ── */
-    function schedule(ms) {
-      if (stopped) return;
-      clearTimeout(pollTimer);
-      currentIntervalMs = ms;
-      pollTimer = setTimeout(tick, ms);
-      pollTimer.unref?.();
-    }
-
-    function pollSoon() {
-      if (stopped) return;
-      if (polling) {
-        pollAgain = true;
-        return;
-      }
-      clearTimeout(pollTimer);
-      pollTimer = setTimeout(tick, 250);
-      pollTimer.unref?.();
-    }
-
+    /* ── the poll loops: token → channel → history (+ threads, names) ── */
     function watched() {
       return streams.size > 0 || Date.now() - lastInterest < IDLE_AFTER_MS;
+    }
+
+    /**
+     * Delay to poller `index`'s next slot at cadence `periodMs`: slots are
+     * spread evenly across the period from `epoch`, so channels never read
+     * in a burst, and a slot that has just passed is skipped, not fired late.
+     */
+    function slotDelay(index, periodMs) {
+      const phase = Math.round((index * periodMs) / Math.max(1, pollers.size));
+      const elapsed = Date.now() - epoch;
+      const k = Math.floor((elapsed - phase) / periodMs) + 1;
+      let delay = phase + k * periodMs - elapsed;
+      if (delay < MIN_SLOT_GAP_MS) delay += periodMs;
+      return delay;
+    }
+
+    /** `plainMs` for an error retry; without it, the regular phase-locked cadence. */
+    function scheduleNext(ch, plainMs = null) {
+      if (stopped) return;
+      clearTimeout(ch.timer);
+      let delay = plainMs;
+      if (delay === null) {
+        ch.periodMs = watched() ? intervalMs : Math.max(intervalMs, IDLE_POLL_S * 1000);
+        delay = slotDelay(ch.index, ch.periodMs);
+      }
+      ch.timer = setTimeout(() => tick(ch), delay);
+      ch.timer.unref?.();
+    }
+
+    function pollSoon(ch, delay = 250) {
+      if (stopped) return;
+      if (ch.polling) {
+        ch.pollAgain = true;
+        return;
+      }
+      clearTimeout(ch.timer);
+      ch.timer = setTimeout(() => tick(ch), delay);
+      ch.timer.unref?.();
     }
 
     async function checkAuth() {
@@ -613,98 +776,139 @@ module.exports = {
       }
       identity = id;
       authError = '';
+      invalidateAll();
       log(`token belongs to ${identityLabel()} (${id.team || 'team unknown'})${id.kind === 'bot' && !sendAs ? ' — messages will read as the app; set "Send as" to name the location' : ''}`);
     }
 
-    async function checkChannel() {
-      const data = await slackCall(token, 'conversations.info', { channel: channelId });
-      const c = data.channel || {};
-      channel = {
-        id: String(c.id || channelId),
-        name: String(c.name || c.name_normalized || channelId),
-        isMember: c.is_member !== false,
-        isPrivate: Boolean(c.is_private),
-      };
-      channelNames.set(channel.id, channel.name);
-      channelError = '';
-      if (!channel.isMember) {
-        channelError = `${identity?.name || 'The account'} isn't a member of #${channel.name} — join it in Slack`;
-        throw new SlackError('not_in_channel');
+    /** Every poller wants the identity; the first to ask makes the one call. */
+    function ensureAuth() {
+      if (identity) return Promise.resolve();
+      if (!authPromise) {
+        authPromise = checkAuth().finally(() => { authPromise = null; });
       }
+      return authPromise;
     }
 
-    async function readHistory() {
-      const data = await slackCall(token, 'conversations.history', { channel: channelId, limit: historyCount });
+    async function checkChannel(ch) {
+      const data = await slackCall(token, 'conversations.info', { channel: ch.id });
+      const c = data.channel || {};
+      ch.name = String(c.name || c.name_normalized || ch.id);
+      ch.isPrivate = Boolean(c.is_private);
+      ch.isMember = c.is_member !== false;
+      ch.checked = true;
+      channelNames.set(ch.id, ch.name);
+      invalidateAll();
+      if (!ch.isMember) throw new SlackError('not_in_channel');
+    }
+
+    async function readHistory(ch) {
+      const data = await slackCall(token, 'conversations.history', { channel: ch.id, limit: historyCount });
       const messages = Array.isArray(data.messages) ? data.messages.filter((m) => m && m.ts) : [];
-      rawWindow = messages;
-      lastPollAt = Date.now();
-      pollError = '';
+      ch.rawWindow = messages;
+      ch.messagesCache = null;
+      ch.lastPollAt = Date.now();
+      ch.isMember = true;
 
       // Threads: parents in the window whose reply set changed since we
       // last read it — oldest first, a few per poll.
       const inWindow = new Set(messages.map((m) => String(m.ts)));
-      for (const ts of [...threads.keys()]) if (!inWindow.has(ts)) threads.delete(ts);
+      for (const ts of [...ch.threads.keys()]) if (!inWindow.has(ts)) ch.threads.delete(ts);
       if (includeReplies) {
         const stale = messages
           .filter((m) => Number(m.reply_count) > 0)
           .filter((m) => {
-            const t = threads.get(String(m.ts));
+            const t = ch.threads.get(String(m.ts));
             return !t || t.latestReply !== String(m.latest_reply || '') || t.replyCount !== Number(m.reply_count);
           })
           .sort((a, b) => Number(a.ts) - Number(b.ts))
-          .slice(0, THREAD_FETCHES_PER_POLL);
+          .slice(0, threadFetchesPerPoll);
         for (const parent of stale) {
           try {
-            const rep = await slackCall(token, 'conversations.replies', { channel: channelId, ts: parent.ts, limit: THREAD_REPLIES_LIMIT });
+            const rep = await slackCall(token, 'conversations.replies', { channel: ch.id, ts: parent.ts, limit: THREAD_REPLIES_LIMIT });
             const replies = (rep.messages || []).filter((r) => r && r.ts && String(r.ts) !== String(parent.ts));
-            threads.set(String(parent.ts), { latestReply: String(parent.latest_reply || ''), replyCount: Number(parent.reply_count), replies });
+            ch.threads.set(String(parent.ts), { latestReply: String(parent.latest_reply || ''), replyCount: Number(parent.reply_count), replies });
           } catch (err) {
             if (err.code === 'ratelimited') throw err;
-            log(`thread ${parent.ts}: ${describeError(err, { name: identity?.name, channel: channel?.name })}`);
+            log(`${labelOf(ch)} thread ${parent.ts}: ${describeError(err, { name: identity?.name, channel: ch.name })}`);
           }
         }
       }
     }
 
-    async function tick() {
-      if (stopped || polling) return;
-      polling = true;
-      pollAgain = false;
-      let next = watched() ? pollMs : Math.max(pollMs, IDLE_POLL_S * 1000);
+    /** Record a failed poll on its channel (or the token); returns the retry delay. */
+    function failed(ch, err) {
+      const text = describeError(err, { name: identity?.name, channel: ch.name || ch.id });
+      if (!identity) {
+        if (authError !== text) log(text);
+        authError = text;
+        return isConfigError(err) ? RETRY_CONFIG_MS : RETRY_NETWORK_MS;
+      }
+      let retry;
+      if (err.code === 'ratelimited') {
+        rateLimitedUntil = Date.now() + err.retryAfter * 1000;
+        ch.errorKind = 'poll';
+        retry = err.retryAfter * 1000 + 100 + ch.index * 100;
+      } else if (err.code === 'not_in_channel') {
+        ch.isMember = false;
+        ch.errorKind = 'membership';
+        retry = RETRY_MEMBERSHIP_MS;
+      } else if (isConfigError(err)) {
+        ch.errorKind = 'config';
+        retry = RETRY_CONFIG_MS;
+      } else {
+        ch.errorKind = 'poll';
+        retry = Math.max(intervalMs, RETRY_NETWORK_MS);
+      }
+      if (ch.error !== text) log(`${labelOf(ch)}: ${text}`);
+      ch.error = text;
+      return retry;
+    }
+
+    async function tick(ch) {
+      if (stopped || ch.polling) return;
+      ch.polling = true;
+      ch.pollAgain = false;
+      let retry = null; // a plain delay for error retries; null → the regular cadence
       try {
-        if (!identity) await checkAuth();
-        if (!channelId) {
-          next = RETRY_CONFIG_MS;
+        const wait = rateLimitedUntil - Date.now();
+        if (wait > 0) {
+          retry = wait + 100 + ch.index * 100;
         } else {
-          if (!channel || channelError) await checkChannel();
-          await readHistory();
+          await ensureAuth();
+          if (!ch.checked || ch.errorKind === 'membership') await checkChannel(ch);
+          await readHistory(ch);
+          if (ch.error) log(`${labelOf(ch)}: reading again`);
+          ch.error = '';
+          ch.errorKind = '';
           await resolveUsers();
         }
       } catch (err) {
-        const ctx = { name: identity?.name, channel: channel?.name };
-        const text = describeError(err, ctx);
-        if (!identity) {
-          authError = text;
-          next = isConfigError(err) ? RETRY_CONFIG_MS : RETRY_NETWORK_MS;
-        } else if (!channel || channelError) {
-          if (!channelError) channelError = text;
-          next = err.code === 'not_in_channel' ? RETRY_MEMBERSHIP_MS : isConfigError(err) ? RETRY_CONFIG_MS : RETRY_NETWORK_MS;
-        } else {
-          pollError = text;
-          if (err.code === 'not_in_channel') {
-            channel.isMember = false;
-            channelError = text;
-            next = RETRY_MEMBERSHIP_MS;
-          } else next = isConfigError(err) ? RETRY_CONFIG_MS : Math.max(pollMs, RETRY_NETWORK_MS);
-        }
-        if (err.code === 'ratelimited') next = err.retryAfter * 1000;
-        log(text);
+        retry = failed(ch, err);
       } finally {
-        polling = false;
+        ch.polling = false;
+        if (ch.settleFirst) {
+          ch.settleFirst();
+          ch.settleFirst = null;
+        }
         broadcastIfChanged();
-        if (pollAgain) pollSoon();
-        else schedule(next);
+        if (ch.pollAgain) pollSoon(ch);
+        else scheduleNext(ch, retry);
       }
+    }
+
+    /**
+     * tiles() names each transcript after its channel; right after boot the
+     * names are still on their way, so it waits (briefly) for the first
+     * conversations.info answers rather than baking "#C0123" into tile titles.
+     */
+    function namesReady() {
+      if (!token || authError || stopped) return Promise.resolve();
+      const pending = [...pollers.values()].filter((ch) => !ch.checked && !ch.error).map((ch) => ch.firstRead);
+      if (!pending.length) return Promise.resolve();
+      return Promise.race([
+        Promise.all(pending),
+        new Promise((resolve) => { setTimeout(resolve, NAMES_WAIT_MS).unref?.(); }),
+      ]);
     }
 
     /* ── unlock tokens ── */
@@ -744,6 +948,22 @@ module.exports = {
       return u;
     }
 
+    /**
+     * The channel a browser asked to post to. Only a configured channel id is
+     * accepted — the selection is a choice among the admin's channels, never
+     * a way to reach some other one. Nothing asked for → the first configured.
+     */
+    function chooseTarget(requested) {
+      const s = String(requested ?? '').trim();
+      if (s) {
+        if (pollers.has(s)) return { id: s };
+        const name = lookupChannel(s);
+        return { error: `${name ? `#${name}` : s} isn't one of the configured channels — pick it in Admin → Slack → Channels` };
+      }
+      if (!channelIds.length) return { error: 'No channel configured — pick channels in Admin → Slack → Channels' };
+      return { id: channelIds[0] };
+    }
+
     async function postMessage(targetChannelId, text) {
       const params = { channel: targetChannelId, text };
       if (identity?.kind === 'bot' && sendAs) {
@@ -753,8 +973,12 @@ module.exports = {
       return slackCall(token, 'chat.postMessage', params, { json: true });
     }
 
-    /** Post on behalf of an unlock; answers the response. */
-    async function deliver(req, res, unlock, { text, channelRef, what }) {
+    /**
+     * Post on behalf of an unlock; answers the response. `targetId` is an
+     * already-validated configured channel; `presetChannel` (a quick reply's
+     * own "| #channel") overrides it.
+     */
+    async function deliver(req, res, unlock, { text, targetId, presetChannel = '', what }) {
       const now = Date.now();
       if (now - unlock.lastSendAt < SEND_MIN_INTERVAL_MS) {
         return sendJson(res, 429, { error: 'One message per second — try again', code: 'too_fast' });
@@ -763,16 +987,16 @@ module.exports = {
       if (!identity || authError) {
         return sendJson(res, 502, { error: authError || 'Slack token not checked yet — try again in a moment' });
       }
-      let target = channelId;
-      if (channelRef) {
+      let target = targetId || '';
+      if (presetChannel) {
         try {
-          target = await resolveChannel(channelRef);
+          target = await resolveChannelRef(presetChannel);
         } catch (err) {
-          return sendJson(res, 502, { error: describeError(err, { name: identity.name, channel: channel?.name }) });
+          return sendJson(res, 502, { error: describeError(err, { name: identity.name, channel: presetChannel }) });
         }
-        if (!target) return sendJson(res, 400, { error: `No channel named #${String(channelRef).replace(/^#/, '')} that ${identity.name} can see` });
+        if (!target) return sendJson(res, 400, { error: `No channel named #${String(presetChannel).replace(/^#/, '')} that ${identity.name} can see` });
       }
-      if (!target) return sendJson(res, 400, { error: 'No channel — pick one in Admin → Slack → Channel' });
+      if (!target) return sendJson(res, 400, { error: 'No channel configured — pick channels in Admin → Slack → Channels' });
       const targetName = lookupChannel(target) || target;
       try {
         const data = await postMessage(target, text);
@@ -780,11 +1004,12 @@ module.exports = {
         if (u) u.expiresAt = Date.now() + idleMs;
         const preview = text.replace(/\s+/g, ' ').slice(0, 60);
         log(`${what} → #${targetName} as ${sendingAs()}: "${preview}${text.length > 60 ? '…' : ''}"`);
-        if (target === channelId) pollSoon();
+        if (pollers.has(target)) pollSoon(pollers.get(target));
         return sendJson(res, 200, {
           ok: true,
           ts: String(data.ts || ''),
           channel: `#${targetName}`,
+          channelId: target,
           sendingAs: sendingAs(),
           expiresAt: u ? u.expiresAt : unlock.expiresAt,
         });
@@ -812,7 +1037,15 @@ module.exports = {
     if (!token) log('no Slack token configured — paste one in /admin');
     else {
       if (sendEnabled && !pinOk) log('sending is on but no valid PIN (4–8 digits) is set — send tiles stay locked');
-      schedule(50);
+      if (!channelIds.length) log('no channels configured — pick some in /admin → Slack → Channels');
+      else {
+        if (!Array.isArray(config.channels) || !config.channels.length) {
+          log(`using the single channel saved by an earlier version (${channelIds[0]}) — pick it under Channels in /admin to keep it`);
+        }
+        const budgeted = Math.ceil((channelIds.length * 60) / HISTORY_BUDGET_PER_MIN);
+        log(`polling ${channelIds.length} channel${channelIds.length === 1 ? '' : 's'} every ${intervalMs / 1000} s each — max(${pollSeconds} s, ceil(${channelIds.length}×60/${HISTORY_BUDGET_PER_MIN}) = ${budgeted} s) keeps history reads at ≤${HISTORY_BUDGET_PER_MIN}/min`);
+        for (const ch of pollers.values()) scheduleNext(ch, FIRST_READ_MS + ch.index * FIRST_READ_STAGGER_MS);
+      }
     }
 
     current = {
@@ -823,17 +1056,25 @@ module.exports = {
       sendGate,
       deliver,
       unlockFor,
+      chooseTarget,
+      namesReady,
       touch() { lastInterest = Date.now(); },
       wake() {
         lastInterest = Date.now();
-        if (identity && channel && Date.now() - lastPollAt > pollMs) pollSoon();
+        if (!identity) return;
+        // Somebody is looking again: catch every channel up, one after another.
+        let n = 0;
+        for (const ch of pollers.values()) {
+          if (ch.checked && !ch.error && Date.now() - ch.lastPollAt > intervalMs) pollSoon(ch, 250 + 150 * n++);
+        }
       },
       loadChannelList,
-      channelId,
+      channelIds,
+      channelName: (id) => lookupChannel(id),
       pinOk,
       sendEnabled,
       identityName: () => identity?.name || '',
-      channelName: () => channel?.name || '',
+      sendingAs,
       unlock(req, res, given) {
         if (!sendEnabled) return sendJson(res, 403, { error: 'Sending is off — turn it on in Admin → Slack → Sending', code: 'sending_off' });
         if (!pinOk) return sendJson(res, 403, { error: 'Set a PIN in Admin → Slack → Sending', code: 'no_pin' });
@@ -861,7 +1102,7 @@ module.exports = {
         const expiresAt = now + idleMs;
         unlocks.set(t, { expiresAt, lastSendAt: 0, ip });
         log(`unlocked from ${ip} (auto-lock after ${idleMs / 60000} min idle)`);
-        return sendJson(res, 200, { token: t, expiresAt, idleMs, sendingAs: sendingAs(), channel: channel ? `#${channel.name}` : '' });
+        return sendJson(res, 200, { token: t, expiresAt, idleMs, sendingAs: sendingAs() });
       },
       lock(req, res) {
         const t = bearer(req);
@@ -873,7 +1114,13 @@ module.exports = {
     return {
       stop() {
         stopped = true;
-        clearTimeout(pollTimer);
+        for (const ch of pollers.values()) {
+          clearTimeout(ch.timer);
+          if (ch.settleFirst) {
+            ch.settleFirst();
+            ch.settleFirst = null;
+          }
+        }
         clearInterval(heartbeat);
         clearInterval(sweeper);
         unlocks.clear(); // an admin Apply locks every send tile
@@ -887,15 +1134,46 @@ module.exports = {
     };
   },
 
-  tiles() {
-    const snap = current ? current.snapshot() : null;
-    const chan = snap?.channel?.name ? `#${snap.channel.name}` : 'the configured channel';
-    const who = snap?.sendingAs ? ` as ${snap.sendingAs}` : '';
-    return [
-      { id: 'transcript', name: 'Transcript', description: `Live transcript of ${chan}`, defaultSize: { w: 4, h: 4 }, minSize: { w: 2, h: 2 }, settings: { view: 'transcript' } },
-      { id: 'send', name: 'Send message', description: `PIN-protected message to ${chan}${who}`, defaultSize: { w: 3, h: 3 }, minSize: { w: 2, h: 2 }, settings: { view: 'send' } },
-      { id: 'quick', name: 'Quick replies', description: `PIN-protected preset buttons${who}`, defaultSize: { w: 3, h: 2 }, minSize: { w: 2, h: 1 }, settings: { view: 'quick' } },
-    ];
+  /**
+   * The picker: one transcript per configured channel, titled with the
+   * channel's name (the shell makes the entry's name the tile's title), then
+   * the two send surfaces, one of each per dashboard. Between init() and a
+   * poller's first answer a name may still be unknown — "#<id>" then.
+   */
+  async tiles({ config }) {
+    const c = current;
+    const ids = c ? c.channelIds : configuredChannels(config || {});
+    if (c) await c.namesReady();
+    const who = c?.sendingAs() ? ` as ${c.sendingAs()}` : '';
+    const entries = ids.map((id) => ({
+      id: `transcript:${id}`,
+      name: `#${(c && c.channelName(id)) || id}`,
+      description: 'Live transcript',
+      defaultSize: { w: 4, h: 4 },
+      minSize: { w: 2, h: 2 },
+      settings: { view: 'transcript', channel: id },
+    }));
+    entries.push(
+      {
+        id: 'send',
+        name: 'Send message',
+        description: `PIN-protected message to the transcript clicked last${who}`,
+        single: true,
+        defaultSize: { w: 3, h: 3 },
+        minSize: { w: 2, h: 2 },
+        settings: { view: 'send' },
+      },
+      {
+        id: 'quick',
+        name: 'Quick replies',
+        description: `PIN-protected preset buttons${who}`,
+        single: true,
+        defaultSize: { w: 3, h: 2 },
+        minSize: { w: 2, h: 1 },
+        settings: { view: 'quick' },
+      },
+    );
+    return entries;
   },
 
   routes() {
@@ -917,7 +1195,7 @@ module.exports = {
         });
         res.write('retry: 3000\n\n');
         if (!current) {
-          res.write(`event: state\ndata: ${JSON.stringify({ messages: [], status: { state: 'connecting', message: 'Slack module is restarting…' } })}\n\n`);
+          res.write(`event: state\ndata: ${JSON.stringify({ channelOrder: [], channels: {}, status: { state: 'connecting', message: 'Slack module is restarting…' } })}\n\n`);
           return void res.end();
         }
         res.write(`event: state\ndata: ${JSON.stringify(current.snapshot())}\n\n`);
@@ -929,7 +1207,7 @@ module.exports = {
         req.on('close', () => current && current.streams.delete(res));
       },
 
-      // The admin "Channel" select: channels the account is a member of.
+      // The admin "Channels" multiselect: channels the account is a member of.
       'GET /channels': guard(async (req, res) => {
         if (!current) return unmounted(res);
         try {
@@ -939,7 +1217,7 @@ module.exports = {
             .map((c) => ({ value: c.id, label: `#${c.name}${c.isPrivate ? ' (private)' : ''}` }));
           sendJson(res, 200, { options });
         } catch (err) {
-          // 200 with no options: the admin page keeps the saved value selectable.
+          // 200 with no options: the admin page keeps the saved values checked.
           sendJson(res, 200, { options: [], error: describeError(err, { name: current.identityName() }) });
         }
       }),
@@ -984,7 +1262,9 @@ module.exports = {
         const text = String(body.text ?? '').replace(/\r\n/g, '\n').trim();
         if (!text) return sendJson(res, 400, { error: 'Nothing to send' });
         if (text.length > MAX_TEXT_CHARS) return sendJson(res, 400, { error: `Too long — ${MAX_TEXT_CHARS} characters at most` });
-        await current.deliver(req, res, unlock, { text, channelRef: body.channel ? String(body.channel) : '', what: 'sent' });
+        const target = current.chooseTarget(body.channel);
+        if (target.error) return sendJson(res, 400, { error: target.error, code: 'bad_channel' });
+        await current.deliver(req, res, unlock, { text, targetId: target.id, what: 'sent' });
       }),
 
       'POST /quick': guard(async (req, res) => {
@@ -1000,7 +1280,16 @@ module.exports = {
         const index = Math.trunc(Number(body.index));
         const preset = Number.isInteger(index) ? current.quickReplies[index] : null;
         if (!preset) return sendJson(res, 404, { error: 'No such quick reply — the list may have changed in Admin' });
-        await current.deliver(req, res, unlock, { text: preset.message, channelRef: preset.channel, what: `quick reply "${preset.label}"` });
+        // A channel the browser names is checked even when the preset's own
+        // binding is about to override it — an unconfigured id is never accepted.
+        const target = current.chooseTarget(body.channel);
+        if (target.error && (body.channel || !preset.channel)) return sendJson(res, 400, { error: target.error, code: 'bad_channel' });
+        await current.deliver(req, res, unlock, {
+          text: preset.message,
+          targetId: target.id || '',
+          presetChannel: preset.channel,
+          what: `quick reply "${preset.label}"`,
+        });
       }),
     };
   },

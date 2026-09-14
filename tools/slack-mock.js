@@ -26,7 +26,15 @@
  * #production is seeded with mrkdwn, mentions, a link, a thread, a bot
  * attachment and a file; it gains a new fake message every ~8 s, edits one
  * every ~25 s, deletes one every ~40 s and adds a thread reply every ~30 s.
- * Every request is logged.
+ * #ops gets a quieter trickle (every ~20 s), so a dashboard with both
+ * transcripts shows two channels moving at their own pace — and a
+ * chat.postMessage to either lands in that channel's history, which is how
+ * a send to the *selected* transcript can be watched arriving in the right
+ * tile. Every request is logged.
+ *
+ * Multi-channel dev flow: run this, then ProdDash with SLACK_API_BASE set,
+ * paste xoxp-anything in /admin → Slack, tick #production and #ops under
+ * Channels, Apply, and add both transcripts plus Send message from ＋.
  */
 'use strict';
 
@@ -116,11 +124,26 @@ const CHATTER = [
 ];
 let chatterIx = 0;
 
+const OPS_CHATTER = [
+  { user: 'U005', text: 'Ops: parking team is short two people, sending greeters over' },
+  { user: 'U002', text: 'Cafe is out of oat milk again :sweat_smile:' },
+  { user: 'U005', text: 'Second-service headcount: 412 in the room, 38 online' },
+  { user: 'U002', text: 'Facilities: the lobby HVAC is back, thanks Dan' },
+];
+let opsIx = 0;
+
 function tickNew() {
   const line = CHATTER[chatterIx % CHATTER.length];
   chatterIx += 1;
   const m = push('C001', { user: line.user, text: line.text });
   console.log(`[slack-mock] + new message ${m.ts} from ${line.user}`);
+}
+
+function tickOps() {
+  const line = OPS_CHATTER[opsIx % OPS_CHATTER.length];
+  opsIx += 1;
+  const m = push('C002', { user: line.user, text: line.text });
+  console.log(`[slack-mock] + new message ${m.ts} in #ops from ${line.user}`);
 }
 
 function tickEdit() {
@@ -154,6 +177,7 @@ function tickReply() {
 }
 
 setInterval(tickNew, 8000).unref();
+setInterval(tickOps, 20000).unref();
 setInterval(tickEdit, 25000).unref();
 setInterval(tickDelete, 40000).unref();
 setInterval(tickReply, 30000).unref();

@@ -1,9 +1,11 @@
 /* Slack — client part.
 
-   Three tiles from one module (moduleApi.variant picks): the channel
-   transcript, a PIN-gated free-text sender and a PIN-gated grid of preset
-   replies. Everything lives inside the tile's root; all traffic goes through
-   the module's server routes (the token and the PIN never reach a browser).
+   Tiles from one module (moduleApi.variant / the tile's `view` setting pick):
+   one channel transcript per configured channel, a PIN-gated free-text sender
+   and a PIN-gated grid of preset replies. The two senders post to the channel
+   of whichever transcript was clicked last (see the send target below).
+   Everything lives inside the tile's root; all traffic goes through the
+   module's server routes (the token and the PIN never reach a browser).
    Nothing here uses innerHTML with data — every string from Slack lands in
    a text node. */
 
@@ -63,15 +65,88 @@ async function readJson(res) {
   }
 }
 
+const NO_CHANNEL = 'No channel configured — pick channels in Admin → Slack → Channels';
+
 const LOCK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
 const JUMP_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>';
 const BACK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 6H8l-5 6 5 6h13a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1z"/><path d="m18 9-6 6M12 9l6 6"/></svg>';
 const CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5L20 7"/></svg>';
 
+/* ── the send target ────────────────────────────────────────────────── */
+
+/* Deliberately module-level. The guide forbids module-level *per-instance*
+   state — two tiles' closures must never leak into each other — and every
+   piece of per-tile state in this file still lives inside its create(). This
+   is a different kind of thing: one fact about the whole page, "which
+   transcript did the operator click last", that Send message, Quick replies
+   and every transcript tile on this dashboard have to agree on. It is UI
+   state of this browser, not of the machine (another screen in the booth may
+   be pointed at another channel), so it stays out of the server and lives
+   here: an EventTarget plus the chosen channel id, mirrored in localStorage
+   under proddash:slack:sendTarget so a reload keeps it. */
+const SEND_TARGET_KEY = 'proddash:slack:sendTarget';
+
+const sendTarget = (() => {
+  const bus = new EventTarget();
+  const transcripts = new Map(); // instanceId -> channel id, for every transcript tile on the page
+  let id = '';
+  try {
+    id = String(localStorage.getItem(SEND_TARGET_KEY) || '');
+  } catch { /* private mode or blocked storage — the choice lasts until reload */ }
+  const emit = () => bus.dispatchEvent(new Event('change'));
+  return {
+    /** The channel the operator clicked last ('' if never). */
+    get() {
+      return id;
+    },
+    /** A transcript was clicked: remember it and tell every Slack tile. */
+    select(channelId) {
+      const next = String(channelId || '');
+      if (next === id) return;
+      id = next;
+      try {
+        localStorage.setItem(SEND_TARGET_KEY, id);
+      } catch { /* fine — see above */ }
+      emit();
+    },
+    /** Transcript tiles register, so the fallback rule can tell a selected channel whose tile is gone. */
+    attach(instanceId, channelId) {
+      if (transcripts.get(instanceId) === channelId) return;
+      transcripts.set(instanceId, channelId);
+      emit();
+    },
+    detach(instanceId) {
+      if (transcripts.delete(instanceId)) emit();
+    },
+    hasTranscript(channelId) {
+      for (const v of transcripts.values()) if (v === channelId) return true;
+      return false;
+    },
+    /**
+     * Where a send goes, given the configured channels in admin order: the
+     * selection while it is still configured and its transcript is on the
+     * page; otherwise the first configured channel.
+     */
+    resolve(configured) {
+      const list = Array.isArray(configured) ? configured : [];
+      if (!list.length) return '';
+      if (id && list.includes(id) && this.hasTranscript(id)) return id;
+      return list[0];
+    },
+    on(fn) {
+      bus.addEventListener('change', fn);
+      return () => bus.removeEventListener('change', fn);
+    },
+  };
+})();
+
 /* ── the factory ────────────────────────────────────────────────────── */
 
 export default function create({ root, moduleApi }) {
-  const view = String(moduleApi.variant || moduleApi.instanceSettings.view || 'transcript');
+  const variant = String(moduleApi.variant || '');
+  // The entry's preset `view` is authoritative; a tile added under 1.0.0 has
+  // the plain variant "transcript", a new one "transcript:<channel id>".
+  const view = String(moduleApi.instanceSettings.view || (variant.startsWith('transcript') ? 'transcript' : variant) || 'transcript');
   if (view === 'send' || view === 'quick') return createSendTile({ root, moduleApi, mode: view });
   return createTranscriptTile({ root, moduleApi });
 }
@@ -80,10 +155,16 @@ export default function create({ root, moduleApi }) {
 
 function createTranscriptTile({ root, moduleApi }) {
   const entries = new Map(); // ts -> { el, sig, ... }
+  // The channel this tile shows: preset by the picker entry; a tile from
+  // 1.0.0 has none and follows the first configured channel.
+  const pinnedChannel = String(moduleApi.instanceSettings.channel || '');
+  let channelId = pinnedChannel;
+  let lastState = null;
   let pinnedToLatest = true;
   let painted = false;
   let stream = null;
   let stopped = false;
+  let targetTimer = null;
 
   root.innerHTML = `
     <div class="sl-wrap sl-transcript">
@@ -141,6 +222,29 @@ function createTranscriptTile({ root, moduleApi }) {
   });
   function scrollToLatest() {
     streamEl.scrollTop = streamEl.scrollHeight;
+  }
+
+  /* the send target: a click anywhere in the body points the senders here */
+  wrap.addEventListener('click', () => {
+    if (!channelId || !lastState?.channels?.[channelId]) return; // not configured — can't be a target
+    sendTarget.select(channelId);
+  });
+  const offTarget = sendTarget.on(() => {
+    // Coalesce: a remount detaches and re-attaches within a few ms.
+    clearTimeout(targetTimer);
+    targetTimer = setTimeout(paintTarget, 50);
+  });
+
+  function isTarget() {
+    return Boolean(channelId) && sendTarget.resolve(lastState?.channelOrder) === channelId;
+  }
+
+  function paintTarget() {
+    if (stopped) return;
+    const on = isTarget();
+    if (on === wrap.classList.contains('is-target')) return;
+    wrap.classList.toggle('is-target', on);
+    if (lastState) reportStatus(lastState);
   }
 
   /* entries */
@@ -228,15 +332,26 @@ function createTranscriptTile({ root, moduleApi }) {
     else if (added) jumpBtn.hidden = false;
   }
 
-  function applyState(s) {
-    if (stopped || !s || typeof s !== 'object') return;
-    const st = s.status || {};
-    const chan = s.channel?.name ? '#' + s.channel.name : '';
-    const who = s.identity?.name ? ` as ${s.identity.name}` : '';
-    renderMessages(Array.isArray(s.messages) ? s.messages : []);
+  /** The status dot, banner and empty-state text for the current state. */
+  function reportStatus(s) {
+    const ch = channelId && s.channels && typeof s.channels === 'object' ? s.channels[channelId] : null;
     const hasEntries = entries.size > 0;
+    const who = s.identity?.name ? ` as ${s.identity.name}` : '';
+    let problem = '';
+    if (!channelId) problem = NO_CHANNEL;
+    else if (!ch) problem = `#${channelId} is no longer one of this module's channels — pick it again in Admin → Slack → Channels, or remove this tile`;
+    if (problem) {
+      moduleApi.setStatus('error', problem);
+      banner.hidden = true;
+      emptyEl.hidden = false;
+      emptyEl.textContent = problem;
+      emptyEl.classList.add('is-error');
+      return;
+    }
+    const chan = `#${ch.name || channelId}`;
+    const st = ch.status || {};
     if (st.state === 'ok') {
-      moduleApi.setStatus('ok', `Live — ${chan}${who}`);
+      moduleApi.setStatus('ok', `Live — ${chan}${who}${isTarget() ? ' · sends go here' : ''}`);
       banner.hidden = true;
     } else {
       moduleApi.setStatus(st.state === 'error' ? 'error' : 'connecting', st.message || 'Connecting to Slack…');
@@ -248,11 +363,24 @@ function createTranscriptTile({ root, moduleApi }) {
     }
     emptyEl.hidden = hasEntries;
     if (!hasEntries) {
-      emptyEl.textContent = st.state !== 'ok'
-        ? (st.message || 'Connecting to Slack…')
-        : chan ? `No messages yet in ${chan}` : 'No channel chosen — pick one in Admin → Slack';
+      emptyEl.textContent = st.state !== 'ok' ? (st.message || 'Connecting to Slack…') : `No messages yet in ${chan}`;
       emptyEl.classList.toggle('is-error', st.state === 'error');
     }
+  }
+
+  function applyState(s) {
+    if (stopped || !s || typeof s !== 'object') return;
+    lastState = s;
+    const order = Array.isArray(s.channelOrder) ? s.channelOrder.map(String) : [];
+    channelId = pinnedChannel || order[0] || '';
+    const ch = channelId && s.channels && typeof s.channels === 'object' ? s.channels[channelId] : null;
+    // Registered while its channel is configured: that is what makes it a
+    // possible send target (see sendTarget.resolve).
+    if (ch) sendTarget.attach(moduleApi.instanceId, channelId);
+    else sendTarget.detach(moduleApi.instanceId);
+    renderMessages(ch && Array.isArray(ch.messages) ? ch.messages : []);
+    wrap.classList.toggle('is-target', isTarget());
+    reportStatus(s);
     painted = true;
   }
 
@@ -300,6 +428,9 @@ function createTranscriptTile({ root, moduleApi }) {
     },
     stop() {
       stopped = true;
+      clearTimeout(targetTimer);
+      offTarget();
+      sendTarget.detach(moduleApi.instanceId);
       stream?.close();
       root.innerHTML = ''; // header controls are removed by the shell
     },
@@ -314,7 +445,7 @@ function createTranscriptTile({ root, moduleApi }) {
 function createSendTile({ root, moduleApi, mode }) {
   let token = '';          // the unlock token — memory only; a remount shows the pad again
   let expiresAt = 0;
-  let state = null;        // latest snapshot: sending flags, identity, channel, status
+  let state = null;        // latest snapshot: sending flags, identity, channels, status
   let stream = null;
   let ticker = null;
   let stopped = false;
@@ -324,6 +455,7 @@ function createSendTile({ root, moduleApi, mode }) {
   let gateError = '';      // the server's refusal ("Wrong PIN", "locked for 30 s")
   let gateKind = '';       // what the gate currently shows, to avoid needless rebuilds
   let presets = null;
+  let targetTimer = null;
 
   root.innerHTML = `
     <div class="sl-wrap sl-send" tabindex="0">
@@ -342,11 +474,48 @@ function createSendTile({ root, moduleApi, mode }) {
   }
   applyInstanceSettings();
 
-  function sendingLine() {
-    const who = state?.sendingAs || '…';
-    const chan = state?.channel?.name ? '#' + state.channel.name : 'no channel';
-    return `Sending as ${who} → ${chan}`;
+  /* ── where a send goes ── */
+  function configured() {
+    return Array.isArray(state?.channelOrder) ? state.channelOrder.map(String) : [];
   }
+
+  function targetId() {
+    return sendTarget.resolve(configured());
+  }
+
+  function targetName() {
+    const id = targetId();
+    if (!id) return '';
+    const ch = state?.channels?.[id];
+    return `#${ch?.name || id}`;
+  }
+
+  function sendingLine() {
+    if (state && !configured().length) return NO_CHANNEL;
+    const who = state?.sendingAs || '…';
+    return `Sending as ${who} → ${targetName() || '…'}`;
+  }
+
+  function placeholder() {
+    const name = targetName();
+    return name ? `Message ${name}…` : 'Message…';
+  }
+
+  /** The selection changed somewhere on the page: every line that names the target follows. */
+  function repaintTarget() {
+    if (stopped || !state) return;
+    if (token) {
+      if (composeEls) {
+        composeEls.line.textContent = sendingLine();
+        if (composeEls.input) composeEls.input.placeholder = placeholder();
+      }
+    } else renderGate();
+    moduleApi.setStatus(statusState(), `${statusMessage()} · ${token ? 'unlocked' : 'locked'}`);
+  }
+  const offTarget = sendTarget.on(() => {
+    clearTimeout(targetTimer);
+    targetTimer = setTimeout(repaintTarget, 50);
+  });
 
   function authHeaders(extra = {}) {
     return { Authorization: `Bearer ${token}`, ...extra };
@@ -361,6 +530,7 @@ function createSendTile({ root, moduleApi, mode }) {
     if (!state) kind = 'connecting';
     else if (!state.sending?.enabled) kind = 'off';
     else if (!state.sending?.pinSet) kind = 'nopin';
+    else if (!configured().length) kind = 'nochannel';
     else kind = 'pad';
     if (kind !== gateKind) {
       gateKind = kind;
@@ -370,7 +540,8 @@ function createSendTile({ root, moduleApi, mode }) {
         const note = el('div', 'sl-note');
         note.textContent = kind === 'connecting' ? 'Connecting to ProdDash…'
           : kind === 'off' ? 'Sending is off — turn it on in Admin → Slack → Sending'
-            : 'Set a PIN in Admin → Slack → Sending';
+            : kind === 'nopin' ? 'Set a PIN in Admin → Slack → Sending'
+              : NO_CHANNEL;
         gate.appendChild(note);
       }
     }
@@ -507,7 +678,7 @@ function createSendTile({ root, moduleApi, mode }) {
     if (mode === 'send') {
       input = el('textarea', 'sl-input');
       input.rows = 3;
-      input.placeholder = state?.channel?.name ? `Message #${state.channel.name}…` : 'Message…';
+      input.placeholder = placeholder();
       input.spellcheck = true;
       input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -564,20 +735,22 @@ function createSendTile({ root, moduleApi, mode }) {
     if (busy || !composeEls?.input) return;
     const text = composeEls.input.value.trim();
     if (!text) return;
+    const channel = targetId();
+    if (!channel) return void showError(NO_CHANNEL);
     busy = true;
     composeEls.sendBtn.disabled = true;
     try {
       const res = await moduleApi.fetch('/send', {
         method: 'POST',
         headers: authHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, channel }),
       });
       const body = await readJson(res);
       if (res.status === 401) return void lock(body.error || 'Locked — enter the PIN', true);
       if (!res.ok) return void showError(body.error || `Send failed (HTTP ${res.status})`);
       composeEls.input.value = '';
       if (body.expiresAt) expiresAt = Number(body.expiresAt);
-      flash('Sent ✓');
+      flash(`Sent to ${body.channel || targetName()} ✓`);
     } catch {
       showError('ProdDash unreachable — not sent');
     } finally {
@@ -620,6 +793,7 @@ function createSendTile({ root, moduleApi, mode }) {
       const b = el('button', 'sl-quick');
       b.type = 'button';
       b.appendChild(el('span', 'sl-quick-label', p.label));
+      // A preset bound to its own channel says so — it ignores the selection.
       if (p.channel) b.appendChild(el('span', 'sl-quick-chan', `→ ${p.channel}`));
       b.addEventListener('click', () => sendQuick(p.index, b));
       grid.appendChild(b);
@@ -632,10 +806,11 @@ function createSendTile({ root, moduleApi, mode }) {
     btn.disabled = true;
     btn.classList.add('is-busy');
     try {
+      const channel = targetId();
       const res = await moduleApi.fetch('/quick', {
         method: 'POST',
         headers: authHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ index }),
+        body: JSON.stringify(channel ? { index, channel } : { index }),
       });
       const body = await readJson(res);
       if (res.status === 401) return void lock(body.error || 'Locked — enter the PIN', true);
@@ -650,6 +825,7 @@ function createSendTile({ root, moduleApi, mode }) {
       const label = btn.querySelector('.sl-quick-label');
       const original = label.textContent;
       label.textContent = 'Sent ✓';
+      flash(`Sent to ${body.channel || targetName()} ✓`);
       setTimeout(() => {
         if (!btn.isConnected) return;
         label.textContent = original;
@@ -704,6 +880,7 @@ function createSendTile({ root, moduleApi, mode }) {
     return st === 'ok' || st === 'connecting' || st === 'error' ? st : 'connecting';
   }
   function statusMessage() {
+    if (state?.status?.state === 'ok') return sendingLine();
     return state?.status?.message || 'Connecting to Slack…';
   }
 
@@ -717,7 +894,7 @@ function createSendTile({ root, moduleApi, mode }) {
       if (!s.sending?.enabled || !s.sending?.pinSet) return void lock('');
       if (composeEls) {
         composeEls.line.textContent = sendingLine();
-        if (composeEls.input && s.channel?.name) composeEls.input.placeholder = `Message #${s.channel.name}…`;
+        if (composeEls.input) composeEls.input.placeholder = placeholder();
       }
     } else renderGate();
   }
@@ -757,6 +934,8 @@ function createSendTile({ root, moduleApi, mode }) {
       stopped = true;
       clearInterval(ticker);
       clearTimeout(flash.timer);
+      clearTimeout(targetTimer);
+      offTarget();
       stream?.close();
       token = ''; // the unlock dies with the tile
       root.innerHTML = '';

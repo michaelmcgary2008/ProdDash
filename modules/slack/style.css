@@ -30,6 +30,29 @@
   border-bottom-color: color-mix(in srgb, var(--danger) 35%, var(--border));
 }
 
+/* ── the send target ── */
+
+/* A click anywhere in a transcript's body makes its channel the one Send
+   message and Quick replies post to. The chosen one carries a 3px accent
+   stripe along the bottom edge of the tile body — drawn just inside our
+   root, since the tile chrome around it belongs to the shell. The others
+   hint at it faintly on hover. */
+[data-module="slack"] .sl-transcript::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--accent);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 3;
+  transition: opacity 0.15s ease;
+}
+[data-module="slack"] .sl-transcript:hover::after { opacity: 0.3; }
+[data-module="slack"] .sl-transcript.is-target::after { opacity: 1; }
+
 /* ── transcript stream ── */
 
 [data-module="slack"] .sl-stream {

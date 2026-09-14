@@ -1,9 +1,9 @@
 {
   "id": "slack",
   "name": "Slack",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "proddash": ">=1.4.0",
-  "description": "A Slack channel's live transcript, plus PIN-protected sending as this location",
+  "description": "Live transcripts of this location's Slack channels, plus PIN-protected sending as the location",
   "client": "client.js",
   "server": "server.js",
   "style": "style.css",
@@ -14,9 +14,12 @@
       "collapsed": "whenSet",
       "help": "Create a Slack app in the workspace (api.slack.com/apps → Create New App → From scratch) and, under OAuth & Permissions → User Token Scopes, add channels:history, channels:read, groups:history, groups:read, chat:write and users:read (users:read.email is not needed). Sign in to Slack as this location's account — the one named for the campus — open the app's OAuth & Permissions page and press Install to Workspace (or Reinstall to Workspace), then copy the User OAuth Token (xoxp-…) it shows and paste it here: messages from this machine are then literally from the location. A bot token (xoxb-…) works too; it posts as the app, with \"Send as\" naming the location."
     },
+    "Channels": {
+      "help": "Every channel picked here becomes its own transcript tile in the ＋ picker, titled with the channel's name. The Send message and Quick replies tiles post to whichever transcript was clicked last — its bottom edge lights up in the accent colour — and to the first channel here until one is clicked. Only channels the account has joined are listed; join one in Slack first. Each channel is read on its own schedule, all of them together kept inside Slack's rate limit."
+    },
     "Sending": {
       "toggle": "sendEnabled",
-      "help": "Messages leave this machine only from a Send or Quick replies tile, and only after the PIN is entered on that tile — every tile asks again after Auto-lock minutes without a send. Sending stays refused until a 4–8 digit PIN is set here. Quick replies are one per line, Label | Message, with an optional | #channel-name to send that one somewhere other than the transcript channel."
+      "help": "Messages leave this machine only from a Send or Quick replies tile, and only after the PIN is entered on that tile — every tile asks again after Auto-lock minutes without a send. Sending stays refused until a 4–8 digit PIN is set here. A message goes to the channel of the transcript clicked last. Quick replies are one per line, Label | Message, with an optional | #channel-name to bind that one to a channel: a bound reply always goes there, whichever transcript is selected."
     }
   },
   "configSchema": {
@@ -34,20 +37,20 @@
       "group": "Slack account",
       "help": "Only used with a bot token — a user token always sends as its own account; needs the chat:write.customize scope."
     },
-    "channel": {
-      "type": "select",
-      "label": "Channel",
-      "default": "",
-      "group": "Channel",
+    "channels": {
+      "type": "multiselect",
+      "label": "Channels",
+      "default": [],
+      "group": "Channels",
       "optionsRoute": "/channels",
-      "help": "The channel the transcript shows and messages go to by default. Only channels the account has joined are listed — join one in Slack first."
+      "help": "One transcript tile per channel; the first one is where sends go until a transcript is clicked. Only channels the account has joined are listed — join one in Slack first."
     },
     "pollSeconds": {
       "type": "number",
       "label": "Refresh interval (s)",
       "default": 2,
       "group": "Transcript",
-      "help": "How often the channel is re-read (1 s at the fastest)."
+      "help": "How often each channel is re-read (1 s at the fastest). With several channels the interval stretches so the module stays inside Slack's rate limit — at least 1.5 s × the number of channels; the health line shows the interval in use."
     },
     "historyCount": {
       "type": "number",
@@ -85,7 +88,7 @@
       "label": "Quick replies",
       "default": "",
       "group": "Sending",
-      "help": "One per line: Label | Message. Add | #channel-name to send one somewhere else."
+      "help": "One per line: Label | Message. Add | #channel-name to bind one to a channel — it then ignores which transcript is selected."
     }
   },
   "instanceGroups": {
