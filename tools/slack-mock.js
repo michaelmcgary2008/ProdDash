@@ -18,10 +18,16 @@
  *   conversations.history   newest-first window (limit); not_in_channel for
  *                           #announcements
  *   conversations.replies   a thread's parent + replies
- *   users.info              display names for the seeded users
+ *   users.info              display names and profile images (SVG squares
+ *                           served by this mock under /img/u/<id>.svg)
  *   chat.postMessage        appends to the channel (echoes `username` for
  *                           bots as a bot_message); text containing "!429"
  *                           answers HTTP 429 with Retry-After: 3
+ *   emoji.list              four custom emoji: two images (/img/e/<name>.svg),
+ *                           an alias of a standard emoji, an alias of a custom
+ *   reactions.add/.remove   on a message (or reply) by channel + timestamp;
+ *                           already_reacted / no_reaction / message_not_found
+ *                           as Slack answers them; name "nope" → invalid_name
  *
  * #production is seeded with mrkdwn, mentions, a link, a thread, a bot
  * attachment and a file; it gains a new fake message every ~8 s, edits one
@@ -78,6 +84,53 @@ function push(channelId, msg) {
   return m;
 }
 
+/** A message or a reply by timestamp, anywhere in a channel. */
+function findMessage(channelId, stamp) {
+  for (const m of history.get(channelId) || []) {
+    if (m.ts === stamp) return m;
+    for (const r of m.replies || []) if (r.ts === stamp) return r;
+  }
+  return null;
+}
+
+/** Slack's reactions array: [{ name, users, count }], edited in place. */
+function addReaction(m, name, userId) {
+  m.reactions = m.reactions || [];
+  let r = m.reactions.find((x) => x.name === name);
+  if (r && r.users.includes(userId)) return 'already_reacted';
+  if (!r) {
+    r = { name, users: [], count: 0 };
+    m.reactions.push(r);
+  }
+  r.users.push(userId);
+  r.count = r.users.length;
+  return '';
+}
+
+function removeReaction(m, name, userId) {
+  const r = (m.reactions || []).find((x) => x.name === name);
+  if (!r || !r.users.includes(userId)) return 'no_reaction';
+  r.users = r.users.filter((u) => u !== userId);
+  r.count = r.users.length;
+  if (!r.count) m.reactions = m.reactions.filter((x) => x !== r);
+  if (!m.reactions.length) delete m.reactions;
+  return '';
+}
+
+/* A square SVG with an initial, one hue per id — the mock's stand-in for a
+   profile image or a custom emoji picture. */
+const IMAGE_HUES = { U001: 150, U002: 210, U003: 330, U004: 30, U005: 270, UBOT: 0, party_parrot: 120, waters: 200 };
+function squareSvg(id, letter) {
+  const hue = IMAGE_HUES[id] ?? 180;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 72 72"><rect width="72" height="72" rx="18" fill="hsl(${hue} 50% 45%)"/><text x="36" y="47" text-anchor="middle" font-family="system-ui, sans-serif" font-size="34" font-weight="700" fill="#fff">${letter}</text></svg>`;
+}
+const CUSTOM_EMOJI = {
+  party_parrot: (port) => `http://127.0.0.1:${port}/img/e/party_parrot.svg`,
+  waters: (port) => `http://127.0.0.1:${port}/img/e/waters.svg`,
+  thumbsup_all: () => 'alias:+1',
+  parrot: () => 'alias:party_parrot',
+};
+
 function seed() {
   const min = 60000;
   const at = (minsAgo) => ts(-minsAgo * min);
@@ -97,7 +150,9 @@ function seed() {
     attachments: [{ fallback: 'Plan updated: Sunday Service — Sept 14 (2 items changed)', title: 'Plan updated', text: 'Sunday Service — Sept 14 (2 items changed)' }],
   });
   push('C001', { ts: at(30), user: 'U005', text: 'Lower thirds for the announcements: <https://waterschurch.org/plan|this week’s plan>', files: [{ id: 'F001', name: 'lower-thirds-0914.png', title: 'lower-thirds-0914.png' }] });
-  push('C001', { ts: at(25), user: 'U004', text: 'Audio fixed — Dante patch was it. Thanks <@U002> :pray:', edited: { user: 'U004', ts: at(24) } });
+  const fixed = push('C001', { ts: at(25), user: 'U004', text: 'Audio fixed — Dante patch was it. Thanks <@U002> :pray:', edited: { user: 'U004', ts: at(24) } });
+  fixed.reactions = [{ name: '+1', users: ['U002', 'U003', 'U001'], count: 3 }, { name: 'party_parrot', users: ['U005'], count: 1 }, { name: 'pray::skin-tone-3', users: ['U002'], count: 1 }];
+  push('C001', { ts: at(23), user: 'U002', text: 'Custom emoji check :party_parrot: :waters: and an unknown :not_an_emoji: stay put' });
   push('C001', { ts: at(20), user: 'U002', text: '<!here> 10 minutes to doors. Campuses, post "ready" when your pre-service loop is running.' });
   push('C001', { ts: at(15), user: 'U001', text: 'Apollo Beach ready' });
   push('C001', { ts: at(14), user: 'U004', text: 'North Attleboro ready' });
@@ -245,6 +300,13 @@ const server = http.createServer(async (req, res) => {
   const summary = Object.entries(params).filter(([k]) => k !== 'token').map(([k, v]) => `${k}=${String(v).slice(0, 40)}`).join(' ');
   console.log(`[slack-mock] ${req.method} ${url.pathname} ${summary}`);
 
+  const img = url.pathname.match(/^\/img\/(u|e)\/([A-Za-z0-9_+-]+)\.svg$/);
+  if (img) {
+    const id = img[2];
+    const letter = img[1] === 'u' ? (USERS[id]?.display_name || USERS[id]?.real_name || id)[0].toUpperCase() : id[0].toUpperCase();
+    res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-store' });
+    return res.end(squareSvg(id, letter));
+  }
   if (!url.pathname.startsWith('/api/')) return send(res, 404, { ok: false, error: 'unknown_method' });
 
   const token = tokenOf(req, params);
@@ -260,7 +322,8 @@ const server = http.createServer(async (req, res) => {
     case 'users.info': {
       const u = USERS[String(params.user)];
       if (!u) return send(res, 200, { ok: false, error: 'user_not_found' });
-      return send(res, 200, { ok: true, user: { id: params.user, name: u.name, real_name: u.real_name, is_bot: Boolean(u.is_bot), profile: { display_name: u.display_name, real_name: u.real_name } } });
+      const img = `http://127.0.0.1:${PORT}/img/u/${params.user}.svg`;
+      return send(res, 200, { ok: true, user: { id: params.user, name: u.name, real_name: u.real_name, is_bot: Boolean(u.is_bot), profile: { display_name: u.display_name, real_name: u.real_name, image_48: img, image_72: img } } });
     }
 
     case 'conversations.list': {
@@ -299,6 +362,27 @@ const server = http.createServer(async (req, res) => {
       if (!parent) return send(res, 200, { ok: false, error: 'thread_not_found' });
       const limit = Math.max(1, Math.min(1000, Number(params.limit) || 100));
       return send(res, 200, { ok: true, messages: [publicMessage(parent), ...(parent.replies || []).slice(0, limit - 1)], has_more: false });
+    }
+
+    case 'emoji.list': {
+      const emoji = {};
+      for (const [name, v] of Object.entries(CUSTOM_EMOJI)) emoji[name] = v(PORT);
+      return send(res, 200, { ok: true, emoji, cache_ts: '1700000000.000000' });
+    }
+
+    case 'reactions.add':
+    case 'reactions.remove': {
+      const c = findChannel(params.channel);
+      if (!c) return send(res, 200, { ok: false, error: 'channel_not_found' });
+      if (!c.is_member) return send(res, 200, { ok: false, error: 'not_in_channel' });
+      const name = String(params.name || '');
+      if (!name || name === 'nope') return send(res, 200, { ok: false, error: 'invalid_name' });
+      const m = findMessage(c.id, String(params.timestamp || ''));
+      if (!m) return send(res, 200, { ok: false, error: 'message_not_found' });
+      const err = method === 'reactions.add' ? addReaction(m, name, who.user_id) : removeReaction(m, name, who.user_id);
+      if (err) return send(res, 200, { ok: false, error: err });
+      console.log(`[slack-mock] ${method === 'reactions.add' ? '➕' : '➖'} :${name}: on ${m.ts} in #${c.name} by ${who.user}`);
+      return send(res, 200, { ok: true });
     }
 
     case 'chat.postMessage': {

@@ -17,6 +17,9 @@
  *   POST /lock       Bearer → forget that unlock token
  *   GET  /quick      Bearer → preset labels + indexes (never the message text)
  *   POST /send       Bearer, { text, channel } → chat.postMessage
+ *   POST /react      Bearer, { channel, ts, name, remove? } → reactions.add / .remove
+ *   GET  /emoji      { standard: {code: emoji}, custom: {name: {url}|{char}}, version }
+ *   GET  /emoji-image/<name>, GET /avatar/<u/USER|b/BOT>   images proxied from Slack's CDN
  *   POST /quick      Bearer, { index, channel } → post that preset
  *
  * `channel` on /send and /quick must be one of the configured channel ids
@@ -205,6 +208,10 @@ function describeError(err, ctx = {}) {
     case 'msg_too_long': return 'Message too long for Slack (msg_too_long)';
     case 'no_text': return 'Nothing to send (no_text)';
     case 'restricted_action': return `Posting in ${chan} is restricted by a workspace admin (restricted_action)`;
+    case 'invalid_name': return 'Slack has no emoji by that name (invalid_name)';
+    case 'too_many_reactions': return 'Slack allows 23 different reactions on a message (too_many_reactions)';
+    case 'too_many_emoji': return 'That message already carries as many reactions as Slack allows (too_many_emoji)';
+    case 'message_not_found': return 'That message is gone (message_not_found)';
     case 'bad_response': return `Slack answered with something that isn't JSON (HTTP ${err.status})`;
     default: return `Slack error: ${err?.code || err?.message || err}${err?.detail ? ` — ${err.detail}` : ''}`;
   }
@@ -217,14 +224,118 @@ function isConfigError(err) {
 
 /* ── mrkdwn → plain text with a few inline marks ────────────────────── */
 
-const EMOJI = {
-  '+1': '👍', thumbsup: '👍', '-1': '👎', thumbsdown: '👎', white_check_mark: '✅', heavy_check_mark: '✔️',
-  x: '❌', pray: '🙏', tada: '🎉', fire: '🔥', eyes: '👀', heart: '❤️', clap: '👏', warning: '⚠️',
-  rotating_light: '🚨', smile: '😄', grinning: '😀', joy: '😂', sweat_smile: '😅', thinking_face: '🤔',
-  wave: '👋', ok_hand: '👌', raised_hands: '🙌', bell: '🔔', microphone: '🎤', musical_note: '🎵',
-  video_camera: '📹', tv: '📺', church: '⛪', zap: '⚡', 100: '💯', point_right: '👉', muscle: '💪',
-  slightly_smiling_face: '🙂', raised_hand: '✋', satellite_antenna: '📡',
-};
+/* ── emoji: Slack's :codes: → characters; the workspace's custom set; images ── */
+
+/** Slack's short names → emoji — modules/slack/emoji.json, built from iamcal/emoji-data (MIT). */
+const EMOJI_NAMES = require('./emoji.json').names;
+/** One code as it sits between colons: "+1", "+1::skin-tone-3", "party_parrot". */
+const EMOJI_CODE_RE = /^([a-z0-9_+-]{1,100})(?:::(skin-tone-[2-6]))?$/i;
+/** How long the workspace's custom emoji list is believed before emoji.list is asked again. */
+const EMOJI_LIST_TTL_MS = 60 * 60 * 1000;
+let emojiReverse = null; // character (variation selector stripped) → the name Slack knows it by
+
+/** The character for a standard code, '' for a custom or unknown one. */
+function emojiChar(code) {
+  const m = EMOJI_CODE_RE.exec(String(code || ''));
+  if (!m) return '';
+  const base = EMOJI_NAMES[m[1].toLowerCase()];
+  if (!base) return '';
+  const tone = m[2] ? EMOJI_NAMES[m[2].toLowerCase()] : '';
+  return tone ? base.replace(/\uFE0F/g, '') + tone : base;
+}
+
+/** The short name for a character ('' if Slack has none) — a reaction needs the name, not the glyph. */
+function emojiName(char) {
+  if (!emojiReverse) {
+    emojiReverse = new Map();
+    for (const [name, ch] of Object.entries(EMOJI_NAMES)) {
+      if (name.startsWith('skin-tone-')) continue;
+      const key = ch.replace(/\uFE0F/g, '');
+      if (!emojiReverse.has(key)) emojiReverse.set(key, name); // keys are sorted: "+1" wins over "thumbsup"
+    }
+  }
+  const s = String(char || '').replace(/\uFE0F/g, '');
+  const tone = /[\u{1F3FB}-\u{1F3FF}]$/u.exec(s);
+  if (tone) {
+    const base = emojiReverse.get(s.slice(0, -tone[0].length));
+    const toneName = Object.keys(EMOJI_NAMES).find((n) => n.startsWith('skin-tone-') && EMOJI_NAMES[n] === tone[0]);
+    return base && toneName ? `${base}::${toneName}` : '';
+  }
+  return emojiReverse.get(s) || '';
+}
+
+/**
+ * The admin's "Quick emojis" — "👍 🙏 :white_check_mark: :party_parrot:" →
+ * [{ name, char }]. A standard emoji gets both; a custom code keeps its name
+ * and no character (the browser draws the image); a glyph Slack has no name
+ * for can be sent but not reacted with (name ''). Eight at most.
+ */
+function parseQuickEmojis(text) {
+  const out = [];
+  for (const tok of String(text || '').split(/\s+/).filter(Boolean)) {
+    const code = /^:([^:\s]+(?:::skin-tone-[2-6])?):$/i.exec(tok);
+    if (code) {
+      const name = code[1].toLowerCase();
+      if (EMOJI_CODE_RE.test(name)) out.push({ name, char: emojiChar(name) });
+    } else out.push({ name: emojiName(tok), char: tok });
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
+/* Avatars and custom emoji are images on Slack's CDN; browsers only talk to
+   ProdDash, so the module fetches them and keeps them a while. */
+const IMAGE_CACHE_MAX = 400;
+const IMAGE_TTL_MS = 6 * 60 * 60 * 1000;
+const IMAGE_MAX_BYTES = 2 * 1024 * 1024;
+const imageCache = new Map(); // url → { buf, type, at } — module-wide, survives a re-init
+const imageInFlight = new Map();
+
+function fetchImage(url) {
+  const hit = imageCache.get(url);
+  if (hit && Date.now() - hit.at < IMAGE_TTL_MS) return Promise.resolve(hit);
+  if (imageInFlight.has(url)) return imageInFlight.get(url);
+  const p = (async () => {
+    const response = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS), redirect: 'follow' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const type = String(response.headers.get('content-type') || 'image/png').split(';')[0].trim();
+    if (!type.startsWith('image/')) throw new Error(`not an image (${type})`);
+    const buf = Buffer.from(await response.arrayBuffer());
+    if (buf.length > IMAGE_MAX_BYTES) throw new Error('too large');
+    if (imageCache.size >= IMAGE_CACHE_MAX) imageCache.delete(imageCache.keys().next().value);
+    const entry = { buf, type, at: Date.now() };
+    imageCache.set(url, entry);
+    return entry;
+  })().finally(() => imageInFlight.delete(url));
+  imageInFlight.set(url, p);
+  return p;
+}
+
+/** Only https, or plain http on this machine (the mock) — never a URL a message could smuggle in. */
+function imageUrlAllowed(url) {
+  try {
+    const u = new URL(String(url || ''));
+    return u.protocol === 'https:' || (u.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname));
+  } catch {
+    return false;
+  }
+}
+
+/** Answer with the image at `url`: 404 with none, 502 when the CDN fails — the <img> then falls back. */
+async function serveImage(res, url) {
+  if (!imageUrlAllowed(url)) {
+    res.writeHead(404, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
+    return void res.end('No image');
+  }
+  try {
+    const img = await fetchImage(url);
+    res.writeHead(200, { 'Content-Type': img.type, 'Content-Length': img.buf.length, 'Cache-Control': 'private, max-age=3600' });
+    res.end(img.buf);
+  } catch {
+    res.writeHead(502, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
+    res.end('Image unavailable');
+  }
+}
 
 function unescapeSlack(s) {
   return s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
@@ -233,7 +344,8 @@ function unescapeSlack(s) {
 /**
  * Slack mrkdwn → plain text. Mentions, channel links, broadcasts and URLs are
  * spelled out; *bold* _italic_ ~strike~ `code` markers are kept for the
- * client to style; :shortcodes: in the small map become the emoji.
+ * client to style; standard :codes: become their emoji, and a custom one
+ * stays as :code: for the client to draw from the workspace's set.
  */
 function renderMrkdwn(raw, lookupUser, lookupChannel) {
   let text = String(raw || '');
@@ -260,7 +372,7 @@ function renderMrkdwn(raw, lookupUser, lookupChannel) {
     return url.replace(/^mailto:/, '');
   });
   text = unescapeSlack(text);
-  text = text.replace(/:([a-z0-9_+-]+):/g, (m, code) => EMOJI[code] || m);
+  text = text.replace(/:([a-z0-9_+-]+(?:::skin-tone-[2-6])?):/gi, (m, code) => emojiChar(code) || m);
   return text;
 }
 
@@ -395,6 +507,7 @@ module.exports = {
     const pinOk = PIN_RE.test(pin);
     const idleMs = Math.min(240, Math.max(1, Number(config.pinIdleMinutes) || 10)) * 60 * 1000;
     const quickReplies = parseQuickReplies(config.quickReplies);
+    const quickEmojis = parseQuickEmojis(config.quickEmojis);
 
     /* ── state (all inside this closure so a re-init starts clean) ── */
     let stopped = false;
@@ -457,6 +570,92 @@ module.exports = {
       return channelNames.get(id) || pollers.get(id)?.name || '';
     }
 
+    /** A user's picture as Slack lists it (the 72 px one fits a transcript row). */
+    function profileImage(u) {
+      const p = u?.profile || {};
+      return String(p.image_72 || p.image_48 || p.image_32 || p.image_original || '');
+    }
+
+    /* Bot messages carry their own icon; remembered by bot so a later message
+       from the same bot without icons (a plain bot_message) still has one. */
+    const botIcons = new Map(); // bot id / username → image url
+    function botIconOf(m) {
+      const icons = m.icons || m.bot_profile?.icons || {};
+      const url = String(icons.image_72 || icons.image_64 || icons.image_48 || icons.image_36 || '');
+      const key = String(m.bot_id || m.username || m.bot_profile?.id || 'bot');
+      if (url) botIcons.set(key, url);
+      const emoji = icons.emoji ? emojiChar(String(icons.emoji).replace(/^:|:$/g, '')) : '';
+      return { key, url: url || botIcons.get(key) || '', emoji };
+    }
+
+    /** [{ name, count, me }] for a message's reactions, or nothing. `me` = this account reacted. */
+    function reactionsOf(m) {
+      if (!Array.isArray(m.reactions) || !m.reactions.length) return undefined;
+      const meId = identity?.userId || '';
+      const out = [];
+      for (const r of m.reactions) {
+        const name = String(r?.name || '');
+        if (!EMOJI_CODE_RE.test(name)) continue;
+        const users = Array.isArray(r.users) ? r.users : [];
+        const count = Math.max(0, Math.trunc(Number(r.count)) || users.length);
+        if (count > 0) out.push({ name, count, me: Boolean(meId && users.includes(meId)) });
+      }
+      return out.length ? out : undefined;
+    }
+
+    /* ── the workspace's custom emoji (emoji.list, hourly) ── */
+    let customEmoji = new Map(); // name → { url } | { char } (an alias of a standard emoji)
+    let customEmojiSig = '';
+    let emojiVersion = 0;        // bumps when the set changes; tiles refetch /emoji then
+    let emojiCheckedAt = 0;
+    let emojiPromise = null;
+    let emojiScopeMissing = false;
+
+    function loadCustomEmoji() {
+      if (emojiScopeMissing || Date.now() - emojiCheckedAt < EMOJI_LIST_TTL_MS) return Promise.resolve();
+      if (!emojiPromise) {
+        emojiPromise = (async () => {
+          emojiCheckedAt = Date.now();
+          const data = await slackCall(token, 'emoji.list', {});
+          const raw = data.emoji && typeof data.emoji === 'object' ? data.emoji : {};
+          const resolve = (name, depth) => {
+            const v = raw[name];
+            if (typeof v !== 'string' || depth > 5) return null;
+            if (v.startsWith('alias:')) {
+              const to = v.slice('alias:'.length);
+              if (to in raw) return resolve(to, depth + 1);
+              const ch = emojiChar(to);
+              return ch ? { char: ch } : null;
+            }
+            return imageUrlAllowed(v) ? { url: v } : null;
+          };
+          const next = new Map();
+          for (const name of Object.keys(raw).sort()) {
+            if (!EMOJI_CODE_RE.test(name) || name.includes('::')) continue;
+            const e = resolve(name, 0);
+            if (e) next.set(name, e);
+          }
+          const sig = JSON.stringify([...next]);
+          if (sig !== customEmojiSig) {
+            customEmoji = next;
+            customEmojiSig = sig;
+            emojiVersion += 1;
+            invalidateAll();
+            log(`${next.size} custom emoji in the workspace`);
+          }
+        })().catch((err) => {
+          if (err.code === 'missing_scope') {
+            emojiScopeMissing = true;
+            log('custom emoji stay as :codes: — the token lacks the emoji:read scope (add it under OAuth & Permissions, reinstall, paste the new token); standard emoji are unaffected');
+          } else {
+            emojiCheckedAt = Date.now() - EMOJI_LIST_TTL_MS + RETRY_NETWORK_MS; // ask again soon
+            if (err.code !== 'ratelimited') log(`emoji.list: ${describeError(err, { name: identity?.name })}`);
+          }
+        }).finally(() => { emojiPromise = null; });
+      }
+      return emojiPromise;
+    }
+
     function invalidateAll() {
       for (const ch of pollers.values()) ch.messagesCache = null;
     }
@@ -471,7 +670,7 @@ module.exports = {
           const data = await slackCall(token, 'users.info', { user: id });
           const u = data.user || {};
           const name = String(u.profile?.display_name || u.real_name || u.profile?.real_name || u.name || id);
-          users.set(id, { name, at: Date.now() });
+          users.set(id, { name, image: profileImage(u), at: Date.now() });
           changed = true;
         } catch (err) {
           // Unknown or deactivated: remember the raw id for a while so we
@@ -571,6 +770,7 @@ module.exports = {
       let text = textFor(m);
       if (m.subtype === 'channel_join' || m.subtype === 'group_join') text = `${name} joined ${chanLabel}`;
       else if (m.subtype === 'channel_leave' || m.subtype === 'group_leave') text = `${name} left ${chanLabel}`;
+      const icon = m.user ? null : botIconOf(m);
       const out = {
         id: String(m.ts),
         ts: String(m.ts),
@@ -582,6 +782,11 @@ module.exports = {
         subtype: String(m.subtype || ''),
         bot: Boolean(m.bot_id) || m.subtype === 'bot_message',
         me: Boolean(identity && m.user && m.user === identity.userId),
+        // the picture in the row: a user's profile image or a bot's icon, by
+        // key for GET /avatar/<key>; a bot with only an :emoji: icon shows that
+        avatar: m.user ? `u/${m.user}` : icon?.url ? `b/${icon.key}` : '',
+        avatarEmoji: icon?.emoji || '',
+        reactions: reactionsOf(m),
       };
       if (parentTs) out.parent = parentTs;
       else {
@@ -689,6 +894,10 @@ module.exports = {
         historyCount,
         pollSeconds: intervalMs / 1000,
         sending: { enabled: sendEnabled, pinSet: pinOk, idleMinutes: idleMs / 60000 },
+        // the pad submits by itself once this many digits are in (never the PIN)
+        pinLength: pinOk ? pin.length : 0,
+        quickEmojis,
+        emojiVersion,
         status: { state: h.status, message: h.message, lastPollAt },
         apiBase: API_BASE,
       };
@@ -771,7 +980,7 @@ module.exports = {
           const u = await slackCall(token, 'users.info', { user: userId });
           const name = String(u.user?.profile?.display_name || u.user?.real_name || u.user?.profile?.real_name || '').trim();
           if (name) id.name = name;
-          users.set(userId, { name: id.name, at: Date.now() });
+          users.set(userId, { name: id.name, image: profileImage(u.user), at: Date.now() });
         } catch { /* the handle will do */ }
       }
       identity = id;
@@ -875,6 +1084,7 @@ module.exports = {
           retry = wait + 100 + ch.index * 100;
         } else {
           await ensureAuth();
+          await loadCustomEmoji();
           if (!ch.checked || ch.errorKind === 'membership') await checkChannel(ch);
           await readHistory(ch);
           if (ch.error) log(`${labelOf(ch)}: reading again`);
@@ -974,6 +1184,41 @@ module.exports = {
     }
 
     /**
+     * Add or remove a reaction on behalf of an unlock — the same gate as a
+     * send, since it is the location's name on it. The message's channel must
+     * be one of the configured ones. `already_reacted` / `no_reaction` count
+     * as done: Slack already holds the state that was asked for.
+     */
+    async function react(req, res, unlock, { channel, ts, name, remove }) {
+      if (!identity || authError) {
+        return sendJson(res, 502, { error: authError || 'Slack token not checked yet — try again in a moment' });
+      }
+      const target = String(channel ?? '').trim() ? chooseTarget(channel) : { error: 'Which channel?' };
+      if (target.error) return sendJson(res, 400, { error: target.error, code: 'bad_channel' });
+      const stamp = String(ts ?? '').trim();
+      if (!/^\d{1,16}\.\d{1,9}$/.test(stamp)) return sendJson(res, 400, { error: 'Which message?' });
+      const code = String(name ?? '').trim().replace(/^:|:$/g, '').toLowerCase();
+      if (!EMOJI_CODE_RE.test(code)) return sendJson(res, 400, { error: 'Not an emoji name' });
+      const targetName = lookupChannel(target.id) || target.id;
+      try {
+        await slackCall(token, remove ? 'reactions.remove' : 'reactions.add', { channel: target.id, timestamp: stamp, name: code });
+      } catch (err) {
+        if (err.code !== 'already_reacted' && err.code !== 'no_reaction') {
+          const message = describeError(err, { name: identity.name, channel: targetName });
+          log(`reaction :${code}: in #${targetName} failed: ${message}`);
+          const status = ['invalid_name', 'too_many_reactions', 'too_many_emoji'].includes(err.code) ? 400
+            : err.code === 'message_not_found' ? 404 : 502;
+          return sendJson(res, status, { error: message, code: err.code });
+        }
+      }
+      const u = unlocks.get(unlock.token);
+      if (u) u.expiresAt = Date.now() + idleMs;
+      log(`${remove ? 'removed' : 'added'} :${code}: on ${stamp} in #${targetName} as ${sendingAs()}`);
+      if (pollers.has(target.id)) pollSoon(pollers.get(target.id));
+      return sendJson(res, 200, { ok: true, expiresAt: u ? u.expiresAt : unlock.expiresAt, channel: `#${targetName}` });
+    }
+
+    /**
      * Post on behalf of an unlock; answers the response. `targetId` is an
      * already-validated configured channel; `presetChannel` (a quick reply's
      * own "| #channel") overrides it.
@@ -1055,6 +1300,23 @@ module.exports = {
       quickReplies,
       sendGate,
       deliver,
+      react,
+      /** Everything a tile needs to draw emoji: the shipped table plus the workspace's own. */
+      emojiTable() {
+        const custom = {};
+        for (const [name, e] of customEmoji) {
+          custom[name] = e.url ? { url: `/api/modules/slack/emoji-image/${encodeURIComponent(name)}` } : { char: e.char };
+        }
+        return { standard: EMOJI_NAMES, custom, version: emojiVersion };
+      },
+      customEmojiUrl: (name) => customEmoji.get(String(name || ''))?.url || '',
+      /** "u/U123" → that user's profile image; "b/<bot>" → that bot's icon. */
+      avatarUrl(key) {
+        const [kind, id] = String(key || '').split('/');
+        if (kind === 'u') return users.get(id)?.image || '';
+        if (kind === 'b') return botIcons.get(id) || '';
+        return '';
+      },
       unlockFor,
       chooseTarget,
       namesReady,
@@ -1237,6 +1499,36 @@ module.exports = {
         if (!current) return unmounted(res);
         current.lock(req, res);
       },
+
+      // The emoji a tile may need to draw — fetched once per page, again when the version bumps.
+      'GET /emoji': (req, res) => {
+        if (!current) return unmounted(res);
+        sendJson(res, 200, current.emojiTable());
+      },
+
+      // Pictures proxied from Slack's CDN: a custom emoji by name, a profile image or bot icon by key.
+      'GET /emoji-image/*': guard(async (req, res) => {
+        if (!current) return unmounted(res);
+        await serveImage(res, current.customEmojiUrl(decodeURIComponent(String(req.wildcard || '').replace(/^\/+/, ''))));
+      }),
+      'GET /avatar/*': guard(async (req, res) => {
+        if (!current) return unmounted(res);
+        await serveImage(res, current.avatarUrl(decodeURIComponent(String(req.wildcard || '').replace(/^\/+/, ''))));
+      }),
+
+      // A reaction as the location — PIN-gated like a send.
+      'POST /react': guard(async (req, res) => {
+        if (!current) return unmounted(res);
+        const unlock = current.sendGate(req, res);
+        if (!unlock) return;
+        let body;
+        try {
+          body = await readJson(req);
+        } catch (err) {
+          return sendJson(res, 400, { error: err.message });
+        }
+        await current.react(req, res, unlock, { channel: body.channel, ts: body.ts, name: body.name, remove: Boolean(body.remove) });
+      }),
 
       // Labels and indexes only — the message text never leaves the server.
       'GET /quick': (req, res) => {

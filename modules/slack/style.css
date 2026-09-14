@@ -1,5 +1,7 @@
 /* Slack module — scoped to its tiles, shell variables only.
-   --sl-size (per tile, from the Text size setting) drives every font size. */
+   --sl-size (per tile, from the header's A− / A+) drives every font size.
+   Transcript rows follow the ProdCom transcript's layout: a square picture,
+   then a name line with the time, the text, the reactions. */
 
 [data-module="slack"] .sl-wrap {
   --sl-size: 14px;
@@ -74,9 +76,9 @@
 [data-module="slack"] .sl-empty.is-error { color: var(--danger); }
 
 [data-module="slack"] .sl-entry {
-  padding: 4px 6px;
+  padding: 5px 6px;
   border-radius: 8px;
-  line-height: 1.4;
+  line-height: 1.45;
 }
 [data-module="slack"] .sl-entry:hover { background: var(--bg); }
 [data-module="slack"] .sl-entry.sl-new { animation: sl-fade-in 0.25s ease-out; }
@@ -85,9 +87,46 @@
   to   { opacity: 1; transform: none; }
 }
 
-/* a message from this machine's own account */
-[data-module="slack"] .sl-entry.sl-me {
-  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+/* one row: the picture, then everything else */
+[data-module="slack"] .sl-msg,
+[data-module="slack"] .sl-reply {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+[data-module="slack"] .sl-body { flex: 1; min-width: 0; }
+
+/* the square: a profile image, a bot's icon or emoji, or initials on a tint
+   of a hue the name hashes to — the same size and corner as ProdCom's */
+[data-module="slack"] .sl-avatar {
+  flex: none;
+  width: calc(var(--sl-size) * 1.9);
+  height: calc(var(--sl-size) * 1.9);
+  border-radius: 26%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: hsl(var(--sl-hue, 150) 45% 50% / 0.2);
+  color: hsl(var(--sl-hue, 150) 55% 60%);
+  font-size: 0.72em;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  user-select: none;
+  -webkit-user-select: none;
+}
+[data-module="slack"] .sl-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+[data-module="slack"] .sl-avatar-emoji { font-size: 1.25em; line-height: 1; }
+[data-module="slack"] .sl-reply .sl-avatar {
+  width: calc(var(--sl-size) * 1.5);
+  height: calc(var(--sl-size) * 1.5);
+  font-size: 0.6em;
 }
 
 [data-module="slack"] .sl-meta {
@@ -95,11 +134,12 @@
   align-items: baseline;
   gap: 8px;
   min-width: 0;
-  margin-bottom: 1px;
+  margin-bottom: 2px;
 }
 [data-module="slack"] .sl-name {
   font-weight: 700;
-  font-size: 0.86em;
+  font-size: 0.82em;
+  letter-spacing: 0.01em;
   color: var(--accent);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -147,6 +187,52 @@
   color: var(--muted);
   white-space: nowrap;
 }
+
+/* a custom emoji is an image the size of a character */
+[data-module="slack"] .sl-emoji {
+  display: inline-block;
+  width: 1.25em;
+  height: 1.25em;
+  object-fit: contain;
+  vertical-align: -0.28em;
+}
+
+/* reactions under a message: pills with the emoji and its count; the
+   location's own carry the accent — a click adds yours or takes it back */
+[data-module="slack"] .sl-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+[data-module="slack"] .sl-reaction {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78em;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+}
+[data-module="slack"] .sl-reaction:hover { border-color: var(--accent); }
+[data-module="slack"] .sl-reaction.is-me {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+[data-module="slack"] .sl-reaction .sl-emoji,
+[data-module="slack"] .sl-reaction .sl-emoji-char { font-size: 1.15em; line-height: 1; vertical-align: middle; }
+[data-module="slack"] .sl-reaction-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--muted);
+}
+[data-module="slack"] .sl-reaction.is-me .sl-reaction-count { color: var(--text); }
 
 /* thread replies nest under their parent; without them, a muted count */
 [data-module="slack"] .sl-replies {
@@ -293,13 +379,8 @@
 [data-module="slack"] .sl-key:active { background: color-mix(in srgb, var(--accent) 30%, var(--panel)); }
 [data-module="slack"] .sl-key svg { width: 1.1em; height: 1.1em; }
 [data-module="slack"] .sl-key-back { color: var(--muted); }
-[data-module="slack"] .sl-key-ok { background: var(--accent); color: var(--accent-text); border-color: transparent; }
-[data-module="slack"] .sl-key-ok:hover { background: color-mix(in srgb, var(--accent) 85%, var(--text)); }
-[data-module="slack"] .sl-key-ok:disabled {
-  background: color-mix(in srgb, var(--accent) 25%, var(--panel));
-  color: var(--muted);
-  cursor: default;
-}
+[data-module="slack"] .sl-key-blank { visibility: hidden; }
+[data-module="slack"] .sl-pad.is-busy .sl-keys { opacity: 0.6; pointer-events: none; }
 
 [data-module="slack"] .sl-pad-msg {
   flex: none;
@@ -310,6 +391,24 @@
   color: var(--muted);
 }
 [data-module="slack"] .sl-pad-msg.is-error { color: var(--danger); font-weight: 600; }
+
+/* A tile too short for the keypad (the smallest Send message / Quick replies
+   tiles) shows the dots and a hint instead — digits typed on the keyboard
+   still land, and a taller tile brings the keys back. .sl-wrap is the size
+   container the height is measured against. */
+[data-module="slack"] .sl-pad-hint {
+  display: none;
+  flex: none;
+  text-align: center;
+  font-size: 0.78em;
+  line-height: 1.3;
+  color: var(--muted);
+}
+@container (max-height: 185px) {
+  [data-module="slack"] .sl-pad .sl-keys { display: none; }
+  [data-module="slack"] .sl-pad .sl-pad-hint { display: block; }
+  [data-module="slack"] .sl-pad { justify-content: center; }
+}
 
 /* ── send / quick replies: unlocked ── */
 
@@ -396,6 +495,40 @@
 [data-module="slack"] .sl-sendbtn:hover { background: color-mix(in srgb, var(--accent) 85%, var(--text)); }
 [data-module="slack"] .sl-sendbtn:disabled { opacity: 0.6; cursor: default; }
 
+/* quick emojis: one press each sends it as a message of its own */
+[data-module="slack"] .sl-emoji-sendrow {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+[data-module="slack"] .sl-emoji-send {
+  flex: none;
+  width: 2.1em;
+  height: 2.1em;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 5%, var(--panel));
+  color: var(--text);
+  font: inherit;
+  font-size: 1.1em;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.1s, border-color 0.1s;
+}
+[data-module="slack"] .sl-emoji-send:hover { border-color: var(--accent); background: var(--border); }
+[data-module="slack"] .sl-emoji-send:active { background: color-mix(in srgb, var(--accent) 30%, var(--panel)); }
+[data-module="slack"] .sl-emoji-send.is-busy { opacity: 0.6; }
+[data-module="slack"] .sl-emoji-send.is-sent { background: var(--accent); border-color: transparent; }
+[data-module="slack"] .sl-emoji-send .sl-emoji { width: 1.2em; height: 1.2em; vertical-align: middle; }
+
 /* the preset grid: big targets, labels wrap */
 [data-module="slack"] .sl-grid {
   flex: 1;
@@ -445,3 +578,99 @@
   color: var(--muted);
 }
 [data-module="slack"] .sl-quick.is-sent .sl-quick-chan { color: inherit; }
+
+/* ── the reaction menu (on document.body, so nothing clips it) ── */
+
+[data-module="slack"].sl-emoji-menu {
+  --sl-size: 14px;
+  position: fixed;
+  z-index: 90;
+  width: 292px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: var(--sl-size);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+[data-module="slack"].sl-emoji-menu:focus { outline: none; }
+[data-module="slack"].sl-emoji-menu.is-busy { opacity: 0.7; pointer-events: none; }
+[data-module="slack"] .sl-emoji-head {
+  font-size: 0.8em;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-module="slack"] .sl-emoji-quickrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+[data-module="slack"] .sl-emoji-quickrow:empty { display: none; }
+[data-module="slack"] .sl-emoji-btn {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s, border-color 0.1s;
+}
+[data-module="slack"] .sl-emoji-quickrow .sl-emoji-btn { font-size: 22px; width: 38px; height: 38px; background: color-mix(in srgb, var(--text) 5%, var(--panel)); border-color: var(--border); }
+[data-module="slack"] .sl-emoji-btn:hover { background: var(--border); border-color: var(--accent); }
+[data-module="slack"] .sl-emoji-btn .sl-emoji { width: 1.1em; height: 1.1em; vertical-align: middle; }
+[data-module="slack"] .sl-emoji-search {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9em;
+}
+[data-module="slack"] .sl-emoji-search:focus { outline: none; border-color: var(--accent); }
+[data-module="slack"] .sl-emoji-results {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  max-height: 150px;
+  overflow-y: auto;
+  min-height: 34px;
+}
+[data-module="slack"] .sl-emoji-none {
+  width: 100%;
+  padding: 8px 4px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.8em;
+}
+[data-module="slack"] .sl-emoji-msg {
+  min-height: 1em;
+  font-size: 0.78em;
+  color: var(--muted);
+}
+[data-module="slack"] .sl-emoji-msg:empty { display: none; }
+[data-module="slack"] .sl-emoji-msg.is-error { color: var(--danger); font-weight: 600; }
+
+/* the PIN pad inside the menu: fixed sizes, no tile to scale with */
+[data-module="slack"] .sl-emoji-menu .sl-pad { max-width: 100%; gap: 6px; }
+[data-module="slack"] .sl-emoji-menu .sl-keys { grid-template-rows: repeat(4, 40px); }
+[data-module="slack"] .sl-emoji-menu .sl-key { font-size: 17px; }
