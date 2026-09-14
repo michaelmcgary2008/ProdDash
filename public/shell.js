@@ -108,9 +108,10 @@ function wireDropdown(btnId, menuId, rebuild) {
   return menu;
 }
 
-function menuItem(label, onClick, { sub = '', danger = false } = {}) {
+function menuItem(label, onClick, { sub = '', danger = false, disabled = false } = {}) {
   const item = document.createElement('button');
   item.className = 'menu-item' + (danger ? ' danger' : '');
+  item.disabled = disabled;
   const span = document.createElement('span');
   span.textContent = label;
   if (sub) {
@@ -706,6 +707,10 @@ function buildDivider(L, R, top, bottom) {
  */
 function addTile(moduleId, entry = null) {
   const man = registry.get(moduleId);
+  if (entry?.single && tiles.some((t) => t.module === moduleId && t.variant === String(entry.id))) {
+    toast(`${entry.name} is already on this dashboard`);
+    return;
+  }
   const defaultSize = entry?.defaultSize || man?.defaultSize;
   const size = {
     w: Math.max(1, Math.min(COLS, defaultSize?.w || 4)),
@@ -1316,10 +1321,13 @@ function renderAddMenu(menu) {
       title.textContent = man.name;
       menu.appendChild(title);
       for (const entry of entries) {
+        // An entry that allows one tile at most is offered greyed out once
+        // that tile exists — a second Send box would only confuse.
+        const placed = entry.single && tiles.some((t) => t.module === man.id && t.variant === String(entry.id));
         menu.appendChild(menuItem(entry.name, () => {
           menu.hidden = true;
           addTile(man.id, entry);
-        }, { sub: entry.description || '' }));
+        }, { sub: placed ? 'Already on this dashboard' : (entry.description || ''), disabled: placed }));
       }
     } else {
       menu.appendChild(menuItem(man.name, () => {

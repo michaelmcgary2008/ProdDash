@@ -104,7 +104,7 @@ the app); its settings are kept for a later reinstall.
 Both schemas map field names to specs:
 
 ```
-{ "type": "string" | "text" | "number" | "boolean" | "switch" | "select" | "color" | "password" | "endpoint",
+{ "type": "string" | "text" | "number" | "boolean" | "switch" | "select" | "multiselect" | "color" | "password" | "endpoint",
   "label": "Shown next to the field",
   "default": <value>,
   "group": "Section heading",                         // optional; see below
@@ -125,6 +125,11 @@ shown or enabled, off means hidden or disabled, and the label shouldn't say
 so twice.
 `color` renders a swatch picker and stores a `#rrggbb` string (give it a hex
 default; the tile applies it as a CSS custom property — see `pco-plan`).
+`multiselect` is several picks from one list — the same `options` /
+`optionsRoute` as `select`, rendered as one switch per option and stored as
+an array of values. A saved value the list no longer offers stays checked and
+marked, so nothing is dropped behind the admin's back (admin config only).
+
 `text` is a multi-line string — a `<textarea>` in the admin page, stored with
 its newlines; one item per line is the convention (the `slack` module's quick
 replies). Admin config only.
@@ -485,6 +490,9 @@ module.exports = {
   keep it fast (answer from state you already hold; don't fetch upstream on
   demand). A throw or a hang (>2 s) falls back to the classic single entry,
   so a dead upstream can't break the picker.
+- `single: true` on an entry allows at most one such tile per dashboard: the
+  picker greys the entry out once it is placed. Use it for a control surface
+  that would only confuse in duplicate — a send box, a master switch.
 - When the user adds an entry, its `settings` overlay your `instanceSchema`
   defaults in that tile's instance settings, the entry's `name` becomes the
   tile's title, and `moduleApi.variant` carries its `id`.

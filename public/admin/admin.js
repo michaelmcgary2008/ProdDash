@@ -228,6 +228,73 @@ function fieldFor(key, spec, value, passwordSet, moduleId) {
     field.append(span, select);
     read = () => select.value;
     selectEl = select;
+  } else if (type === 'multiselect' && (Array.isArray(spec.options) || spec.optionsRoute)) {
+    // Several picks from one list — a switch per option, stored as an array
+    // of values. A saved value the list no longer offers stays checked and
+    // marked, so a channel the account has left isn't dropped in silence.
+    field.classList.add('multiselect-field');
+    // The wrapper is a <label>; with several controls inside, a click on the
+    // wrapper would activate the FIRST one. `for=""` makes it label nothing.
+    field.htmlFor = '';
+    const span = document.createElement('span');
+    span.textContent = label;
+    const list = document.createElement('div');
+    list.className = 'multiselect';
+    const chosen = new Set((Array.isArray(value) ? value : []).map(String).filter(Boolean));
+    const optValue = (opt) => String(typeof opt === 'object' ? opt.value : opt);
+    const fill = (options) => {
+      for (const input of list.querySelectorAll('input')) {
+        if (input.checked) chosen.add(input.value);
+        else chosen.delete(input.value);
+      }
+      list.innerHTML = '';
+      const missing = [...chosen].filter((v) => !options.some((opt) => optValue(opt) === v));
+      const all = [...options, ...missing.map((v) => ({ value: v, label: `${v} (saved — not listed now)` }))];
+      for (const opt of all) {
+        const row = document.createElement('div');
+        row.className = 'multiselect-row';
+        const toggle = document.createElement('span');
+        toggle.className = 'switch';
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.value = optValue(opt);
+        input.checked = chosen.has(input.value);
+        const track = document.createElement('span');
+        track.className = 'track';
+        toggle.append(input, track);
+        const text = document.createElement('span');
+        text.className = 'switch-label';
+        text.textContent = String(typeof opt === 'object' ? (opt.label ?? opt.value) : opt);
+        row.append(toggle, text);
+        row.addEventListener('click', (e) => {
+          if (e.target === input) return;           // the box toggles itself
+          input.checked = !input.checked;
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        list.appendChild(row);
+      }
+      if (!all.length) {
+        const none = document.createElement('div');
+        none.className = 'multiselect-empty';
+        none.textContent = 'Nothing to choose from yet.';
+        list.appendChild(none);
+      }
+    };
+    fill(Array.isArray(spec.options) ? spec.options : []);
+    if (spec.optionsRoute && moduleId) {
+      refetch = (query) => {
+        const qs = query && Object.keys(query).length ? `?${new URLSearchParams(query)}` : '';
+        return fetch(`/api/modules/${encodeURIComponent(moduleId)}${spec.optionsRoute}${qs}`)
+          .then((res) => (res.ok ? res.json() : null))
+          .then((body) => {
+            if (Array.isArray(body?.options)) fill(body.options);
+          })
+          .catch(() => { /* keep the static/saved options */ });
+      };
+      if (!spec.optionsDependsOn) refetch();
+    }
+    field.append(span, list);
+    read = () => [...list.querySelectorAll('input:checked')].map((input) => input.value);
   } else if (type === 'color') {
     // A swatch picker; the value is always a #rrggbb string.
     field.classList.add('color-field');

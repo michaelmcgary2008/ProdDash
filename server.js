@@ -463,6 +463,8 @@ function sanitizeTileEntry(raw) {
     name: String(raw.name),
     description: raw.description ? String(raw.description) : '',
     settings: raw.settings && typeof raw.settings === 'object' ? raw.settings : {},
+    // at most one tile of this entry per dashboard (the picker greys it out)
+    single: raw.single === true,
   };
   for (const key of ['minSize', 'defaultSize']) {
     const size = raw[key];
@@ -1055,6 +1057,9 @@ function applyConfigPatch(id, patch) {
     }
     if (type === 'number') value = Number(value) || 0;
     else if (type === 'boolean' || type === 'switch') value = Boolean(value);
+    else if (type === 'multiselect') {
+      value = (Array.isArray(value) ? value : []).map((v) => String(v)).filter(Boolean);
+    }
     else if (type === 'endpoint') {
       const src = value && typeof value === 'object' ? value : {};
       value = {

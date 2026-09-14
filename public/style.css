@@ -170,6 +170,7 @@ body.menu-hidden #topbar {
   margin-top: 2px;
   white-space: normal;
 }
+.menu-item[disabled] { opacity: 0.45; cursor: default; }
 .menu-item.danger { color: var(--danger); }
 .menu-note {
   padding: 8px 10px;
