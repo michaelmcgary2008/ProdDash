@@ -29,8 +29,9 @@
  *                 read through its /timers/stream when that answers as SSE,
  *                 else its /timers polled every 2 s. Re-discovered every 30 s
  *                 so a newly installed provider appears without a restart.
- *                 PCO Plan sits behind pcoEnabled, everything else behind
- *                 moduleTimersEnabled.
+ *                 PCO Plan sits behind the admin pcoEnabled switch; any other
+ *                 provider is consumed as soon as it is found (give it a
+ *                 switch of its own in module.json the day one needs it).
  *
  * ADDING A SOURCE (another timer platform) is a dozen lines. Write a factory
  * that returns
@@ -84,7 +85,7 @@ const { createLtcListener } = require('./ltc-listener');
 
 /** This module's id — left out of provider discovery (we don't consume ourselves). */
 const SELF_ID = 'propresenter-timers';
-/** The provider the admin "PCO Plan" switch governs; every other provider follows "Other modules". */
+/** The provider the admin "PCO Plan" switch governs; every other provider is always on. */
 const PCO_ID = 'pco-plan';
 
 /* ProPresenter cadence. */
@@ -93,7 +94,7 @@ const RETRY_MS = 2500;
 const SLOW_EVERY = 4;
 const REQUEST_TIMEOUT_MS = 4000;
 
-/* Other modules' timers. */
+/* Timers offered by other modules. */
 const DISCOVER_MS = 30000; // re-read /api/modules: a newly installed provider shows up without a restart
 const DISCOVER_RETRY_MS = 5000; // …sooner while the shell isn't answering yet (boot)
 const DISCOVER_FIRST_MS = 1500; // init() runs before the shell listens
@@ -770,7 +771,7 @@ function createModuleDiscovery({ shellPort, log, flags, onAdd, onRemove }) {
   let listError = '';
 
   function wanted(id) {
-    return id === PCO_ID ? flags.pco : flags.modules;
+    return id === PCO_ID ? flags.pco : true;
   }
 
   async function discover() {
@@ -824,7 +825,6 @@ function createModuleDiscovery({ shellPort, log, flags, onAdd, onRemove }) {
 
   return {
     start() {
-      if (!flags.pco && !flags.modules) return;
       timer = setTimeout(discover, DISCOVER_FIRST_MS);
       timer.unref?.();
     },
@@ -844,8 +844,6 @@ function createModuleDiscovery({ shellPort, log, flags, onAdd, onRemove }) {
         else if (s === 'connecting' && status === 'ok') status = 'connecting';
       };
       if (!flags.pco) parts.push('PCO Plan: off');
-      if (!flags.modules) parts.push('Other modules: off');
-      if (!flags.pco && !flags.modules) return { status, parts };
       if (listed === null) {
         parts.push(listError ? `Modules: waiting for the shell (${listError})` : 'Modules: discovering…');
         return { status: 'connecting', parts };
@@ -864,14 +862,11 @@ function createModuleDiscovery({ shellPort, log, flags, onAdd, onRemove }) {
           parts.push('PCO Plan: not installed, or not offering timers yet');
         }
       }
-      if (flags.modules) {
-        const others = [...sources.values()].filter((s) => s.id !== PCO_ID);
-        if (!others.length) parts.push('Other modules: none offering timers');
-        for (const s of others) {
-          const h = s.health();
-          parts.push(`${s.label}: ${h.message}`);
-          bump(h.status);
-        }
+      // Every other provider found is listed under its own name.
+      for (const s of [...sources.values()].filter((x) => x.id !== PCO_ID)) {
+        const h = s.health();
+        parts.push(`${s.label}: ${h.message}`);
+        bump(h.status);
       }
       return { status, parts };
     },
@@ -899,7 +894,6 @@ module.exports = {
       pp: config.ppEnabled !== false,
       ltc: Boolean(config.ltcEnabled),
       pco: config.pcoEnabled !== false,
-      modules: config.moduleTimersEnabled !== false,
     };
 
     const tileStreams = new Set();
@@ -1006,7 +1000,7 @@ module.exports = {
       }
     }
     discovery.start();
-    if (!flags.pco && !flags.modules) log('module timers are off (admin switches)');
+    if (!flags.pco) log('PCO Plan timers are off (admin switch)');
 
     const heartbeat = setInterval(() => {
       writeAll(tileStreams, ': ping\n\n');

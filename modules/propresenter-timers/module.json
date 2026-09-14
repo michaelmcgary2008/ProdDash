@@ -26,10 +26,6 @@
     "PCO Plan": {
       "toggle": "pcoEnabled",
       "help": "Timers the PCO Plan module offers — service elapsed, current item, countdown to service — appear here under a PCO Plan heading when that module is installed and configured. Nothing to set up on this side."
-    },
-    "Other modules": {
-      "toggle": "moduleTimersEnabled",
-      "help": "Any other installed module that offers timers (\"provides\": [\"timers\"] in its manifest) is found automatically and listed under its own heading. Nothing to configure here."
     }
   },
   "configSchema": {
@@ -78,12 +74,6 @@
       "type": "switch",
       "label": "PCO Plan timers",
       "group": "PCO Plan",
-      "default": true
-    },
-    "moduleTimersEnabled": {
-      "type": "switch",
-      "label": "Module timers",
-      "group": "Other modules",
       "default": true
     },
     "timerFont": {
