@@ -184,9 +184,10 @@ explanation there.
 popover (`collapsed: true | false`, `columns`, `help`, `toggle`). That is how
 a module with a long show/hide checklist keeps the popover usable — see
 `pco-plan`. Display choices belong there, per tile; admin config is for
-connections. The popover itself is a small window beside the tile (moved by
-its bar, closed by clicking away) so a tile never has to be big enough to
-hold its own settings, and a change can be watched as it lands.
+connections. The popover itself is a small window beside the tile — sized to
+its content, moved by the slim bar on top, closed by clicking anywhere else
+or pressing Escape — so a tile never has to be big enough to hold its own
+settings, and a change can be watched as it lands.
 
 A picker entry (see **Presenting multiple tiles**) may carry its own
 `instanceSchema` and `instanceGroups`: tiles added from that entry get those
@@ -350,11 +351,12 @@ Everything you add is removed automatically when your instance stops, so a
 remount never duplicates controls. Keep them compact (icon buttons, short
 labels): the title bar is 32 px tall and shared with the tile's name.
 
-**Text size lives here, not in the gear popover.** A module whose text can
-be sized offers A− / A+ header buttons that persist through
-`saveInstanceSettings({ textSize })` and reads the value back with a sane
-fallback; it does not also expose a "Text size" number field in
-`instanceSchema` — one control per setting.
+**One control per action.** Whatever has a dedicated header button is not
+offered again in the gear popover: text size is A− / A+ up here (persisted
+through `saveInstanceSettings({ textSize })`, read back with a sane
+fallback), never a "Text size" field in `instanceSchema`; a timestamps or
+newest-first toggle in the header means no such switch in the gear. The
+gear is for display choices that have no button of their own.
 
 One more thing to know: the user can hide the whole title bar with the
 small notch on its bottom edge (a clean-view mode for wall displays). Your

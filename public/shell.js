@@ -1157,20 +1157,12 @@ function toggleSettingsPopover(tile, el) {
   pop.setAttribute('role', 'dialog');
   pop.setAttribute('aria-label', `${tile.title || man.name} settings`);
 
-  // A bar to move it by, and the one control every window has.
+  // A slim bar to move it by — nothing else. No title (the window sits beside
+  // the tile it belongs to) and no close button: a click anywhere else, or
+  // Escape, closes it.
   const bar = document.createElement('div');
   bar.className = 'tile-settings-bar';
-  const barTitle = document.createElement('span');
-  barTitle.className = 'tile-settings-title';
-  barTitle.textContent = tile.title || man.name;
-  const closeBtn = document.createElement('button');
-  closeBtn.type = 'button';
-  closeBtn.className = 'tile-settings-close';
-  closeBtn.title = 'Close';
-  closeBtn.setAttribute('aria-label', 'Close settings');
-  closeBtn.textContent = '✕';
-  closeBtn.addEventListener('click', () => closeSettingsPopovers());
-  bar.append(barTitle, closeBtn);
+  bar.title = 'Drag to move';
   const body = document.createElement('div');
   body.className = 'tile-settings-body';
   pop.append(bar, body);
@@ -1486,7 +1478,7 @@ function toggleSettingsPopover(tile, el) {
 
   // Moved by its bar.
   bar.addEventListener('pointerdown', (e) => {
-    if (e.target === closeBtn || (e.button !== 0 && e.pointerType === 'mouse')) return;
+    if (e.button !== 0 && e.pointerType === 'mouse') return;
     e.preventDefault();
     bar.setPointerCapture(e.pointerId);
     const dx = e.clientX - pop.offsetLeft;
