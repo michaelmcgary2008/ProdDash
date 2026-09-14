@@ -684,6 +684,10 @@ body.fullscreen #grid { padding-bottom: 0; }
 }
 .tile-settings .field-group-body.is-columns .field { margin-bottom: 0; }
 .tile-settings .field-group-body.is-columns .field-group-help { grid-column: 1 / -1; }
+/* a list of switches or a template with its chips is a row of its own, however
+   many columns the group lays its other fields out in */
+.tile-settings .field-group-body.is-columns .multiselect-field,
+.tile-settings .field-group-body.is-columns .template-field { grid-column: 1 / -1; }
 @container (max-width: 420px) {
   .tile-settings .field-group-body.is-columns { grid-template-columns: 1fr 1fr; }
 }
