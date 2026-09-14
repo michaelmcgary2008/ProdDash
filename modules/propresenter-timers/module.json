@@ -89,7 +89,7 @@
   },
   "instanceGroups": {
     "Show": { "collapsed": false, "columns": 2 },
-    "Clock": { "collapsed": false },
+    "Clock": { "collapsed": false, "toggle": "showClock" },
     "Colours": {
       "collapsed": true,
       "columns": 2,
@@ -97,12 +97,12 @@
     }
   },
   "instanceSchema": {
-    "showClock": { "type": "boolean", "label": "Clock", "default": true, "group": "Show" },
     "showProPresenter": { "type": "boolean", "label": "ProPresenter timers", "default": true, "group": "Show" },
     "showLtc": { "type": "boolean", "label": "LTC timecode", "default": true, "group": "Show" },
     "showModules": { "type": "boolean", "label": "Module timers", "default": true, "group": "Show" },
     "showHeadings": { "type": "boolean", "label": "Source headings", "default": true, "group": "Show" },
     "showStatus": { "type": "boolean", "label": "Status lines", "default": true, "group": "Show" },
+    "showClock": { "type": "switch", "label": "Clock", "default": true, "group": "Clock" },
     "clockFormat": {
       "type": "select",
       "label": "Clock format",
