@@ -812,7 +812,7 @@ function createTranscriptTile({ root, moduleApi }) {
 
   /** A message or a thread reply as one row; returns the row and its body (replies nest in the body). */
   function buildLine(m, reply = false) {
-    const line = el('div', reply ? 'sl-reply' : 'sl-msg');
+    const line = el('div', reply ? 'sl-reply' : 'sl-row');
     line.dataset.ts = m.ts;
     line.classList.toggle('sl-me', Boolean(m.me));
     line.classList.toggle('sl-bot', Boolean(m.bot));
@@ -876,7 +876,7 @@ function createTranscriptTile({ root, moduleApi }) {
     });
   }
   entriesEl.addEventListener('contextmenu', (e) => {
-    const line = e.target.closest('.sl-msg, .sl-reply');
+    const line = e.target.closest('.sl-row, .sl-reply');
     if (!line || !entriesEl.contains(line)) return;
     const m = messagesByTs.get(line.dataset.ts);
     if (!m) return;

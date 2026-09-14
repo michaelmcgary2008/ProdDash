@@ -87,8 +87,9 @@
   to   { opacity: 1; transform: none; }
 }
 
-/* one row: the picture, then everything else */
-[data-module="slack"] .sl-msg,
+/* one row: the picture, then everything else (.sl-row — .sl-msg is the
+   send tile's status line, a different thing) */
+[data-module="slack"] .sl-row,
 [data-module="slack"] .sl-reply {
   display: flex;
   align-items: flex-start;
@@ -153,10 +154,8 @@
   font-variant-numeric: tabular-nums;
 }
 [data-module="slack"] .sl-wrap:not(.show-times) .sl-time { display: none; }
-[data-module="slack"] .sl-wrap:not(.show-names) .sl-msg > .sl-meta,
-[data-module="slack"] .sl-wrap:not(.show-names) .sl-reply > .sl-meta { display: none; }
-[data-module="slack"] .sl-wrap.show-times:not(.show-names) .sl-msg > .sl-meta,
-[data-module="slack"] .sl-wrap.show-times:not(.show-names) .sl-reply > .sl-meta { display: flex; }
+[data-module="slack"] .sl-wrap:not(.show-names) .sl-body > .sl-meta { display: none; }
+[data-module="slack"] .sl-wrap.show-times:not(.show-names) .sl-body > .sl-meta { display: flex; }
 [data-module="slack"] .sl-wrap.show-times:not(.show-names) .sl-name { display: none; }
 [data-module="slack"] .sl-wrap:not(.show-system) .sl-entry.sl-system { display: none; }
 

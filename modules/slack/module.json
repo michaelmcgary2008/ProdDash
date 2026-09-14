@@ -117,8 +117,9 @@
     },
     "showSystem": {
       "type": "switch",
-      "label": "System lines",
-      "default": true
+      "label": "Channel notices",
+      "default": true,
+      "help": "Joins, leaves, topic changes, pins and other housekeeping lines."
     }
   }
 }
