@@ -53,6 +53,10 @@ const API_BASE = String(process.env.SLACK_API_BASE || DEFAULT_API_BASE).replace(
 
 /** Abort a hung Slack request well before the poll cadence stacks up. */
 const REQUEST_TIMEOUT_MS = 10000;
+/** The scopes on the token, as Slack's x-oauth-scopes header names them on every answer. */
+let tokenScopes = '';
+/** Scopes a feature needs beyond reading: what to tell the tech when one is missing. */
+const OPTIONAL_SCOPES = [['reactions:write', 'emoji reactions'], ['emoji:read', 'custom emoji']];
 /** SSE comment ping cadence — keeps idle connections alive through sleepy Wi-Fi. */
 const HEARTBEAT_MS = 15000;
 /** Fastest allowed history poll; the admin default is 2 s. */
@@ -168,6 +172,8 @@ async function slackCall(token, method, params = {}, { json = false } = {}) {
   } catch (err) {
     throw new SlackError('network', { network: true, detail: err?.message || String(err) });
   }
+  const scopes = response.headers.get('x-oauth-scopes');
+  if (scopes) tokenScopes = scopes;
   if (response.status === 429) {
     const retryAfter = Math.max(1, Math.trunc(Number(response.headers.get('retry-after'))) || 5);
     throw new SlackError('ratelimited', { retryAfter, status: 429 });
@@ -987,6 +993,14 @@ module.exports = {
       authError = '';
       invalidateAll();
       log(`token belongs to ${identityLabel()} (${id.team || 'team unknown'})${id.kind === 'bot' && !sendAs ? ' — messages will read as the app; set "Send as" to name the location' : ''}`);
+      if (tokenScopes) {
+        const have = new Set(tokenScopes.split(',').map((x) => x.trim()));
+        const missing = OPTIONAL_SCOPES.filter(([scope]) => !have.has(scope));
+        log(`token scopes: ${tokenScopes}`);
+        if (missing.length) {
+          log(`without ${missing.map(([scope, what]) => `${scope} (${what})`).join(' and ')} — add under OAuth & Permissions → User Token Scopes, Reinstall to Workspace as this account, paste the token it shows`);
+        }
+      }
     }
 
     /** Every poller wants the identity; the first to ask makes the one call. */
