@@ -428,7 +428,11 @@ export default function create({ root, moduleApi }) {
     } else if (!isLtc && badge) {
       badge.remove();
     }
-    setText(card.labelEl, item.missing ? (lastSoloLabel || 'Timer') : item.timer.label);
+    const label = item.missing ? (lastSoloLabel || 'Timer') : item.timer.label;
+    if (card.labelEl.textContent !== label) {
+      setText(card.labelEl, label);
+      needFit = true; // the title's size follows its length
+    }
   }
 
   function updateMissingCard(card) {
@@ -772,6 +776,27 @@ export default function create({ root, moduleApi }) {
 
   /* ── sizing: the column count that gives the biggest digits ─────── */
 
+  /** Status and detail lines are drawn at this share of the label's size (style.css agrees). */
+  const LINE_SCALE = 0.8;
+
+  /* The title fits its card: measured off-screen, it shrinks (down to a
+     floor) before the card would cut it off. Uppercase and letter-spaced
+     like the CSS draws it. */
+  const measurer = document.createElement('canvas').getContext('2d');
+  let labelFamily = '';
+  function labelWidth(text, px) {
+    if (!labelFamily) labelFamily = getComputedStyle(root).fontFamily || 'sans-serif';
+    measurer.font = `700 ${px}px ${labelFamily}`;
+    const t = String(text || '').toUpperCase();
+    return measurer.measureText(t).width + 0.08 * px * Math.max(0, t.length - 1);
+  }
+  function fitLabel(card, meta, avail) {
+    const room = Math.max(24, avail - (card.nameEl.querySelector('.tm-ltc-badge') ? 34 : 0));
+    const natural = labelWidth(card.labelEl.textContent, meta);
+    const px = natural > room ? Math.max(8, Math.floor((meta * room) / natural)) : meta;
+    card.labelEl.style.fontSize = px === meta ? '' : `${px}px`;
+  }
+
   function fit() {
     const list = [...cards.values()];
     const n = list.length;
@@ -803,7 +828,7 @@ export default function create({ root, moduleApi }) {
       const ch = (H - PAD * 2 - headings * HEAD_H - GAP * (rows - 1) - (headings ? (headings - 1) * GAP : 0)) / rows - CARD_PAD;
       if (cw <= 0 || ch <= 0) continue;
       const meta = Math.max(9, Math.min(22, Math.floor(ch * 0.16)));
-      const fullBudget = ch - (1 + metaLines) * 1.3 * meta;
+      const fullBudget = ch - 1.3 * meta - metaLines * 1.3 * meta * LINE_SCALE;
       const compactBudget = ch - 1.3 * meta;
       let full = Infinity;
       let compact = Infinity;
@@ -831,6 +856,7 @@ export default function create({ root, moduleApi }) {
     for (const c of list) {
       const px = Math.max(11, Math.floor(Math.min((best.cw * 1.55) / c.chars, best.budget)));
       c.timeEl.style.fontSize = px + 'px';
+      fitLabel(c, best.meta, best.cw);
     }
   }
 

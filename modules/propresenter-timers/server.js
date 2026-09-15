@@ -171,14 +171,14 @@ function fmtMs(ms) {
   return h ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
 }
 
-/** ProPresenter's count_down_to_time target: seconds since midnight + am/pm/24h. */
+/** ProPresenter's count_down_to_time target, short: "9:30a", "12:05p", or "21:30" for a 24-hour clock. */
 function timeOfDayText(seconds, period) {
   const s = Number(seconds);
   if (!Number.isFinite(s)) return '';
   const h = Math.floor(s / 3600) % 24;
   const m = Math.floor((s % 3600) / 60);
   const p = String(period || '').toLowerCase();
-  if (p === 'am' || p === 'pm') return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${p}`;
+  if (p === 'am' || p === 'pm') return `${h % 12 || 12}:${String(m).padStart(2, '0')}${p[0]}`;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
@@ -278,7 +278,7 @@ function createProPresenterSource({ config, log }) {
     }
     if (entry.count_down_to_time) {
       const at = timeOfDayText(entry.count_down_to_time.time_of_day, entry.count_down_to_time.period);
-      return { type: 'countdown_to_time', targetMs: null, detail: at ? `Counts down to ${at}` : 'Counts down to a time of day' };
+      return { type: 'countdown_to_time', targetMs: null, detail: at ? `to ${at}` : 'to a time of day' };
     }
     if (entry.elapsed) {
       const end = Number(entry.elapsed.end_time);

@@ -196,7 +196,7 @@
 [data-module="propresenter-timers"] .tm-detail {
   flex: none;
   max-width: 100%;
-  font-size: var(--tm-meta-size);
+  font-size: calc(var(--tm-meta-size) * 0.8); /* smaller than the title; fit() budgets the same share */
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
