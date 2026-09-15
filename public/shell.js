@@ -288,9 +288,22 @@ function buildTile(tile) {
   notch.title = 'Hide / show the title bar';
   notch.addEventListener('click', (e) => {
     e.stopPropagation();
+    // In fullscreen the bars are all folded away for watching; the notch
+    // peeks one open for a moment without touching what this tile saved.
+    if (document.body.classList.contains('fullscreen')) {
+      peekHead(tile, el, !el.classList.contains('head-peek'));
+      return;
+    }
     tile.headHidden = !tile.headHidden;
     el.classList.toggle('head-hidden', tile.headHidden);
     saveLayout();
+  });
+
+  // A peeked title bar stays while the pointer is on its tile, and starts
+  // counting down as soon as it leaves.
+  el.addEventListener('pointerenter', () => clearPeekTimer(tile.id));
+  el.addEventListener('pointerleave', () => {
+    if (el.classList.contains('head-peek')) schedulePeekHide(tile.id, el);
   });
 
   el.append(head, body, resize, resizeLeft, resizeBottom, notch);
@@ -518,13 +531,22 @@ function notifyResize(tile) {
 /* ── seam dividers between adjacent tiles ───────────────────────────── */
 
 /* Wherever two tiles share a vertical edge, a divider sits on the seam.
-   Dragging its pill moves the shared edge, trading width between the two
-   tiles — their combined span never changes, so nothing else can collide
-   except via the explicit check below (a third tile can sit behind the
-   seam for part of its height). */
+   Dragging one moves that column boundary wherever it appears: every pair of
+   tiles meeting at the same x, in every row, moves with it, so a column of
+   tiles keeps its edge as one line rather than drifting row by row. Hovering
+   a seam lights up the others that travel with it.
+
+   Each pair trades width within its own span — the pair's combined span never
+   changes — so nothing else can collide except via the explicit check below
+   (a third tile can sit behind the seam for part of its height). A row where
+   one tile simply spans the boundary has no seam there and stays put. */
+
+/** Live dividers, so a drag can reposition all of them as the tiles move. */
+const dividers = [];
 
 function rebuildDividers() {
   grid.querySelectorAll('.tile-divider').forEach((el) => el.remove());
+  dividers.length = 0;
   for (const L of tiles) {
     for (const R of tiles) {
       if (L === R || L.x + L.w !== R.x) continue;
@@ -536,10 +558,24 @@ function rebuildDividers() {
   }
 }
 
+/** Every pair of tiles that meets at this column boundary, in any row. */
+function seamPairsAt(boundary) {
+  const pairs = [];
+  for (const L of tiles) {
+    if (L.x + L.w !== boundary) continue;
+    for (const R of tiles) {
+      if (R === L || R.x !== boundary) continue;
+      if (Math.min(L.y + L.h, R.y + R.h) <= Math.max(L.y, R.y)) continue;
+      pairs.push({ L, R });
+    }
+  }
+  return pairs;
+}
+
 function buildDivider(L, R, top, bottom) {
   const el = document.createElement('div');
   el.className = 'tile-divider';
-  el.title = 'Drag to resize';
+  el.title = 'Drag to resize this column';
 
   const place = () => {
     const m = cellMetrics();
@@ -550,43 +586,72 @@ function buildDivider(L, R, top, bottom) {
   };
   place();
 
+  const boundary = () => L.x + L.w;
+  const groupEls = () => dividers.filter((d) => d.boundary() === boundary()).map((d) => d.el);
+  const unlink = () => { for (const d of dividers) d.el.classList.remove('linked'); };
+
+  // Before anything is dragged, show which seams travel with this one.
+  el.addEventListener('pointerenter', () => {
+    if (document.body.classList.contains('fullscreen')) return;
+    for (const other of groupEls()) other.classList.add('linked');
+  });
+  el.addEventListener('pointerleave', unlink);
+
   el.addEventListener('pointerdown', (ev) => {
     if (ev.button !== 0 && ev.pointerType === 'mouse') return;
     if (document.body.classList.contains('fullscreen')) return;
     ev.preventDefault();
     closeSettingsPopovers();
     el.setPointerCapture(ev.pointerId);
-    el.classList.add('active');
+
     const m = cellMetrics();
     const sx = ev.clientX;
-    const startBoundary = L.x + L.w;
-    const rightEdge = R.x + R.w; // fixed for the whole drag
-    const minB = L.x + minSizeOf(L).w;
-    const maxB = rightEdge - minSizeOf(R).w;
+    const startBoundary = boundary();
+    // Every row that has a seam here moves with it. Each pair's outer edges
+    // are fixed for the whole drag, so each row only trades width internally.
+    const parts = seamPairsAt(startBoundary).map(({ L: a, R: b }) => ({
+      L: a, R: b, leftX: a.x, rightEdge: b.x + b.w,
+    }));
+    if (!parts.length) return;
+    const moving = parts.flatMap((p) => [p.L.id, p.R.id]);
+    // The whole column stops at whichever row runs out of room first.
+    const minB = Math.max(...parts.map((p) => p.leftX + minSizeOf(p.L).w));
+    const maxB = Math.min(...parts.map((p) => p.rightEdge - minSizeOf(p.R).w));
+    const group = groupEls();
+    for (const other of group) other.classList.add('active');
     let changed = false;
 
     const onMove = (e) => {
       const b = Math.max(minB, Math.min(maxB,
         startBoundary + Math.round((e.clientX - sx) / (m.cw + m.gap))));
-      if (b === L.x + L.w) return;
-      const candL = { x: L.x, y: L.y, w: b - L.x, h: L.h };
-      const candR = { x: b, y: R.y, w: rightEdge - b, h: R.h };
-      if (!isFreeExcept(candL, [L.id, R.id]) || !isFreeExcept(candR, [L.id, R.id])) return;
-      L.w = candL.w;
-      R.x = candR.x;
-      R.w = candR.w;
-      applyRect(L);
-      applyRect(R);
-      notifyResize(L);
-      notifyResize(R);
-      place();
+      if (b === boundary()) return;
+      const next = parts.map((p) => ({
+        p,
+        candL: { x: p.leftX, y: p.L.y, w: b - p.leftX, h: p.L.h },
+        candR: { x: b, y: p.R.y, w: p.rightEdge - b, h: p.R.h },
+      }));
+      // All rows move or none do — a column edge that bends is worse than one
+      // that won't budge.
+      if (next.some(({ candL, candR }) =>
+        !isFreeExcept(candL, moving) || !isFreeExcept(candR, moving))) return;
+      for (const { p, candL, candR } of next) {
+        p.L.w = candL.w;
+        p.R.x = candR.x;
+        p.R.w = candR.w;
+        applyRect(p.L);
+        applyRect(p.R);
+        notifyResize(p.L);
+        notifyResize(p.R);
+      }
+      for (const d of dividers) d.place();
       changed = true;
     };
     const onUp = () => {
       el.removeEventListener('pointermove', onMove);
       el.removeEventListener('pointerup', onUp);
       el.removeEventListener('pointercancel', onUp);
-      el.classList.remove('active');
+      for (const other of group) other.classList.remove('active');
+      unlink();
       if (changed) saveLayout();
       rebuildDividers(); // adjacencies may have changed
     };
@@ -595,6 +660,7 @@ function buildDivider(L, R, top, bottom) {
     el.addEventListener('pointercancel', onUp);
   });
 
+  dividers.push({ el, place, boundary });
   grid.appendChild(el);
 }
 
@@ -634,6 +700,7 @@ function addTile(moduleId, entry = null) {
 function removeTile(id) {
   const idx = tiles.findIndex((t) => t.id === id);
   if (idx < 0) return;
+  clearPeekTimer(id);
   unmountModule(tiles[idx]);
   tiles.splice(idx, 1);
   const entry = tileEls.get(id);
@@ -928,7 +995,10 @@ function colorHex(value, fallback) {
 }
 
 function closeSettingsPopovers() {
-  document.querySelectorAll('.tile-settings').forEach((p) => p.remove());
+  document.querySelectorAll('.tile-settings').forEach((p) => {
+    p._cleanup?.();
+    p.remove();
+  });
 }
 
 function toggleSettingsPopover(tile, el) {
@@ -941,6 +1011,34 @@ function toggleSettingsPopover(tile, el) {
   const pop = document.createElement('div');
   pop.className = 'tile-settings';
   const inputs = new Map();
+
+  /* These are display choices — a text size, a filter, a colour — so they
+     apply as they are changed and save with the layout. There is nothing to
+     confirm, so there is no Apply. Typing is debounced because applying
+     means remounting the module, which shouldn't happen per keystroke. */
+  let applyTimer = null;
+  const commit = (delay) => {
+    clearTimeout(applyTimer);
+    applyTimer = setTimeout(() => {
+      applyTimer = null;
+      // Only when something really moved: a text field fires `input` and then
+      // `change` on the way out, and a module shouldn't be torn down twice
+      // over for one edit.
+      let changed = false;
+      for (const [key, read] of inputs) {
+        const value = read();
+        if (tile.settings[key] === value) continue;
+        tile.settings[key] = value;
+        changed = true;
+      }
+      if (!changed) return;
+      saveLayout();
+      remountTile(tile);
+    }, delay);
+  };
+  const live = (input, event = 'change', delay = 0) => {
+    input.addEventListener(event, () => commit(delay));
+  };
 
   // Fields render in schema order; a field's `group` starts a labeled
   // subsection that consecutive same-group fields share, and the manifest's
@@ -999,6 +1097,7 @@ function toggleSettingsPopover(tile, el) {
       input.checked = Boolean(current);
       field.append(input, document.createTextNode(label));
       inputs.set(key, () => input.checked);
+      live(input);
     } else if (type === 'select' && Array.isArray(spec.options)) {
       const span = document.createElement('span');
       span.textContent = label;
@@ -1012,6 +1111,7 @@ function toggleSettingsPopover(tile, el) {
       select.value = String(current ?? '');
       field.append(span, select);
       inputs.set(key, () => select.value);
+      live(select);
     } else if (type === 'color') {
       // A swatch picker; the value is always a #rrggbb string.
       field.classList.add('color-field');
@@ -1022,6 +1122,7 @@ function toggleSettingsPopover(tile, el) {
       input.value = colorHex(current, colorHex(spec?.default, '#2ee59a'));
       field.append(span, input);
       inputs.set(key, () => input.value);
+      live(input, 'input', 150);   // dragging the picker fires continuously
     } else {
       const span = document.createElement('span');
       span.textContent = label;
@@ -1030,6 +1131,8 @@ function toggleSettingsPopover(tile, el) {
       input.value = current === undefined || current === null ? '' : String(current);
       field.append(span, input);
       inputs.set(key, () => (type === 'number' ? Number(input.value) : input.value));
+      live(input, 'input', 400);   // mid-word is not the moment to remount
+      live(input, 'change');       // …but blur or Enter is
     }
     if (spec?.help) {
       const help = document.createElement('small');
@@ -1040,26 +1143,17 @@ function toggleSettingsPopover(tile, el) {
     container.appendChild(field);
   }
 
-  const actions = document.createElement('div');
-  actions.className = 'actions';
-  actions.style.display = 'flex';
-  actions.style.justifyContent = 'flex-end';
-  actions.style.gap = '8px';
-  const cancel = document.createElement('button');
-  cancel.className = 'btn';
-  cancel.textContent = 'Cancel';
-  cancel.addEventListener('click', () => pop.remove());
-  const apply = document.createElement('button');
-  apply.className = 'btn primary';
-  apply.textContent = 'Apply';
-  apply.addEventListener('click', () => {
-    for (const [key, read] of inputs) tile.settings[key] = read();
-    pop.remove();
-    saveLayout();
-    remountTile(tile);
-  });
-  actions.append(cancel, apply);
-  pop.appendChild(actions);
+  // Nothing to press: click away, press Escape, or click the gear again.
+  // (The gear's own click stops propagating, so it toggles rather than
+  // closing and reopening.)
+  const closeOnClick = (e) => { if (!pop.contains(e.target)) closeSettingsPopovers(); };
+  const closeOnEscape = (e) => { if (e.key === 'Escape') closeSettingsPopovers(); };
+  pop._cleanup = () => {
+    document.removeEventListener('click', closeOnClick);
+    document.removeEventListener('keydown', closeOnEscape);
+  };
+  document.addEventListener('click', closeOnClick);
+  document.addEventListener('keydown', closeOnEscape);
 
   pop.addEventListener('pointerdown', (e) => e.stopPropagation());
   el.appendChild(pop);
@@ -1222,6 +1316,41 @@ try {
   if (localStorage.getItem(LS_MENU) === '1') setMenuHidden(true, { persist: false });
 } catch { /* fine */ }
 
+/* ── fullscreen: peeking at a tile's title bar ──────────────────────── */
+
+/** How long a peeked title bar stays after the pointer leaves its tile. */
+const PEEK_HIDE_MS = 10000;
+const peekTimers = new Map();   // tile id → timeout
+
+function clearPeekTimer(id) {
+  const timer = peekTimers.get(id);
+  if (timer === undefined) return;
+  clearTimeout(timer);
+  peekTimers.delete(id);
+}
+
+function schedulePeekHide(id, el) {
+  clearPeekTimer(id);
+  peekTimers.set(id, setTimeout(() => {
+    peekTimers.delete(id);
+    el.classList.remove('head-peek');
+  }, PEEK_HIDE_MS));
+}
+
+function peekHead(tile, el, on) {
+  el.classList.toggle('head-peek', on);
+  clearPeekTimer(tile.id);
+  // Opened from a click the pointer is on the tile, so the countdown waits
+  // for it to leave — unless it already has (a keyboard or touch open).
+  if (on && !el.matches(':hover')) schedulePeekHide(tile.id, el);
+}
+
+/** Back to a plain screen: no peeks left open, no timers left running. */
+function clearPeeks() {
+  for (const id of [...peekTimers.keys()]) clearPeekTimer(id);
+  document.querySelectorAll('.tile.head-peek').forEach((el) => el.classList.remove('head-peek'));
+}
+
 /* ── fullscreen: auto-fit the layout to the screen ──────────────────── */
 
 /* Fullscreen is a viewing mode. The occupied columns stretch proportionally
@@ -1355,6 +1484,7 @@ document.addEventListener('fullscreenchange', () => {
     requestAnimationFrame(() => requestAnimationFrame(applyFullscreenFit));
   } else {
     setMenuHidden(menuHiddenBeforeFs, { persist: false });
+    clearPeeks();
     clearFullscreenFit();
   }
 });

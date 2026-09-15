@@ -97,7 +97,7 @@ the app); its settings are kept for a later reinstall.
 | `style` | no | A stylesheet the shell injects once per module. |
 | `minSize`, `defaultSize` | no | Tile size in grid cells (12 columns wide; rows are ~72 px). Defaults: min 1×1, default 4×3. |
 | `configSchema` | no | **Admin config** — server-wide settings (URLs, ports, keys) edited once at `/admin` for everyone. |
-| `instanceSchema` | no | **Per-tile settings** — chosen in each tile's gear menu and stored with that browser's layout (filters, text sizes, display options). |
+| `instanceSchema` | no | **Per-tile settings** — chosen in each tile's gear menu and stored with that browser's layout (filters, text sizes, display options). They apply as they are changed, so keep them to display choices. |
 | `tiles` | no | Fixed multi-tile list for client-only modules; server modules export a dynamic `tiles()` instead. See **Presenting multiple tiles**. |
 
 Both schemas map field names to specs:
@@ -341,10 +341,13 @@ own in `stop()` anyway.
 - **Any number of instances.** Two transcript tiles with different filters
   is a feature. Keep all state inside `create()`'s closure — no module-level
   mutable state in `client.js`.
-- **Remounts are routine.** When the user edits the tile's gear settings the
-  shell calls `stop()` and starts a fresh instance. When admin config
-  changes, the shell calls your `onConfigChange(cfg)` if you export one,
-  otherwise it remounts you. Either way you must come back cleanly.
+- **Remounts are routine.** Gear settings apply as the user changes them —
+  there is no Apply button — so each change calls `stop()` and starts a fresh
+  instance (typing is debounced, and an unchanged value remounts nothing).
+  Starting cheaply matters: hold connections and timers in the closure and
+  tear them down in `stop()`. When admin config changes, the shell calls your
+  `onConfigChange(cfg)` if you export one, otherwise it remounts you. Either
+  way you must come back cleanly.
 - **The tile can be removed at any moment.** `stop()` is your only notice.
 
 ### Rules for the client
