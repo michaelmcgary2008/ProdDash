@@ -261,6 +261,7 @@ function buildTile(tile) {
   el.className = 'tile';
   el.dataset.tileId = tile.id;
   if (man) el.dataset.module = man.id;
+  applyTint(tile, el);
 
   const head = document.createElement('div');
   head.className = 'tile-head';
@@ -279,8 +280,9 @@ function buildTile(tile) {
 
   head.append(dot, title, controls);
 
-  const hasSettings = man && Object.keys(tileSchema(tile, man).schema).length;
-  if (hasSettings) {
+  // Every tile has something to set: its own settings when the module
+  // offers any, and the tint either way.
+  if (man) {
     const gear = document.createElement('button');
     gear.className = 'tile-btn';
     gear.title = 'Settings';
@@ -1133,6 +1135,23 @@ function unmountModule(tile) {
 /* ── per-tile settings popover ──────────────────────────────────────── */
 
 /** `<input type="color">` only accepts #rrggbb — anything else falls back. */
+/* ── the tile tint ───────────────────────────────────────────────────
+   Every tile can be washed in a colour of its own — a way to tell one
+   screen's tiles apart at a glance (this campus green, that one amber).
+   It is the shell's, not a module's: the key is reserved, it is offered in
+   every gear window, and it saves with the layout like any other tile
+   setting. A tile with no tint looks exactly as before. */
+const TINT_KEY = '__tint';
+
+/** Paint (or clear) a tile's tint on its element. */
+function applyTint(tile, el = tileEls.get(tile.id)?.el) {
+  if (!el) return;
+  const hex = colorHex(tile.settings?.[TINT_KEY], '');
+  if (hex) el.style.setProperty('--tile-tint', hex);
+  else el.style.removeProperty('--tile-tint');
+  el.classList.toggle('is-tinted', Boolean(hex));
+}
+
 function colorHex(value, fallback) {
   const s = String(value ?? '').trim();
   if (/^#[0-9a-fA-F]{6}$/.test(s)) return s.toLowerCase();
@@ -1267,8 +1286,8 @@ function toggleSettingsPopover(tile, el, button = null) {
   closeSettingsPopovers();
   if (existing) return;
   const man = registry.get(tile.module);
+  if (!man) return;
   const { schema, groups: groupMeta } = tileSchema(tile, man);
-  if (!man || !Object.keys(schema).length) return;
 
   const pop = document.createElement('div');
   pop.className = 'tile-settings';
@@ -1586,6 +1605,43 @@ function toggleSettingsPopover(tile, el, button = null) {
     } else {
       container.appendChild(field);
     }
+  }
+
+  /* The tint sits on its own at the foot of the window, under a hairline —
+     it is the shell's setting, not one of the module's. Unlike those, a
+     change needs no remount: nothing but the tile's own chrome reads it. */
+  {
+    const field = document.createElement('div');
+    field.className = 'field color-field tint-field'; // the swatch reads like a module's colour field
+    const text = document.createElement('span');
+    text.textContent = 'Tile tint';
+    const input = document.createElement('input');
+    input.type = 'color';
+    input.setAttribute('aria-label', 'Tile tint');
+    const clear = document.createElement('button');
+    clear.type = 'button';
+    clear.className = 'tint-clear';
+    clear.textContent = 'Clear';
+    clear.title = 'No tint';
+    const paint = () => {
+      const hex = colorHex(tile.settings[TINT_KEY], '');
+      // With no tint the swatch opens on the panel colour, so the picker
+      // starts somewhere sane rather than at black.
+      input.value = hex || colorHex(getComputedStyle(document.documentElement).getPropertyValue('--panel'), '#1a1d21');
+      clear.hidden = !hex;
+    };
+    const set = (hex) => {
+      if (hex) tile.settings[TINT_KEY] = hex;
+      else delete tile.settings[TINT_KEY];
+      applyTint(tile);
+      paint();
+      saveLayout();
+    };
+    input.addEventListener('input', () => set(colorHex(input.value, '')));
+    clear.addEventListener('click', () => set(''));
+    paint();
+    field.append(text, clear, input);
+    body.appendChild(field);
   }
 
   // "Short day" appears once "Date" is on: a field with showWhen:"K" follows

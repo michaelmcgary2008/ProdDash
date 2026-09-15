@@ -187,7 +187,10 @@ a module with a long show/hide checklist keeps the popover usable — see
 connections. The popover itself is a small window beside the tile — sized to
 its content, moved by the slim bar on top, closed by clicking anywhere else
 or pressing Escape — so a tile never has to be big enough to hold its own
-settings, and a change can be watched as it lands.
+settings, and a change can be watched as it lands. Under everything you
+offer, the shell adds **Tile tint** — a colour the operator can wash that
+tile's chrome in, saved with the layout. It is not yours to declare and it
+never remounts you; don't offer one of your own.
 
 A picker entry (see **Presenting multiple tiles**) may carry its own
 `instanceSchema` and `instanceGroups`: tiles added from that entry get those
@@ -315,7 +318,7 @@ export default function create({ root, moduleApi }) {
 | `instanceId` | Unique per tile — two tiles of the same module get different ids. Handy for keying anything per-tile. |
 | `variant` | For multi-tile modules: the id of the tile-list entry this tile was added as, `''` otherwise (see **Presenting multiple tiles**). |
 | `config` | Admin (server-wide) config, read-only, always current. Password fields are absent — they never reach the client. |
-| `instanceSettings` | This tile's settings: your `instanceSchema` defaults overlaid with whatever this tile has saved. Read it fresh whenever you render — don't cache it. |
+| `instanceSettings` | This tile's settings: your `instanceSchema` defaults overlaid with whatever this tile has saved. Read it fresh whenever you render — don't cache it. Keys beginning `__` are the shell's own (`__tint`, the tile's colour) — never use that prefix, and ignore the ones you find. |
 | `saveInstanceSettings(patch)` | Merge `patch` into this tile's settings and persist them with the layout. No restart happens — you made the change, you already know. Use it for state the user sets *inside* your tile (a toggled filter, a chosen tab). |
 | `fetch(path, opts)` | `fetch` scoped to your server routes: `fetch('/state')` hits `/api/modules/<id>/state`. |
 | `sse(path, handlers)` | An `EventSource` scoped the same way, **with auto-reconnect** (see below). Returns a handle with `close()`. |

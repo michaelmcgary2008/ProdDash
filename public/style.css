@@ -234,6 +234,18 @@ body.menu-hidden #topbar {
   overflow: hidden;
 }
 
+/* A tile the user gave a colour: a wash over the panel, a stronger edge and
+   a tinted title bar. Module content keeps its own colours — this is the
+   tile's chrome, so a tinted tile still reads like every other one. */
+.tile.is-tinted {
+  background: color-mix(in srgb, var(--tile-tint) 14%, var(--panel));
+  border-color: color-mix(in srgb, var(--tile-tint) 45%, var(--border));
+}
+.tile.is-tinted > .tile-head {
+  background: color-mix(in srgb, var(--tile-tint) 20%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--tile-tint) 35%, var(--border));
+}
+
 .tile.dragging,
 .tile.resizing {
   z-index: 40;
@@ -599,6 +611,26 @@ body.fullscreen #grid { padding-bottom: 0; }
 }
 .tile-settings-bar:hover::before { opacity: 1; }
 .tile-settings .field[hidden] { display: none; }
+/* the tint, the shell's own setting, under a hairline at the foot */
+.tile-settings .tint-field {
+  margin: 8px 0 0;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+  gap: 8px;
+}
+.tile-settings .tint-clear {
+  flex: none;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.tile-settings .tint-clear:hover { color: var(--text); background: var(--border); }
+.tile-settings .tint-clear[hidden] { display: none; }
 .tile-settings-bar:active { cursor: grabbing; }
 .tile-settings-body {
   flex: 1;
