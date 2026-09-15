@@ -308,6 +308,24 @@ body.menu-hidden #topbar {
 .tile-btn.active { color: var(--accent); }
 .tile-btn.is-open,
 .tile-btn.is-open:hover { background: var(--accent); color: var(--accent-text); }
+
+/* the shell's tooltip: shown at once under the button the pointer is on */
+#tip {
+  position: fixed;
+  z-index: 200;
+  pointer-events: none;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+#tip[hidden] { display: none; }
 .tile-btn svg { width: 13px; height: 13px; display: block; }
 
 /* controls a module adds to its own title bar (moduleApi.header) */

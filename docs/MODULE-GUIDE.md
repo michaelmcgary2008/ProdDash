@@ -330,16 +330,17 @@ bar, next to the shell's gear/close buttons:
 
 ```js
 const btn = moduleApi.header.addButton({
-  icon: '<svg …>…</svg>',   // inline SVG string, and/or
-  label: 'A+',              // short text
-  title: 'Larger text',     // hover tooltip
+  icon: '<svg …>…</svg>',   // inline SVG string (13 px), and/or
+  label: 'Timers ▾',        // short text
+  title: 'Larger text',     // tooltip — one or two words; the shell shows
+                            // it the moment the pointer arrives
   onClick() { … },
 });
 btn.classList.add('active'); // toggle styling for on/off buttons
 
 const menu = moduleApi.header.addMenu({
   label: 'Channels ▾',
-  title: 'Choose visible channels',
+  title: 'Channels',
   build(menuEl) {
     // called on every open with an emptied menu element — fill it with
     // buttons (give them your scoped classes; the container is styled and
@@ -351,7 +352,10 @@ menu.setLabel('Channels (2/4) ▾'); // update the button text any time
 
 Everything you add is removed automatically when your instance stops, so a
 remount never duplicates controls. Keep them compact (icon buttons, short
-labels): the title bar is 32 px tall and shared with the tile's name.
+labels): the title bar is 32 px tall and shared with the tile's name. Draw
+icons as inline SVG rather than characters — a glyph such as ✕ or ＋ takes
+its size from whatever font each browser picks; text-size buttons are a
+drawn − and +.
 
 **One control per action.** Whatever has a dedicated header button is not
 offered again in the gear popover: text size is A− / A+ up here (persisted

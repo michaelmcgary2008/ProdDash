@@ -6,6 +6,10 @@
    persists in instance settings, and all network traffic goes through
    moduleApi (the module's server proxy at /prodcom/*). */
 
+/* the text-size buttons: a drawn − and + at the icon size, like every other header icon */
+const MINUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg>';
+const PLUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+
 export default function create({ root, moduleApi }) {
   /* ── per-instance state ─────────────────────────────────────────── */
 
@@ -48,7 +52,7 @@ export default function create({ root, moduleApi }) {
   let channelMenuEl = null; // the open menu's element (filled on each open)
   const channelsMenu = moduleApi.header.addMenu({
     icon: CHANNELS_SVG,
-    title: 'Choose visible channels',
+    title: 'Channels',
     build(menu) {
       menu.classList.add('pt-menu');
       channelMenuEl = menu;
@@ -65,7 +69,7 @@ export default function create({ root, moduleApi }) {
   let timeBtn = null;
   timeBtn = moduleApi.header.addButton({
     icon: CLOCK_SVG,
-    title: 'Show / hide timestamps',
+    title: 'Timestamps',
     onClick() {
       moduleApi.saveInstanceSettings({ showTimes: !moduleApi.instanceSettings.showTimes });
       applyInstanceSettings();
@@ -77,8 +81,8 @@ export default function create({ root, moduleApi }) {
     moduleApi.saveInstanceSettings({ textSize: Math.min(48, Math.max(10, current + delta)) });
     applyInstanceSettings();
   }
-  moduleApi.header.addButton({ label: 'A−', title: 'Smaller text', onClick: () => bumpTextSize(-2) });
-  moduleApi.header.addButton({ label: 'A+', title: 'Larger text', onClick: () => bumpTextSize(2) });
+  moduleApi.header.addButton({ icon: MINUS_SVG, title: 'Smaller text', onClick: () => bumpTextSize(-2) });
+  moduleApi.header.addButton({ icon: PLUS_SVG, title: 'Larger text', onClick: () => bumpTextSize(2) });
 
   // icon and tooltip track the current direction — applyInstanceSettings sets both
   const flowBtn = moduleApi.header.addButton({
@@ -93,7 +97,7 @@ export default function create({ root, moduleApi }) {
 
   moduleApi.header.addButton({
     icon: JUMP_SVG,
-    title: 'Jump to latest',
+    title: 'Latest',
     onClick() {
       pinnedToLatest = true;
       jumpBtn.hidden = true;
@@ -103,7 +107,7 @@ export default function create({ root, moduleApi }) {
 
   const clearBtn = moduleApi.header.addButton({
     icon: CLEAR_SVG,
-    title: 'Clear this tile (does not affect ProdCom)',
+    title: 'Clear',
     onClick: clearView,
   });
   clearBtn.classList.add('pt-clear');
@@ -120,9 +124,7 @@ export default function create({ root, moduleApi }) {
     wrap.classList.toggle('newest-first', up);
     flowBtn.innerHTML = up ? FLOW_UP_SVG : FLOW_DOWN_SVG;
     flowBtn.classList.toggle('active', up);
-    flowBtn.title = up
-      ? 'Newest at top — click for newest at bottom'
-      : 'Newest at bottom — click for newest at top';
+    flowBtn.title = up ? 'Newest first' : 'Oldest first';
     jumpBtn.textContent = (up ? '↑' : '↓') + ' New messages';
   }
   applyInstanceSettings();
@@ -174,9 +176,7 @@ export default function create({ root, moduleApi }) {
     channelCountEl.textContent = filtering ? `${visibleCount}/${channels.size}` : '';
     channelCountEl.hidden = !filtering;
     channelsMenu.button.classList.toggle('active', filtering);
-    channelsMenu.button.title = filtering
-      ? `Channels — showing ${visibleCount} of ${channels.size}`
-      : 'Choose visible channels';
+    channelsMenu.button.title = filtering ? `Channels ${visibleCount}/${channels.size}` : 'Channels';
   }
 
   function rebuildChannelMenu() {

@@ -635,6 +635,10 @@ const emojiMenu = (() => {
 
 /* ── the factory ────────────────────────────────────────────────────── */
 
+/* the text-size buttons: a drawn − and + at the icon size, like every other header icon */
+const MINUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg>';
+const PLUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+
 export default function create({ root, moduleApi }) {
   const variant = String(moduleApi.variant || '');
   // The entry's preset `view` is authoritative; a tile added under 1.0.0 has
@@ -680,11 +684,11 @@ function createTranscriptTile({ root, moduleApi }) {
     moduleApi.saveInstanceSettings({ textSize: Math.min(48, Math.max(10, textSizePx(moduleApi) + delta)) });
     applyInstanceSettings();
   }
-  moduleApi.header.addButton({ label: 'A−', title: 'Smaller text', onClick: () => bumpTextSize(-1) });
-  moduleApi.header.addButton({ label: 'A+', title: 'Larger text', onClick: () => bumpTextSize(1) });
+  moduleApi.header.addButton({ icon: MINUS_SVG, title: 'Smaller text', onClick: () => bumpTextSize(-1) });
+  moduleApi.header.addButton({ icon: PLUS_SVG, title: 'Larger text', onClick: () => bumpTextSize(1) });
   moduleApi.header.addButton({
     icon: JUMP_SVG,
-    title: 'Jump to latest',
+    title: 'Latest',
     onClick() {
       pinnedToLatest = true;
       jumpBtn.hidden = true;
@@ -1056,7 +1060,7 @@ function createSendTile({ root, moduleApi, mode }) {
   const gate = root.querySelector('.sl-gate');
   const compose = root.querySelector('.sl-compose');
 
-  const lockBtn = moduleApi.header.addButton({ icon: LOCK_SVG, title: 'Lock now', onClick: () => lock('Locked') });
+  const lockBtn = moduleApi.header.addButton({ icon: LOCK_SVG, title: 'Lock', onClick: () => lock('Locked') });
   lockBtn.style.display = 'none';
 
   function applyInstanceSettings() {

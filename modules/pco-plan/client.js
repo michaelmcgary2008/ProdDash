@@ -10,6 +10,10 @@
 
 const REFRESH_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>';
 
+/* the text-size buttons: a drawn − and + at the icon size, like every other header icon */
+const MINUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg>';
+const PLUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+
 export default function create({ root, moduleApi }) {
   let state = null;
   let skew = 0;               // server clock − local clock, ms
@@ -55,7 +59,7 @@ export default function create({ root, moduleApi }) {
 
   const refreshBtn = moduleApi.header.addButton({
     icon: REFRESH_SVG,
-    title: 'Re-read the plan from Planning Center now',
+    title: 'Refresh',
     onClick() {
       refreshBtn.classList.add('active');
       moduleApi.fetch('/refresh', { method: 'POST' })
@@ -69,8 +73,8 @@ export default function create({ root, moduleApi }) {
     moduleApi.saveInstanceSettings({ textSize: Math.min(40, Math.max(9, size + delta)) });
     applyPrefs();
   }
-  moduleApi.header.addButton({ label: 'A−', title: 'Smaller text', onClick: () => bumpTextSize(-1) });
-  moduleApi.header.addButton({ label: 'A+', title: 'Larger text', onClick: () => bumpTextSize(1) });
+  moduleApi.header.addButton({ icon: MINUS_SVG, title: 'Smaller text', onClick: () => bumpTextSize(-1) });
+  moduleApi.header.addButton({ icon: PLUS_SVG, title: 'Larger text', onClick: () => bumpTextSize(1) });
 
   /* ── formatting ─────────────────────────────────────────────────── */
 

@@ -283,7 +283,7 @@ function buildTile(tile) {
   if (hasSettings) {
     const gear = document.createElement('button');
     gear.className = 'tile-btn';
-    gear.title = 'Tile settings (this tile only)';
+    gear.title = 'Settings';
     gear.innerHTML = GEAR_SVG;
     gear.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -294,7 +294,7 @@ function buildTile(tile) {
 
   const close = document.createElement('button');
   close.className = 'tile-btn close';
-  close.title = 'Remove this tile';
+  close.title = 'Remove';
   close.innerHTML = CLOSE_SVG; // a drawn cross, the same size in every browser (the ✕ glyph varies)
   close.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1105,6 +1105,72 @@ function tileSchema(tile, man) {
     groups: own(entry?.instanceGroups) || own(man?.instanceGroups) || {},
   };
 }
+
+/* ── tooltips: at once on hover, short, one for the whole page ──────────
+   Every header and top-bar button's `title` becomes a tip the shell shows
+   the moment the pointer arrives — the browser's own waits about a second
+   and looks different in each browser. The text moves from `title` to
+   data-tip so the native one never appears; a module that sets `title`
+   again later is picked up on the next hover. */
+let tipEl = null;
+const TIP_TARGETS = '.tile-btn, .tb-btn, [data-tip]';
+
+function tipTextFor(el) {
+  if (el.title) {
+    el.dataset.tip = el.title;
+    if (!el.getAttribute('aria-label')) el.setAttribute('aria-label', el.title);
+    el.removeAttribute('title');
+  }
+  return el.dataset.tip || '';
+}
+
+function showTip(el) {
+  const text = tipTextFor(el);
+  if (!text) return;
+  if (!tipEl) {
+    tipEl = document.createElement('div');
+    tipEl.id = 'tip';
+    tipEl.setAttribute('role', 'tooltip');
+    document.body.appendChild(tipEl);
+  }
+  tipEl.textContent = text;
+  tipEl.hidden = false;
+  const r = el.getBoundingClientRect();
+  const w = tipEl.offsetWidth;
+  const h = tipEl.offsetHeight;
+  const left = Math.max(6, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - 6));
+  let top = r.bottom + 6;
+  if (top + h > window.innerHeight - 6) top = r.top - h - 6;
+  tipEl.style.left = `${Math.round(left)}px`;
+  tipEl.style.top = `${Math.round(top)}px`;
+  tipEl._for = el;
+}
+
+function hideTip(el = null) {
+  if (!tipEl || tipEl.hidden) return;
+  if (el && tipEl._for !== el) return;
+  tipEl.hidden = true;
+  tipEl._for = null;
+}
+
+document.addEventListener('pointerover', (e) => {
+  const el = e.target?.closest?.(TIP_TARGETS);
+  if (!el || (tipEl && tipEl._for === el && !tipEl.hidden)) return;
+  showTip(el);
+});
+document.addEventListener('pointerout', (e) => {
+  const el = e.target?.closest?.(TIP_TARGETS);
+  if (!el || (e.relatedTarget && el.contains(e.relatedTarget))) return;
+  hideTip(el);
+});
+document.addEventListener('pointerdown', () => hideTip(), true);
+document.addEventListener('focusin', (e) => {
+  const el = e.target?.closest?.(TIP_TARGETS);
+  if (el) showTip(el);
+});
+document.addEventListener('focusout', () => hideTip());
+window.addEventListener('scroll', () => hideTip(), true);
+window.addEventListener('resize', () => hideTip());
 
 function closeSettingsPopovers() {
   document.querySelectorAll('.tile-settings').forEach((p) => {

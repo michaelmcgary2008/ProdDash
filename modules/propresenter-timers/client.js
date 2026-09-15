@@ -283,7 +283,7 @@ export default function create({ root, moduleApi }) {
   let menuEl = null; // the open menu's element (filled on each open)
   const itemsMenu = solo ? null : moduleApi.header.addMenu({
     label: 'Timers ▾',
-    title: 'Choose which timers this tile shows',
+    title: 'Choose timers',
     build(menu) {
       // the shell hands over an emptied element on every open
       menu.classList.add('tm-menu');
