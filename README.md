@@ -15,9 +15,10 @@ touching the shell (see [docs/MODULE-GUIDE.md](docs/MODULE-GUIDE.md)).
 2. Discovers modules in `modules/` and serves each one's client at
    `/modules/<id>/`.
 3. Mounts each enabled module's server routes under `/api/modules/<id>/` —
-   that's where module servers proxy ProdCom, poll ProPresenter, and stream
-   live updates over SSE, so browsers never talk to production gear
-   directly (no CORS, and API keys never leave the server).
+   that's where module servers follow ProdCom, poll ProPresenter, and stream
+   live updates over SSE — one upstream connection per module, however many
+   dashboards are open — so browsers never talk to production gear directly
+   (no CORS, and API keys never leave the server).
 4. Stores server-wide module config and named layouts in a per-machine data
    directory outside the app folder, so updating ProdDash never loses them.
 

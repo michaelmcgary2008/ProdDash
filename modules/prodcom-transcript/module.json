@@ -1,9 +1,9 @@
 {
   "id": "prodcom-transcript",
   "name": "ProdCom",
-  "version": "1.2.2",
+  "version": "1.3.0",
   "proddash": ">=1.1.0",
-  "description": "Live ProdCom transcript stream",
+  "description": "Live ProdCom transcript",
   "permissions": [
     {
       "kind": "local-network",
