@@ -105,6 +105,11 @@
     }
   },
   "instanceSchema": {
+    "showAvatars": {
+      "type": "switch",
+      "label": "Avatars",
+      "default": true
+    },
     "showTimes": {
       "type": "switch",
       "label": "Timestamps",

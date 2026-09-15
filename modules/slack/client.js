@@ -695,6 +695,7 @@ function createTranscriptTile({ root, moduleApi }) {
   function applyInstanceSettings() {
     const s = moduleApi.instanceSettings;
     wrap.style.setProperty('--sl-size', textSizePx(moduleApi) + 'px');
+    wrap.classList.toggle('hide-avatars', s.showAvatars === false);
     wrap.classList.toggle('show-times', s.showTimes !== false);
     wrap.classList.toggle('show-names', s.showNames !== false);
     wrap.classList.toggle('show-system', s.showSystem !== false);
