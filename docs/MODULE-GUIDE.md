@@ -381,14 +381,20 @@ const stream = moduleApi.sse('/stream', {
 // later: stream.close()
 ```
 
-Browsers' `EventSource` retries transient drops itself but gives up for good
-when a retry gets a completed non-SSE response — which is what a proxy's 502
-looks like while the upstream is down. The shell's `sse()` recreates closed
-streams on a 3-second timer until they work again, so **reconnect logic is
-free**: handle `open` (refresh/backfill your state; you may have missed
-events) and `error` (report degraded status), and you're resilient. Streams
-you forget to close are force-closed when the tile unmounts — but close your
-own in `stop()` anyway.
+Your route serves a plain SSE stream; how it reaches the page is the
+shell's business. A dashboard holds **one** connection for every stream on
+it (`GET /api/stream`, which the server feeds from your route over
+loopback) — browsers allow about six connections to a host and a tile per
+stream ran out of them — so `open` also fires whenever that shared
+connection is remade (a tile was added or removed) and whenever your route
+comes back after a drop. Browsers' `EventSource` retries transient drops
+itself but gives up for good when a retry gets a completed non-SSE
+response — which is what a proxy's 502 looks like while the upstream is
+down; the shell recreates a closed connection on a 3-second timer until it
+works again, so **reconnect logic is free**: handle `open` (refresh/backfill
+your state; you may have missed events) and `error` (report degraded
+status), and you're resilient. Streams you forget to close are force-closed
+when the tile unmounts — but close your own in `stop()` anyway.
 
 ### Lifecycle you must expect
 
