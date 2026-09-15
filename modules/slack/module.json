@@ -123,8 +123,7 @@
     "showSystem": {
       "type": "switch",
       "label": "Channel notices",
-      "default": true,
-      "help": "Joins, leaves, topic changes, pins and other housekeeping lines."
+      "default": true
     }
   }
 }
