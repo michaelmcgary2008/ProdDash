@@ -39,6 +39,7 @@
    visually, per group: the LTC card keeps ticking when only ProPresenter
    is unreachable. When the ProdDash feed is down everything is old. */
 [data-module="propresenter-timers"] .tm-group.is-stale .tm-card,
+[data-module="propresenter-timers"] .tm-card.is-stale,
 [data-module="propresenter-timers"] .tm-wrap.is-feed-down .tm-card { opacity: 0.45; }
 
 [data-module="propresenter-timers"] .tm-hint {
@@ -125,6 +126,21 @@
   gap: var(--tm-gap, 8px);
 }
 [data-module="propresenter-timers"] .tm-grid:empty { display: none; }
+
+/* Grouping off: one grid for every timer, filled row by row. A wrapping
+   flex row instead of a CSS grid, so the last row's cards widen to use the
+   whole width — nothing is left empty. Rows share the height equally. */
+[data-module="propresenter-timers"] .tm-grid.is-flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: stretch;
+  align-items: stretch;
+}
+[data-module="propresenter-timers"] .tm-grid.is-flow .tm-card {
+  flex: 1 1 calc((100% - var(--tm-gap, 8px) * (var(--tm-cols, 1) - 1)) / var(--tm-cols, 1));
+  min-width: 0;
+}
+[data-module="propresenter-timers"] .tm-empty[data-tone="warn"] { color: var(--tm-warn); }
 
 /* Compact cards (short tiles) and "Status lines" off: the lines under the
    digits go, the colour stays. A note that explains a missing value (no

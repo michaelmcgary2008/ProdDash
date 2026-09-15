@@ -156,11 +156,18 @@
       "default": false,
       "group": "Show"
     },
+    "groupBySource": {
+      "type": "switch",
+      "label": "Group by source",
+      "default": false,
+      "group": "Show"
+    },
     "showHeadings": {
       "type": "switch",
       "label": "Source headings",
       "default": true,
-      "group": "Show"
+      "group": "Show",
+      "showWhen": "groupBySource"
     },
     "clock24h": {
       "type": "switch",

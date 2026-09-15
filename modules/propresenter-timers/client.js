@@ -64,6 +64,7 @@ const LTC_KEY = 'ltc:ltc';
     the same values module.json gives the full "All timers" schema. */
 const DEFAULTS = {
   showNames: true,
+  groupBySource: false,
   showHeadings: true,
   showStatus: true,
   showDetail: true,
@@ -391,7 +392,18 @@ export default function create({ root, moduleApi }) {
       if (!items.length && source.timers.length) continue;
       groups.push({ id: source.id, source, items });
     }
-    return groups;
+    if (pref('groupBySource') === true) return groups;
+    // Grouping off: every timer in one grid, filled row by row. A source in
+    // trouble is still named, in one line above the cards.
+    const trouble = groups.filter((g) => g.source && g.source.status !== 'ok');
+    return [{
+      id: 'all',
+      source: null,
+      flat: true,
+      items: groups.flatMap((g) => g.items),
+      status: trouble.length ? 'error' : 'ok',
+      message: trouble.map((g) => `${g.source.label}: ${g.source.message || 'unavailable'}`).join(' · '),
+    }];
   }
 
   /* ── cards ──────────────────────────────────────────────────────── */
@@ -677,7 +689,8 @@ export default function create({ root, moduleApi }) {
       setText(card.detailEl, detailText);
       card.detailEl.hidden = !detailText || !showDetail;
       const kindCls = source.kind === 'ltc' ? ' tm-card-ltc' : source.kind === 'clock' ? ' tm-card-clock' : '';
-      setCardClass(card, `tm-card is-${tone}${extra}${kindCls}`);
+      const stale = source.status === 'error' ? ' is-stale' : '';
+      setCardClass(card, `tm-card is-${tone}${extra}${kindCls}${stale}`);
     }
     if (charsChanged) fit();
   }
@@ -748,7 +761,8 @@ export default function create({ root, moduleApi }) {
       wrap.classList.toggle('tm-mono', mono);
       needFit = true;
     }
-    const showHeadings = !solo && pref('showHeadings') !== false;
+    // Headings belong to sections; without grouping there is one grid and no heading.
+    const showHeadings = !solo && pref('groupBySource') === true && pref('showHeadings') !== false;
     wrap.classList.toggle('tm-headings', showHeadings);
     for (const [cls, on] of [
       ['tm-nostatus', pref('showStatus') === false],
@@ -781,18 +795,24 @@ export default function create({ root, moduleApi }) {
         structureChanged = true;
       }
       const source = g.source;
-      const status = source ? source.status : 'ok';
-      const message = source ? source.message : '';
+      const status = g.status ?? (source ? source.status : 'ok');
+      const message = g.message ?? (source ? source.message : '');
       ge.headEl.hidden = !showHeadings;
-      setText(ge.titleEl, source ? source.label : 'Timer');
+      setText(ge.titleEl, source ? source.label : 'Timers');
       setText(ge.noteEl, status !== 'ok' ? message : g.items.length ? '' : 'no timers');
       // Without headings the source's trouble still has to be said somewhere.
       const emptyText = status !== 'ok' ? message : 'No timers';
       const showEmpty = !showHeadings && (status !== 'ok' || !g.items.length);
       ge.emptyEl.hidden = !showEmpty;
       setText(ge.emptyEl, showEmpty ? emptyText : '');
-      ge.el.classList.toggle('is-down', status !== 'ok');
-      ge.el.classList.toggle('is-stale', status === 'error' && g.items.length > 0);
+      ge.emptyEl.dataset.tone = showEmpty && status !== 'ok' ? 'warn' : '';
+      // In the flat grid a card dims for its own source (paint), not the whole grid.
+      ge.el.classList.toggle('is-down', !g.flat && status !== 'ok');
+      ge.el.classList.toggle('is-stale', !g.flat && status === 'error' && g.items.length > 0);
+      if (ge.gridEl.classList.contains('is-flow') !== Boolean(g.flat)) {
+        ge.gridEl.classList.toggle('is-flow', Boolean(g.flat));
+        structureChanged = true;
+      }
 
       const els = [];
       for (const item of g.items) {
@@ -920,6 +940,7 @@ export default function create({ root, moduleApi }) {
     if (!best) return;
     for (const g of groups) {
       g.gridEl.style.gridTemplateColumns = `repeat(${best.cols}, 1fr)`;
+      g.gridEl.style.setProperty('--tm-cols', String(best.cols));
       // Space is shared in proportion to each group's rows, so a card is
       // the same height under every heading.
       g.el.style.flexGrow = String(Math.max(1, Math.ceil(g.count / best.cols)));
