@@ -22,6 +22,9 @@ const updateStatus = document.getElementById('update-status');
 const updateBtn = document.getElementById('update-btn');
 const updateChanges = document.getElementById('update-changes');
 const shellVersionEl = document.getElementById('shell-version');
+const themeSection = document.getElementById('theme-section');
+const themeSwatches = document.getElementById('theme-swatches');
+const themeStatus = document.getElementById('theme-status');
 
 /** The shell version the page loaded with — the update flow watches it change. */
 let shellVersion = '';
@@ -58,6 +61,7 @@ function showLogin() {
   availableSection.hidden = true;
   layoutsSection.hidden = true;
   updateCard.hidden = true;
+  themeSection.hidden = true;
   passcodeInput.focus();
 }
 
@@ -277,6 +281,99 @@ function groupHasValues(fields, mod) {
   });
 }
 
+/* ── group title row: the ⓘ and the group toggle ────────────────────── */
+
+let groupInfoSeq = 0;
+
+function closeGroupInfos(except) {
+  for (const open of document.querySelectorAll('.group-info.is-open')) {
+    if (open === except) continue;
+    open.classList.remove('is-open');
+    open.querySelector('.group-info-btn')?.setAttribute('aria-expanded', 'false');
+  }
+}
+
+/**
+ * configGroups[name].help as an ⓘ beside the group title: click toggles a
+ * small popover with the text (hover and keyboard focus show it too), so a
+ * group can carry a paragraph without pushing its fields down the page. A
+ * real button, labelled, so it works from the keyboard; inside a <summary>
+ * it must never fold the group.
+ */
+function groupInfo(groupName, text) {
+  const wrap = document.createElement('span');
+  wrap.className = 'group-info';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'group-info-btn';
+  btn.textContent = 'i';
+  btn.setAttribute('aria-label', `About ${groupName}`);
+  btn.setAttribute('aria-expanded', 'false');
+  const pop = document.createElement('span');
+  pop.className = 'group-info-pop';
+  pop.id = `group-info-${++groupInfoSeq}`;
+  pop.setAttribute('role', 'note');
+  pop.textContent = text;
+  btn.setAttribute('aria-describedby', pop.id);
+  wrap.append(btn, pop);
+  const setOpen = (open) => {
+    wrap.classList.toggle('is-open', open);
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+  btn.addEventListener('click', (e) => {
+    e.preventDefault(); // a click in a <summary> would otherwise fold the group
+    e.stopPropagation();
+    const open = !wrap.classList.contains('is-open');
+    closeGroupInfos(wrap);
+    setOpen(open);
+  });
+  pop.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  wrap.addEventListener('keydown', (e) => {
+    // Enter / Space activate the button (a click); they must not reach a
+    // <summary> above as well. Escape closes and hands focus back.
+    if (e.key === ' ' || e.key === 'Enter') e.stopPropagation();
+    if (e.key === 'Escape' && wrap.classList.contains('is-open')) {
+      e.stopPropagation();
+      setOpen(false);
+      btn.focus();
+    }
+  });
+  return wrap;
+}
+
+// A click anywhere else, or Escape, closes an open popover.
+document.addEventListener('pointerdown', (e) => {
+  if (!(e.target instanceof Element) || !e.target.closest('.group-info')) closeGroupInfos();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeGroupInfos();
+});
+
+/**
+ * configGroups[name].toggle: the named switch/boolean field is the group's
+ * on/off. It moves into the title row, right-aligned, and the body dims
+ * while it is off (fields stay editable). The field itself is untouched —
+ * it is still read on save and still drives showWhen dependents.
+ */
+function mountGroupToggle(group, field, control) {
+  const slot = document.createElement('span');
+  slot.className = 'field-group-toggle';
+  slot.appendChild(field);
+  // Inside a <summary>, flipping the switch must not fold the group.
+  slot.addEventListener('click', (e) => e.stopPropagation());
+  slot.addEventListener('keydown', (e) => {
+    if (e.key === ' ' || e.key === 'Enter') e.stopPropagation();
+  });
+  group.title.appendChild(slot);
+  group.el.classList.add('has-toggle');
+  const sync = () => group.el.classList.toggle('is-off', !control.checked);
+  control.addEventListener('change', sync);
+  sync();
+}
+
 function buildModuleCard(mod) {
   const card = document.createElement('section');
   card.className = 'admin-card';
@@ -351,8 +448,11 @@ function buildModuleCard(mod) {
   desc.textContent = mod.description;
   card.appendChild(desc);
 
+  // The module's own words about its upstream ("polling timers on
+  // 10.3.11.20:1025") — a readout, so it sits in a bordered monospace box
+  // and the state (ok / connecting / error) is its text colour.
   const healthEl = document.createElement('div');
-  healthEl.className = 'module-health ' + (healthClass(mod) === 'error' ? 'error' : '');
+  healthEl.className = 'module-status ' + healthClass(mod);
   healthEl.textContent = healthText(mod);
   card.appendChild(healthEl);
 
@@ -395,7 +495,9 @@ function buildModuleCard(mod) {
     const collapsibles = []; // { el, meta, fields } groups that fold
     // Fields render in schema order; a `group` starts a labeled subsection
     // and consecutive same-group fields share it. The manifest's optional
-    // `configGroups[name]` adds { collapsed, columns, help } for that group.
+    // `configGroups[name]` adds { collapsed, columns, help, toggle } for
+    // that group: help is an ⓘ beside the title, toggle names the switch
+    // that is the group's on/off and lives in the title row.
     const groupMeta = mod.configGroups && typeof mod.configGroups === 'object' ? mod.configGroups : {};
     let groupName = null;
     let container = form;
@@ -412,7 +514,11 @@ function buildModuleCard(mod) {
           group.className = 'field-group';
           const title = document.createElement(folds ? 'summary' : 'div');
           title.className = 'field-group-title';
-          title.textContent = g;
+          const titleName = document.createElement('span');
+          titleName.className = 'field-group-name';
+          titleName.textContent = g;
+          title.appendChild(titleName);
+          if (meta.help) title.appendChild(groupInfo(g, String(meta.help)));
           group.appendChild(title);
           const body = document.createElement('div');
           body.className = 'field-group-body';
@@ -421,16 +527,16 @@ function buildModuleCard(mod) {
             body.classList.add('is-columns');
             body.style.setProperty('--cols', String(cols));
           }
-          if (meta.help) {
-            const help = document.createElement('div');
-            help.className = 'field-group-help';
-            help.textContent = meta.help;
-            body.appendChild(help);
-          }
           group.appendChild(body);
           form.appendChild(group);
           container = body;
-          currentGroup = { el: group, meta, fields: [] };
+          currentGroup = {
+            el: group,
+            title,
+            meta,
+            fields: [],
+            toggleKey: typeof meta.toggle === 'string' ? meta.toggle : '',
+          };
           if (folds) collapsibles.push(currentGroup);
         } else {
           container = form;
@@ -444,7 +550,13 @@ function buildModuleCard(mod) {
       else if (refetch) reloaders.push(() => refetch());
       if (spec?.showWhen) dependents.push({ field, when: spec.showWhen });
       if (currentGroup) currentGroup.fields.push({ key, spec });
-      container.appendChild(field);
+      if (currentGroup && control && key === currentGroup.toggleKey) {
+        // The group's on/off: title row, not the body (never both). A
+        // toggle naming a non-boolean field is ignored and renders normally.
+        mountGroupToggle(currentGroup, field, control);
+      } else {
+        container.appendChild(field);
+      }
     }
     // A field with showWhen:"K" is visible only while K's toggle is on.
     for (const dep of dependents) {
@@ -473,26 +585,52 @@ function buildModuleCard(mod) {
     const actions = document.createElement('div');
     actions.className = 'module-actions';
     const save = document.createElement('button');
-    save.className = 'btn primary';
-    save.textContent = 'Save & re-init';
     const status = document.createElement('span');
     status.className = 'admin-status';
-    actions.append(save, status);
-    form.appendChild(actions);
+    actions.append(status, save);
+    // A card is a status line until someone wants to change something: the
+    // form starts folded, and the row at the bottom holds one button that
+    // does both jobs — "Configure" opens the form and becomes "Apply", which
+    // saves without closing it. The name is the other way in and out.
     card.appendChild(form);
+    card.appendChild(actions);
+    const openKey = 'proddash:admin:open:' + mod.id;
+    const setOpen = (open) => {
+      form.hidden = !open;
+      status.hidden = !open;
+      save.textContent = open ? 'Apply' : 'Configure';
+      save.className = open ? 'btn primary' : 'btn';
+      // Folded, the readout shares the bottom row with Configure instead of
+      // taking a line of its own; open, it goes back above the form.
+      if (open) card.insertBefore(healthEl, mountError);
+      else actions.insertBefore(healthEl, status);
+      try { sessionStorage.setItem(openKey, open ? '1' : '0'); } catch { /* fine */ }
+    };
+    let wasOpen = false;
+    try { wasOpen = sessionStorage.getItem(openKey) === '1'; } catch { /* fine */ }
+    setOpen(wasOpen);
+    name.classList.add('is-toggle');
+    name.title = 'Show or hide this module\'s settings';
+    name.tabIndex = 0;
+    name.setAttribute('role', 'button');
+    name.addEventListener('click', () => setOpen(form.hidden));
+    name.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(form.hidden); }
+    });
 
     save.addEventListener('click', async () => {
+      if (form.hidden) return setOpen(true);
       const config = {};
       for (const [key, read] of readers) config[key] = read();
       save.disabled = true;
-      status.textContent = 'Saving…';
+      status.textContent = 'Applying…';
       status.className = 'admin-status';
       try {
         await api(`/api/admin/modules/${encodeURIComponent(mod.id)}/config`, {
           method: 'PUT',
           body: JSON.stringify({ config }),
         });
-        status.textContent = 'Saved — module re-initialised. Open tiles reconnect on their own.';
+        status.textContent = 'Applied — module re-initialised. Open tiles reconnect on their own.';
         status.className = 'admin-status ok';
         refreshStatus();
         // What the module can list may have changed (credentials just
@@ -531,7 +669,7 @@ async function refreshStatus() {
     if (!els) continue;
     els.dot.className = 'dot ' + healthClass(mod);
     els.healthEl.textContent = healthText(mod);
-    els.healthEl.className = 'module-health ' + (healthClass(mod) === 'error' ? 'error' : '');
+    els.healthEl.className = 'module-status ' + healthClass(mod);
     if (!mod.incompatible) {
       els.mountError.hidden = !mod.mountError;
       els.mountError.textContent = mod.mountError ? `Failed to start: ${mod.mountError}` : '';
@@ -543,7 +681,7 @@ async function refreshStatus() {
   }
 }
 
-/* ── named layouts ──────────────────────────────────────────────────── */
+/* ── saved layouts ──────────────────────────────────────────────────── */
 
 async function loadLayouts() {
   let body;
@@ -559,7 +697,7 @@ async function loadLayouts() {
   if (!layouts.length) {
     const none = document.createElement('div');
     none.className = 'layouts-empty';
-    none.textContent = 'No named layouts saved yet. Save one from the dashboard’s Layout menu.';
+    none.textContent = 'No layouts saved yet. Save one from the dashboard’s Layout menu.';
     layoutsList.appendChild(none);
     return;
   }
@@ -640,9 +778,132 @@ async function loadState() {
   for (const mod of state.modules || []) {
     modulesList.appendChild(buildModuleCard(mod));
   }
+  loadTheme();
   loadLayouts();
   loadCatalog(false);
 }
+
+/* ── theme ──────────────────────────────────────────────────────────── */
+
+/* The dashboard palette is a server-wide choice. The server lists the
+   presets (GET /api/theme — public, dashboards need it too) and the admin
+   page shows them as swatches; picking one POSTs it, applies it here at
+   once, and the server's `theme` shell event switches every open dashboard
+   — and any other admin page — live. The palettes themselves are
+   html[data-theme="…"] variable sets in the shell's style.css, which this
+   page shares, so the admin page follows its own choice. */
+
+const LS_THEME = 'proddash:theme';
+let themeList = [];
+let currentTheme = '';
+
+function applyTheme(id) {
+  const theme = String(id || '');
+  if (!/^[a-z][a-z0-9-]{0,31}$/.test(theme)) return;
+  document.documentElement.dataset.theme = theme;
+  try { localStorage.setItem(LS_THEME, theme); } catch { /* private mode — fine */ }
+}
+
+// The last-known theme first (shared with the dashboard, same origin), so
+// the page doesn't flash the default palette before the server answers.
+try { applyTheme(localStorage.getItem(LS_THEME)); } catch { /* fine */ }
+
+function themeName(id) {
+  return themeList.find((t) => t.id === id)?.name || id;
+}
+
+function renderThemes() {
+  themeSwatches.innerHTML = '';
+  for (const t of themeList) {
+    const current = t.id === currentTheme;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'theme-swatch' + (current ? ' is-current' : '');
+    btn.setAttribute('role', 'radio');
+    btn.setAttribute('aria-checked', current ? 'true' : 'false');
+    btn.title = current ? `${t.name} — the current theme` : `Switch every dashboard to ${t.name}`;
+    const preview = document.createElement('span');
+    preview.className = 'theme-preview';
+    preview.style.setProperty('--sw-bg', String(t.colors?.bg || '#000'));
+    preview.style.setProperty('--sw-panel', String(t.colors?.panel || '#222'));
+    preview.style.setProperty('--sw-accent', String(t.colors?.accent || '#fff'));
+    const name = document.createElement('span');
+    name.className = 'theme-name';
+    name.textContent = t.name;
+    btn.append(preview, name);
+    btn.addEventListener('click', () => chooseTheme(t.id));
+    themeSwatches.appendChild(btn);
+  }
+}
+
+/**
+ * Fetch the server's theme and list. Applied to this page either way (the
+ * endpoint is public, so even the login card wears the right palette); the
+ * swatch section itself is only revealed for an unlocked page.
+ */
+async function loadTheme(reveal = true) {
+  let body;
+  try {
+    body = await api('/api/theme');
+  } catch {
+    if (reveal) themeSection.hidden = true; // a server without themes — nothing to offer
+    return;
+  }
+  themeList = Array.isArray(body.themes) ? body.themes.filter((t) => t && t.id && t.name) : [];
+  currentTheme = String(body.theme || '');
+  applyTheme(currentTheme);
+  renderThemes();
+  if (reveal) themeSection.hidden = !themeList.length;
+}
+
+loadTheme(false);
+
+async function chooseTheme(id) {
+  if (id === currentTheme) return;
+  const previous = currentTheme;
+  currentTheme = id;
+  applyTheme(id); // at once, here — the server's event confirms it everywhere else
+  renderThemes();
+  themeStatus.textContent = '';
+  themeStatus.className = 'admin-status';
+  try {
+    await api('/api/admin/theme', { method: 'POST', body: JSON.stringify({ theme: id }) });
+    themeStatus.textContent = `${themeName(id)} — every open dashboard switched.`;
+    themeStatus.className = 'admin-status ok';
+  } catch (e) {
+    currentTheme = previous;
+    applyTheme(previous);
+    renderThemes();
+    themeStatus.textContent = e.message;
+    themeStatus.className = 'admin-status error';
+    if (e.authRequired) showLogin();
+  }
+}
+
+// Follow a theme change made elsewhere (another admin page) live.
+let themeEvents = null;
+let themeEventsRetry = null;
+
+function subscribeThemeEvents() {
+  try { themeEvents?.close(); } catch { /* not open */ }
+  themeEvents = new EventSource('/api/events');
+  themeEvents.addEventListener('theme', (e) => {
+    let theme = '';
+    try { theme = String(JSON.parse(e.data).theme || ''); } catch { return; }
+    if (!theme || theme === currentTheme) return;
+    currentTheme = theme;
+    applyTheme(theme);
+    renderThemes();
+  });
+  themeEvents.onerror = () => {
+    if (themeEvents.readyState === EventSource.CLOSED) {
+      clearTimeout(themeEventsRetry);
+      themeEventsRetry = setTimeout(subscribeThemeEvents, 4000);
+    }
+  };
+}
+
+subscribeThemeEvents();
 
 /* ── the repo: available modules, module updates, shell update ──────── */
 

@@ -71,12 +71,34 @@ function promptModal({ title, placeholder = '', value = '', okLabel = 'Save' }) 
 
 /* ── dropdown menus ─────────────────────────────────────────────────── */
 
+/* A menu opens the moment its button is clicked, drawn from what the page
+   already knows; whatever its rebuild has to fetch is slotted in when it
+   lands. It used to open only once the rebuild had finished, which made the
+   ＋ picker hostage to a network round trip — one that never completes when
+   the tiles' streams hold every connection the browser allows (see the
+   shared-stream pool below). rebuild(menu, stillOpen) may be async;
+   stillOpen() says whether the open it was started for is still current,
+   so a late fetch can't repaint a menu that has since closed or reopened. */
 function wireDropdown(btnId, menuId, rebuild) {
   const btn = document.getElementById(btnId);
   const menu = document.getElementById(menuId);
-  btn.addEventListener('click', async () => {
-    if (menu.hidden) await rebuild(menu);
-    menu.hidden = !menu.hidden;
+  let generation = 0;
+  btn.addEventListener('click', () => {
+    if (!menu.hidden) {
+      menu.hidden = true;
+      return;
+    }
+    const gen = ++generation;
+    const stillOpen = () => gen === generation && !menu.hidden;
+    menu.hidden = false;
+    // Whatever the rebuild does, the menu is on screen; a failure (now or
+    // later) leaves its previous contents rather than an invisible menu.
+    const failed = (err) => console.error(`[shell] ${menuId} could not be rebuilt:`, err);
+    try {
+      Promise.resolve(rebuild(menu, stillOpen)).catch(failed);
+    } catch (err) {
+      failed(err);
+    }
   });
   document.addEventListener('click', (e) => {
     if (!menu.hidden && !e.target.closest('#' + btnId) && !e.target.closest('#' + menuId)) {
@@ -106,11 +128,22 @@ function menuItem(label, onClick, { sub = '', danger = false } = {}) {
 
 let registry = new Map(); // module id -> manifest from GET /api/modules
 
+/** fetch that gives up after `ms`. A request the browser has queued behind
+    held connections would otherwise pend forever, and so would anything
+    awaiting it. */
+function fetchWithTimeout(url, ms, opts = {}) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), ms);
+  return fetch(url, { ...opts, signal: ctl.signal }).finally(() => clearTimeout(timer));
+}
+
 /** Refresh the enabled-module list. On failure the last known list is kept
     (the server may just be restarting mid-service). Returns true on success. */
 async function loadRegistry() {
   try {
-    const res = await fetch('/api/modules');
+    // Slow modules' tiles() are cut off server-side at 2 s, so a healthy
+    // answer is well inside this.
+    const res = await fetchWithTimeout('/api/modules', 8000);
     if (!res.ok) throw new Error('modules ' + res.status);
     const body = await res.json();
     registry = new Map((body.modules || []).map((m) => [m.id, m]));
@@ -753,6 +786,84 @@ function tileMessage(entry, text) {
   entry.body.appendChild(msg);
 }
 
+/* ── shared event streams ───────────────────────────────────────────── */
+
+/* Browsers allow about six HTTP/1.1 connections to one host, and an open
+   EventSource holds one of them for as long as it lives. One stream per
+   tile plus the shell's own /api/events reaches that ceiling at five or six
+   tiles, and from then on every further request — the ＋ picker's module
+   list, a new tile's /state, its stream — sits in the browser's queue
+   waiting for a connection that is never handed back. So tiles that ask
+   for the same stream share one connection: the pool keeps one EventSource
+   per URL, fans its events out to every subscriber, and reconnects it (on
+   the same 3-second timer the per-tile version used) while anyone is still
+   listening. A tile joining an already-open stream is told `open` straight
+   away, so its backfill runs exactly as if the connection were its own. */
+
+const ssePool = new Map(); // url -> shared source
+
+function sseSubscribe(url, handlers = {}) {
+  let shared = ssePool.get(url);
+  if (!shared) {
+    shared = { subs: new Set(), es: null, retryTimer: null, names: new Set() };
+    const fanOut = (kind, e) => {
+      for (const sub of [...shared.subs]) {
+        const fn = kind === 'event' ? sub.handlers.events?.[e.type] : sub.handlers[kind];
+        try { fn?.(e); } catch (err) { console.error('[shell] stream handler failed:', err); }
+      }
+    };
+    shared.listen = (name) => shared.es.addEventListener(name, (e) => fanOut('event', e));
+    shared.connect = () => {
+      clearTimeout(shared.retryTimer);
+      shared.retryTimer = null;
+      try { shared.es?.close(); } catch { /* already closed */ }
+      const es = new EventSource(url);
+      shared.es = es;
+      es.onopen = (e) => fanOut('open', e);
+      es.onmessage = (e) => fanOut('message', e);
+      es.onerror = (e) => {
+        fanOut('error', e);
+        // EventSource retries transient drops itself but gives up for good on
+        // a completed non-SSE response (a 502 while the upstream is down).
+        if (es.readyState === EventSource.CLOSED && shared.subs.size) {
+          clearTimeout(shared.retryTimer);
+          shared.retryTimer = setTimeout(shared.connect, 3000);
+        }
+      };
+      for (const name of shared.names) shared.listen(name);
+    };
+    ssePool.set(url, shared);
+  }
+
+  const sub = { handlers };
+  shared.subs.add(sub);
+  for (const name of Object.keys(handlers.events || {})) {
+    if (shared.names.has(name)) continue;
+    shared.names.add(name);
+    if (shared.es) shared.listen(name);
+  }
+  if (!shared.es || shared.es.readyState === EventSource.CLOSED) {
+    // first subscriber, or the stream had given up while nobody listened
+    shared.connect();
+  } else if (shared.es.readyState === EventSource.OPEN) {
+    // Joining mid-flight: report the open the way a fresh connection would
+    // have, a moment later, so the caller's own setup finishes first.
+    setTimeout(() => {
+      if (!shared.subs.has(sub)) return;
+      try { handlers.open?.(new Event('open')); } catch (err) { console.error('[shell] stream handler failed:', err); }
+    }, 0);
+  }
+
+  return {
+    close() {
+      if (!shared.subs.delete(sub) || shared.subs.size) return;
+      clearTimeout(shared.retryTimer);
+      try { shared.es?.close(); } catch { /* already closed */ }
+      ssePool.delete(url);
+    },
+  };
+}
+
 /**
  * The API handed to each module instance — the whole surface a module may
  * touch outside its root element. See docs/MODULE-GUIDE.md.
@@ -798,40 +909,17 @@ function buildModuleApi(tile, man, entry) {
     },
 
     /**
-     * EventSource scoped the same way, with auto-reconnect: EventSource
-     * retries transient drops itself but gives up for good when a retry gets
-     * a completed non-SSE response (a 502 while the upstream is down), so a
-     * closed stream is recreated on a timer until it works again.
+     * EventSource scoped the same way, with auto-reconnect: a stream that
+     * gives up (a 502 while the upstream is down) is recreated on a timer
+     * until it works again. Tiles asking for the same stream share one
+     * connection — see the pool above; a module sees no difference.
      * handlers: { open(e), error(e), message(e), events: { name: fn } }
      */
     sse(subPath, handlers = {}) {
-      const url = '/api/modules/' + man.id + subPath;
-      let es = null;
-      let retryTimer = null;
-      let closed = false;
-      const connect = () => {
-        if (closed) return;
-        try { es?.close(); } catch { /* already closed */ }
-        es = new EventSource(url);
-        if (handlers.open) es.onopen = handlers.open;
-        if (handlers.message) es.onmessage = handlers.message;
-        for (const [name, fn] of Object.entries(handlers.events || {})) {
-          es.addEventListener(name, fn);
-        }
-        es.onerror = (e) => {
-          try { handlers.error?.(e); } catch { /* module's problem */ }
-          if (es.readyState === EventSource.CLOSED) {
-            clearTimeout(retryTimer);
-            retryTimer = setTimeout(connect, 3000);
-          }
-        };
-      };
-      connect();
+      const shared = sseSubscribe('/api/modules/' + man.id + subPath, handlers);
       const handle = {
         close() {
-          closed = true;
-          clearTimeout(retryTimer);
-          try { es?.close(); } catch { /* already closed */ }
+          shared.close();
           sseHandles.delete(handle);
         },
       };
@@ -1088,14 +1176,26 @@ function toggleSettingsPopover(tile, el) {
       }
     }
 
+    const isSwitch = type === 'boolean' || type === 'switch';
     const field = document.createElement('label');
-    field.className = 'field' + (type === 'boolean' ? ' check' : '');
+    field.className = 'field' + (isSwitch ? ' check' : '');
 
-    if (type === 'boolean') {
+    if (isSwitch) {
+      // A switch: on is shown/enabled, off is hidden/disabled — the label
+      // names what it turns on. A real checkbox stays underneath (keyboard,
+      // label clicks and `change` all keep working); the track is the look.
+      const text = document.createElement('span');
+      text.className = 'check-label';
+      text.textContent = label;
+      const toggle = document.createElement('span');
+      toggle.className = 'switch';
       const input = document.createElement('input');
       input.type = 'checkbox';
       input.checked = Boolean(current);
-      field.append(input, document.createTextNode(label));
+      const track = document.createElement('span');
+      track.className = 'track';
+      toggle.append(input, track);
+      field.append(text, toggle);
       inputs.set(key, () => input.checked);
       live(input);
     } else if (type === 'select' && Array.isArray(spec.options)) {
@@ -1182,8 +1282,21 @@ function renderLayout(list) {
 
 /* ── menus ──────────────────────────────────────────────────────────── */
 
-wireDropdown('add-btn', 'add-menu', async (menu) => {
-  await loadRegistry();
+/* What the ＋ picker shows, as a string: repainting a menu the user is
+   already pointing at is only worth it when something in it changed. */
+function addMenuSignature() {
+  return JSON.stringify([...registry.values()].map((m) => [m.id, m.name, m.description, m.tiles]));
+}
+
+wireDropdown('add-btn', 'add-menu', async (menu, stillOpen) => {
+  // Painted from the list already in hand, then refreshed: a module's tile
+  // list is live data, and Admin may have enabled or disabled something.
+  const shown = addMenuSignature();
+  renderAddMenu(menu);
+  if (await loadRegistry() && stillOpen() && addMenuSignature() !== shown) renderAddMenu(menu);
+});
+
+function renderAddMenu(menu) {
   menu.innerHTML = '';
   const manifests = [...registry.values()];
   if (!manifests.length) {
@@ -1215,9 +1328,9 @@ wireDropdown('add-btn', 'add-menu', async (menu) => {
       }, { sub: man.description || '' }));
     }
   }
-});
+}
 
-wireDropdown('layout-btn', 'layout-menu', async (menu) => {
+wireDropdown('layout-btn', 'layout-menu', async (menu, stillOpen) => {
   menu.innerHTML = '';
 
   menu.appendChild(menuItem('Save as named layout…', async () => {
@@ -1250,43 +1363,46 @@ wireDropdown('layout-btn', 'layout-menu', async (menu) => {
   divider.className = 'menu-divider';
   menu.appendChild(divider);
 
-  // named layouts stored on the server
-  let layouts = [];
-  try {
-    const res = await fetch('/api/layouts');
-    if (res.ok) layouts = (await res.json()).layouts || [];
-  } catch { /* server briefly away — the menu just shows none */ }
-  if (layouts.length) {
-    const title = document.createElement('div');
-    title.className = 'menu-title';
-    title.textContent = 'Load from server';
-    menu.appendChild(title);
-    for (const l of layouts) {
-      menu.appendChild(menuItem(l.name, async () => {
-        menu.hidden = true;
-        try {
-          const res = await fetch('/api/layouts/' + encodeURIComponent(l.name));
-          const body = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(body.error || 'Load failed (' + res.status + ')');
-          // Loading copies the layout into this browser's own state — it
-          // does not live-link browsers together.
-          renderLayout(body.layout.tiles || []);
-          saveLayout();
-          toast(`Loaded “${l.name}”`);
-        } catch (e) {
-          toast(e.message, true);
-        }
-      }, { sub: `${l.tiles} tile${l.tiles === 1 ? '' : 's'}` }));
-    }
-    menu.appendChild(divider.cloneNode());
-  }
-
-  menu.appendChild(menuItem('Reset layout', () => {
+  const reset = menuItem('Reset layout', () => {
     menu.hidden = true;
     renderLayout([]);
     saveLayout();
     toast('Layout cleared');
-  }, { danger: true, sub: 'Remove every tile from this browser' }));
+  }, { danger: true, sub: 'Remove every tile from this browser' });
+  menu.appendChild(reset);
+
+  // Named layouts stored on the server slot in above Reset once they
+  // arrive; until then (or if they never do) the menu is already usable.
+  let layouts = [];
+  try {
+    const res = await fetchWithTimeout('/api/layouts', 8000);
+    if (res.ok) layouts = (await res.json()).layouts || [];
+  } catch { /* server briefly away — the menu just shows none */ }
+  if (!layouts.length || !stillOpen()) return;
+  const block = document.createDocumentFragment();
+  const title = document.createElement('div');
+  title.className = 'menu-title';
+  title.textContent = 'Load from server';
+  block.appendChild(title);
+  for (const l of layouts) {
+    block.appendChild(menuItem(l.name, async () => {
+      menu.hidden = true;
+      try {
+        const res = await fetch('/api/layouts/' + encodeURIComponent(l.name));
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || 'Load failed (' + res.status + ')');
+        // Loading copies the layout into this browser's own state — it
+        // does not live-link browsers together.
+        renderLayout(body.layout.tiles || []);
+        saveLayout();
+        toast(`Loaded “${l.name}”`);
+      } catch (e) {
+        toast(e.message, true);
+      }
+    }, { sub: `${l.tiles} tile${l.tiles === 1 ? '' : 's'}` }));
+  }
+  block.appendChild(divider.cloneNode());
+  menu.insertBefore(block, reset);
 });
 
 /* ── menu bar show/hide (notch, like the tile title bars) ───────────── */
@@ -1511,6 +1627,7 @@ function subscribeEvents() {
   try { eventsSource?.close(); } catch { /* not open */ }
   eventsSource = new EventSource('/api/events');
   eventsSource.addEventListener('modules-changed', () => handleModulesChanged());
+  eventsSource.addEventListener('theme', handleThemeEvent);
   eventsSource.onerror = () => {
     if (eventsSource.readyState === EventSource.CLOSED) {
       clearTimeout(eventsRetry);
@@ -1546,6 +1663,43 @@ async function handleModulesChanged() {
     }
   }
 }
+
+/* ── theme ──────────────────────────────────────────────────────────── */
+
+/* The dashboard's palette is a server-wide choice (Admin → Theme). Five
+   preset variable sets live in style.css as html[data-theme="…"]; applying
+   one is setting that attribute. The last-known theme goes on synchronously
+   from localStorage so a reload never flashes the default palette, then the
+   server's answer (GET /api/theme) wins, and a `theme` shell event on
+   /api/events switches every open dashboard the moment an admin picks
+   another. Modules style with the shell variables, so they follow; a colour
+   a tile is configured with is set on the tile itself and stays as chosen. */
+
+const LS_THEME = 'proddash:theme';
+
+function applyTheme(id) {
+  const theme = String(id || '');
+  if (!/^[a-z][a-z0-9-]{0,31}$/.test(theme)) return;
+  document.documentElement.dataset.theme = theme;
+  try { localStorage.setItem(LS_THEME, theme); } catch { /* private mode — fine */ }
+}
+
+/** `theme` shell event from /api/events (wired in subscribeEvents). */
+function handleThemeEvent(e) {
+  try {
+    applyTheme(JSON.parse(e.data).theme);
+  } catch { /* a malformed frame changes nothing */ }
+}
+
+function initTheme() {
+  try { applyTheme(localStorage.getItem(LS_THEME)); } catch { /* fine */ }
+  fetch('/api/theme', { cache: 'no-store' })
+    .then((res) => (res.ok ? res.json() : null))
+    .then((body) => { if (body?.theme) applyTheme(body.theme); })
+    .catch(() => { /* offline: the remembered theme stands */ });
+}
+
+initTheme();
 
 /* ── boot ───────────────────────────────────────────────────────────── */
 
