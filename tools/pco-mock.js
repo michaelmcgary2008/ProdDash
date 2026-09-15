@@ -11,6 +11,10 @@
  *   GET /services/v2/service_types               every service type, with its
  *                                                parent folder relationship
  *   GET /services/v2/service_types/{id}
+ *   GET /services/v2/service_types/{id}/item_note_categories
+ *                                                the note categories the
+ *                                                items below use, plus one
+ *                                                ("Stage") no note uses yet
  *   GET /services/v2/service_types/{id}/plans    ?filter=future|past, order,
  *                                                per_page — today's plan,
  *                                                next week's and last week's
@@ -129,6 +133,22 @@ const ITEMS = [
   { id: 'i13', type: 'media', title: 'Walk-out Loop', pos: 'post', length: 600, notes: [['Video', 'Announcements loop until the room clears']] },
 ];
 
+/**
+ * Item note categories, per service type in Planning Center: every category
+ * the items above use, in the order the mock account lists them, plus one no
+ * note uses yet — a tile that has never chosen shows it on as well.
+ */
+const NOTE_CATEGORIES = ['Audio', 'Video', 'Lighting', 'ProPresenter', 'Stage'];
+
+function noteCategoryRecord(name, index, stId) {
+  return {
+    type: 'ItemNoteCategory',
+    id: `${stId}-nc${index + 1}`,
+    attributes: { name, sequence: index + 1, frequently_used: index < 2, deleted_at: null },
+    relationships: { service_type: { data: { type: 'ServiceType', id: stId } } },
+  };
+}
+
 function itemsDocument(planId, include) {
   const wants = new Set(String(include || '').split(',').map((s) => s.trim()).filter(Boolean));
   const data = [];
@@ -246,6 +266,9 @@ const server = http.createServer((req, res) => {
     const st = SERVICE_TYPES.find((x) => x.id === parts[1]);
     if (!st) return notFound(res);
     if (parts.length === 2) return send(res, 200, { data: serviceTypeRecord(st) });
+    if (parts[2] === 'item_note_categories' && parts.length === 3) {
+      return collection(res, NOTE_CATEGORIES.map((name, i) => noteCategoryRecord(name, i, st.id)), url);
+    }
     if (parts[2] !== 'plans') return notFound(res);
     const plans = plansFor(st.id);
     if (parts.length === 3) {

@@ -71,12 +71,34 @@ function promptModal({ title, placeholder = '', value = '', okLabel = 'Save' }) 
 
 /* ── dropdown menus ─────────────────────────────────────────────────── */
 
+/* A menu opens the moment its button is clicked, drawn from what the page
+   already knows; whatever its rebuild has to fetch is slotted in when it
+   lands. It used to open only once the rebuild had finished, which made the
+   ＋ picker hostage to a network round trip — one that never completes when
+   the tiles' streams hold every connection the browser allows (see the
+   shared-stream pool below). rebuild(menu, stillOpen) may be async;
+   stillOpen() says whether the open it was started for is still current,
+   so a late fetch can't repaint a menu that has since closed or reopened. */
 function wireDropdown(btnId, menuId, rebuild) {
   const btn = document.getElementById(btnId);
   const menu = document.getElementById(menuId);
-  btn.addEventListener('click', async () => {
-    if (menu.hidden) await rebuild(menu);
-    menu.hidden = !menu.hidden;
+  let generation = 0;
+  btn.addEventListener('click', () => {
+    if (!menu.hidden) {
+      menu.hidden = true;
+      return;
+    }
+    const gen = ++generation;
+    const stillOpen = () => gen === generation && !menu.hidden;
+    menu.hidden = false;
+    // Whatever the rebuild does, the menu is on screen; a failure (now or
+    // later) leaves its previous contents rather than an invisible menu.
+    const failed = (err) => console.error(`[shell] ${menuId} could not be rebuilt:`, err);
+    try {
+      Promise.resolve(rebuild(menu, stillOpen)).catch(failed);
+    } catch (err) {
+      failed(err);
+    }
   });
   document.addEventListener('click', (e) => {
     if (!menu.hidden && !e.target.closest('#' + btnId) && !e.target.closest('#' + menuId)) {
@@ -86,9 +108,11 @@ function wireDropdown(btnId, menuId, rebuild) {
   return menu;
 }
 
-function menuItem(label, onClick, { sub = '', danger = false } = {}) {
+function menuItem(label, onClick, { sub = '', danger = false, disabled = false, title = '' } = {}) {
   const item = document.createElement('button');
   item.className = 'menu-item' + (danger ? ' danger' : '');
+  item.disabled = disabled;
+  if (title) item.title = title;
   const span = document.createElement('span');
   span.textContent = label;
   if (sub) {
@@ -106,11 +130,22 @@ function menuItem(label, onClick, { sub = '', danger = false } = {}) {
 
 let registry = new Map(); // module id -> manifest from GET /api/modules
 
+/** fetch that gives up after `ms`. A request the browser has queued behind
+    held connections would otherwise pend forever, and so would anything
+    awaiting it. */
+function fetchWithTimeout(url, ms, opts = {}) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), ms);
+  return fetch(url, { ...opts, signal: ctl.signal }).finally(() => clearTimeout(timer));
+}
+
 /** Refresh the enabled-module list. On failure the last known list is kept
     (the server may just be restarting mid-service). Returns true on success. */
 async function loadRegistry() {
   try {
-    const res = await fetch('/api/modules');
+    // Slow modules' tiles() are cut off server-side at 2 s, so a healthy
+    // answer is well inside this.
+    const res = await fetchWithTimeout('/api/modules', 8000);
     if (!res.ok) throw new Error('modules ' + res.status);
     const body = await res.json();
     registry = new Map((body.modules || []).map((m) => [m.id, m]));
@@ -216,7 +251,8 @@ function minSizeOf(tile) {
 
 /* ── tile DOM ───────────────────────────────────────────────────────── */
 
-const GEAR_SVG = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm8.4-2.1.1-1.4-.1-1.4 1.7-1.3-1.6-2.8-2 .7a7.9 7.9 0 0 0-2.4-1.4l-.3-2.1H11l-.3 2.1a7.9 7.9 0 0 0-2.4 1.4l-2-.7L4.7 9.3 6.4 10.6l-.1 1.4.1 1.4-1.7 1.3 1.6 2.8 2-.7a7.9 7.9 0 0 0 2.4 1.4l.3 2.1h2.8l.3-2.1a7.9 7.9 0 0 0 2.4-1.4l2 .7 1.6-2.8-1.7-1.3Z"/></svg>';
+const CLOSE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+const GEAR_SVG = '<svg viewBox="0 0 90 90" fill="currentColor" aria-hidden="true"><path d="M 82.94 32.538 c -2.685 0 -5.093 -1.545 -6.327 -3.929 c -0.245 -0.476 -0.504 -0.948 -0.774 -1.416 c -0.27 -0.468 -0.55 -0.928 -0.84 -1.378 c -1.448 -2.26 -1.582 -5.117 -0.239 -7.443 c 1.951 -3.378 0.792 -7.696 -2.584 -9.645 l -9.352 -5.4 c -3.378 -1.951 -7.696 -0.792 -9.645 2.584 l -0.002 0.003 c -1.322 2.291 -3.815 3.641 -6.456 3.512 c -1.149 -0.056 -2.301 -0.057 -3.455 0 c -2.638 0.128 -5.124 -1.226 -6.444 -3.513 l -0.002 -0.002 c -1.951 -3.378 -6.269 -4.535 -9.645 -2.584 l -9.352 5.4 c -3.378 1.951 -4.535 6.269 -2.584 9.645 l 0.002 0.002 c 1.321 2.286 1.25 5.117 -0.18 7.336 c -0.625 0.972 -1.201 1.97 -1.726 2.993 c -1.209 2.353 -3.625 3.836 -6.269 3.836 H 7.063 c -3.9 0 -7.061 3.162 -7.061 7.061 v 10.801 c 0 3.9 3.162 7.061 7.061 7.061 l 0 0 c 2.685 0 5.093 1.545 6.327 3.929 c 0.245 0.475 0.504 0.948 0.774 1.416 c 0.27 0.468 0.55 0.928 0.84 1.378 c 1.448 2.26 1.582 5.117 0.239 7.443 c -1.951 3.378 -0.792 7.696 2.584 9.645 l 9.352 5.4 c 3.378 1.951 7.696 0.792 9.645 -2.584 l 0.002 -0.003 c 1.322 -2.291 3.815 -3.641 6.456 -3.512 c 1.149 0.056 2.301 0.057 3.455 0 c 2.638 -0.128 5.124 1.226 6.444 3.513 l 0.002 0.002 c 1.951 3.378 6.268 4.535 9.645 2.584 l 9.352 -5.4 c 3.378 -1.949 4.535 -6.268 2.584 -9.645 l -0.002 -0.002 c -1.321 -2.286 -1.25 -5.117 0.18 -7.336 c 0.625 -0.972 1.201 -1.97 1.726 -2.993 c 1.209 -2.353 3.625 -3.836 6.269 -3.836 h 0.003 c 3.9 0 7.061 -3.162 7.061 -7.061 V 39.599 C 90.001 35.7 86.84 32.538 82.94 32.538 z M 54.998 62.318 c -9.565 5.523 -21.796 2.245 -27.317 -7.32 c -5.523 -9.565 -2.245 -21.796 7.32 -27.317 s 21.796 -2.245 27.317 7.32 C 67.841 44.566 64.563 56.797 54.998 62.318 z"/></svg>';
 
 function buildTile(tile) {
   const man = registry.get(tile.module);
@@ -225,6 +261,7 @@ function buildTile(tile) {
   el.className = 'tile';
   el.dataset.tileId = tile.id;
   if (man) el.dataset.module = man.id;
+  applyTint(tile, el);
 
   const head = document.createElement('div');
   head.className = 'tile-head';
@@ -243,23 +280,24 @@ function buildTile(tile) {
 
   head.append(dot, title, controls);
 
-  const hasSettings = man && man.instanceSchema && Object.keys(man.instanceSchema).length;
-  if (hasSettings) {
+  // Every tile has something to set: its own settings when the module
+  // offers any, and the tint either way.
+  if (man) {
     const gear = document.createElement('button');
     gear.className = 'tile-btn';
-    gear.title = 'Tile settings (this tile only)';
+    gear.title = 'Settings';
     gear.innerHTML = GEAR_SVG;
     gear.addEventListener('click', (e) => {
       e.stopPropagation();
-      toggleSettingsPopover(tile, el);
+      toggleSettingsPopover(tile, el, gear);
     });
     head.appendChild(gear);
   }
 
   const close = document.createElement('button');
   close.className = 'tile-btn close';
-  close.title = 'Remove this tile';
-  close.textContent = '✕';
+  close.title = 'Remove';
+  close.innerHTML = CLOSE_SVG; // a drawn cross, the same size in every browser (the ✕ glyph varies)
   close.addEventListener('click', (e) => {
     e.stopPropagation();
     removeTile(tile.id);
@@ -673,6 +711,10 @@ function buildDivider(L, R, top, bottom) {
  */
 function addTile(moduleId, entry = null) {
   const man = registry.get(moduleId);
+  if (entry?.single && tiles.some((t) => t.module === moduleId && t.variant === String(entry.id))) {
+    toast(`${entry.name} is already on this dashboard`);
+    return;
+  }
   const defaultSize = entry?.defaultSize || man?.defaultSize;
   const size = {
     w: Math.max(1, Math.min(COLS, defaultSize?.w || 4)),
@@ -680,7 +722,8 @@ function addTile(moduleId, entry = null) {
   };
   const spot = findSpot(size.w, size.h);
   const settings = {};
-  for (const [key, spec] of Object.entries(man?.instanceSchema || {})) {
+  const { schema: addSchema } = tileSchema({ variant: entry ? String(entry.id) : '' }, man);
+  for (const [key, spec] of Object.entries(addSchema)) {
     if (spec && 'default' in spec) settings[key] = spec.default;
   }
   Object.assign(settings, entry?.settings || {});
@@ -753,6 +796,134 @@ function tileMessage(entry, text) {
   entry.body.appendChild(msg);
 }
 
+/* ── one stream per page ─────────────────────────────────────────────── */
+
+/* Browsers allow about six HTTP/1.1 connections to one host, and an open
+   EventSource holds one of them for as long as it lives. Sharing one
+   stream per URL was not enough: a dashboard with six modules still ran
+   out (Safari first), and from then on every further request — a remounted
+   tile's /state, an avatar, the ＋ picker's list — sat in the browser's
+   queue waiting for a connection that was never handed back. So the page
+   holds ONE EventSource, GET /api/stream?s=<keys>, and the server relays
+   every stream named in it (a module's, or `shell:` for the shell's own)
+   with the key prefixed to each event name. Subscribers still see the
+   events they asked for by their own names. Adding or dropping a stream
+   remakes the connection with the new list, a moment later so several
+   tiles mounting together cause one reconnect; every stream announces
+   `open` again after it, so backfills run as before. */
+
+const muxSubs = new Map();     // key -> { subs: Set<{ handlers }> }
+let muxEs = null;              // the page's one EventSource
+let muxKeys = '';              // the key list it was opened with
+let muxTimer = null;           // the pending (re)connect
+let muxRetry = null;           // retry after the connection gave up
+const muxListened = new Set(); // "key|name" pairs with a listener on muxEs
+
+/** The stream key for a URL: `/api/modules/<id><path>` → `<id>:<path>`, `/api/events` → `shell:`. */
+function muxKeyFor(url) {
+  if (url === '/api/events') return 'shell:';
+  const m = /^\/api\/modules\/([^/?#]+)(\/[^?#]*)?$/.exec(url);
+  return m ? `${decodeURIComponent(m[1])}:${m[2] || '/'}` : null;
+}
+
+function muxFanOut(key, kind, e) {
+  for (const sub of [...(muxSubs.get(key)?.subs || [])]) {
+    const fn = kind === 'event' ? sub.handlers.events?.[e.type] : sub.handlers[kind];
+    try { fn?.(e); } catch (err) { console.error('[shell] stream handler failed:', err); }
+  }
+}
+
+/** Listen for `<key>|<name>` on the open connection and hand it to that key's subscribers as `name`. */
+function muxListen(key, name) {
+  const full = `${key}|${name}`;
+  if (!muxEs || muxListened.has(full)) return;
+  muxListened.add(full);
+  muxEs.addEventListener(full, (e) => {
+    if (name === '__open') return muxFanOut(key, 'open', new Event('open'));
+    if (name === '__down') return muxFanOut(key, 'error', new Event('error'));
+    const ev = { type: name, data: e.data, lastEventId: e.lastEventId };
+    muxFanOut(key, name === 'message' ? 'message' : 'event', ev);
+  });
+}
+
+function muxConnect() {
+  clearTimeout(muxTimer);
+  muxTimer = null;
+  clearTimeout(muxRetry);
+  muxRetry = null;
+  const keys = [...muxSubs.keys()].sort();
+  const wanted = keys.join(',');
+  if (!keys.length) {
+    try { muxEs?.close(); } catch { /* not open */ }
+    muxEs = null;
+    muxKeys = '';
+    return;
+  }
+  if (muxEs && muxKeys === wanted && muxEs.readyState !== EventSource.CLOSED) return;
+  try { muxEs?.close(); } catch { /* not open */ }
+  muxListened.clear();
+  muxKeys = wanted;
+  const es = new EventSource(`/api/stream?s=${encodeURIComponent(wanted)}`);
+  muxEs = es;
+  // Each stream says `open` for itself (the server's __open), so nothing to do on the connection's own open.
+  es.onerror = () => {
+    if (es !== muxEs) return;
+    for (const key of muxSubs.keys()) muxFanOut(key, 'error', new Event('error'));
+    // EventSource retries transient drops itself but gives up for good on a
+    // completed non-SSE response (a 502 while the server restarts).
+    if (es.readyState === EventSource.CLOSED && muxSubs.size) {
+      clearTimeout(muxRetry);
+      muxRetry = setTimeout(muxConnect, 3000);
+    }
+  };
+  for (const [key, entry] of muxSubs) {
+    muxListen(key, '__open');
+    muxListen(key, '__down');
+    muxListen(key, 'message');
+    for (const sub of entry.subs) for (const name of Object.keys(sub.handlers.events || {})) muxListen(key, name);
+  }
+}
+
+function sseSubscribe(url, handlers = {}) {
+  const key = muxKeyFor(url);
+  if (!key) {
+    console.warn('[shell] not a stream this page can carry:', url);
+    return { close() {} };
+  }
+  let entry = muxSubs.get(key);
+  if (!entry) {
+    entry = { subs: new Set() };
+    muxSubs.set(key, entry);
+  }
+  const sub = { handlers };
+  entry.subs.add(sub);
+  const carried = Boolean(muxEs) && muxKeys.split(',').includes(key) && muxEs.readyState !== EventSource.CLOSED;
+  if (carried) {
+    // Joining a stream the connection already carries: listeners for any
+    // new event names, and `open` a moment later so the caller's own setup
+    // finishes first — exactly as a fresh connection would have reported it.
+    for (const name of Object.keys(handlers.events || {})) muxListen(key, name);
+    if (muxEs.readyState === EventSource.OPEN) {
+      setTimeout(() => {
+        if (!entry.subs.has(sub)) return;
+        try { handlers.open?.(new Event('open')); } catch (err) { console.error('[shell] stream handler failed:', err); }
+      }, 0);
+    }
+  } else {
+    clearTimeout(muxTimer);
+    muxTimer = setTimeout(muxConnect, 20);
+  }
+  return {
+    close() {
+      if (!entry.subs.delete(sub) || entry.subs.size) return;
+      muxSubs.delete(key);
+      // A remount closes and reopens within milliseconds: wait before remaking the connection.
+      clearTimeout(muxTimer);
+      muxTimer = setTimeout(muxConnect, 500);
+    },
+  };
+}
+
 /**
  * The API handed to each module instance — the whole surface a module may
  * touch outside its root element. See docs/MODULE-GUIDE.md.
@@ -779,7 +950,7 @@ function buildModuleApi(tile, man, entry) {
     /** Per-tile settings: schema defaults overlaid with what this tile saved. */
     get instanceSettings() {
       const out = {};
-      for (const [key, spec] of Object.entries(man.instanceSchema || {})) {
+      for (const [key, spec] of Object.entries(tileSchema(tile, man).schema)) {
         if (spec && 'default' in spec) out[key] = spec.default;
       }
       return Object.assign(out, tile.settings || {});
@@ -798,40 +969,17 @@ function buildModuleApi(tile, man, entry) {
     },
 
     /**
-     * EventSource scoped the same way, with auto-reconnect: EventSource
-     * retries transient drops itself but gives up for good when a retry gets
-     * a completed non-SSE response (a 502 while the upstream is down), so a
-     * closed stream is recreated on a timer until it works again.
+     * EventSource scoped the same way, with auto-reconnect: a stream that
+     * gives up (a 502 while the upstream is down) is recreated on a timer
+     * until it works again. Tiles asking for the same stream share one
+     * connection — see the pool above; a module sees no difference.
      * handlers: { open(e), error(e), message(e), events: { name: fn } }
      */
     sse(subPath, handlers = {}) {
-      const url = '/api/modules/' + man.id + subPath;
-      let es = null;
-      let retryTimer = null;
-      let closed = false;
-      const connect = () => {
-        if (closed) return;
-        try { es?.close(); } catch { /* already closed */ }
-        es = new EventSource(url);
-        if (handlers.open) es.onopen = handlers.open;
-        if (handlers.message) es.onmessage = handlers.message;
-        for (const [name, fn] of Object.entries(handlers.events || {})) {
-          es.addEventListener(name, fn);
-        }
-        es.onerror = (e) => {
-          try { handlers.error?.(e); } catch { /* module's problem */ }
-          if (es.readyState === EventSource.CLOSED) {
-            clearTimeout(retryTimer);
-            retryTimer = setTimeout(connect, 3000);
-          }
-        };
-      };
-      connect();
+      const shared = sseSubscribe('/api/modules/' + man.id + subPath, handlers);
       const handle = {
         close() {
-          closed = true;
-          clearTimeout(retryTimer);
-          try { es?.close(); } catch { /* already closed */ }
+          shared.close();
           sseHandles.delete(handle);
         },
       };
@@ -987,6 +1135,23 @@ function unmountModule(tile) {
 /* ── per-tile settings popover ──────────────────────────────────────── */
 
 /** `<input type="color">` only accepts #rrggbb — anything else falls back. */
+/* ── the tile tint ───────────────────────────────────────────────────
+   Every tile can be washed in a colour of its own — a way to tell one
+   screen's tiles apart at a glance (this campus green, that one amber).
+   It is the shell's, not a module's: the key is reserved, it is offered in
+   every gear window, and it saves with the layout like any other tile
+   setting. A tile with no tint looks exactly as before. */
+const TINT_KEY = '__tint';
+
+/** Paint (or clear) a tile's tint on its element. */
+function applyTint(tile, el = tileEls.get(tile.id)?.el) {
+  if (!el) return;
+  const hex = colorHex(tile.settings?.[TINT_KEY], '');
+  if (hex) el.style.setProperty('--tile-tint', hex);
+  else el.style.removeProperty('--tile-tint');
+  el.classList.toggle('is-tinted', Boolean(hex));
+}
+
 function colorHex(value, fallback) {
   const s = String(value ?? '').trim();
   if (/^#[0-9a-fA-F]{6}$/.test(s)) return s.toLowerCase();
@@ -994,28 +1159,165 @@ function colorHex(value, fallback) {
   return fallback;
 }
 
+/** The settings a tile offers: its picker entry's own schema when it has one
+    — a solo timer wants none of a full tile's switches — else the module's.
+    Same for the groups that arrange them. */
+function tileSchema(tile, man) {
+  const own = (v) => (v && typeof v === 'object' ? v : null);
+  const variant = String(tile?.variant || '');
+  const entry = variant && Array.isArray(man?.tiles)
+    ? man.tiles.find((e) => String(e.id) === variant)
+      || man.tiles.find((e) => Array.isArray(e.aliases) && e.aliases.includes(variant))
+    : null;
+  return {
+    schema: own(entry?.instanceSchema) || own(man?.instanceSchema) || {},
+    groups: own(entry?.instanceGroups) || own(man?.instanceGroups) || {},
+  };
+}
+
+/* ── tooltips: at once on hover, short, one for the whole page ──────────
+   Every header and top-bar button's `title` becomes a tip the shell shows
+   the moment the pointer arrives — the browser's own waits about a second
+   and looks different in each browser. The text moves from `title` to
+   data-tip so the native one never appears; a module that sets `title`
+   again later is picked up on the next hover. */
+let tipEl = null;
+const TIP_TARGETS = '.tile-btn, .tb-btn, [data-tip]';
+
+function tipTextFor(el) {
+  if (el.title) {
+    el.dataset.tip = el.title;
+    if (!el.getAttribute('aria-label')) el.setAttribute('aria-label', el.title);
+    el.removeAttribute('title');
+  }
+  return el.dataset.tip || '';
+}
+
+function showTip(el) {
+  const text = tipTextFor(el);
+  if (!text) return;
+  if (!tipEl) {
+    tipEl = document.createElement('div');
+    tipEl.id = 'tip';
+    tipEl.setAttribute('role', 'tooltip');
+    document.body.appendChild(tipEl);
+  }
+  tipEl.textContent = text;
+  tipEl.hidden = false;
+  const r = el.getBoundingClientRect();
+  const w = tipEl.offsetWidth;
+  const h = tipEl.offsetHeight;
+  const left = Math.max(6, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - 6));
+  let top = r.bottom + 6;
+  if (top + h > window.innerHeight - 6) top = r.top - h - 6;
+  tipEl.style.left = `${Math.round(left)}px`;
+  tipEl.style.top = `${Math.round(top)}px`;
+  tipEl._for = el;
+}
+
+function hideTip(el = null) {
+  if (!tipEl || tipEl.hidden) return;
+  if (el && tipEl._for !== el) return;
+  tipEl.hidden = true;
+  tipEl._for = null;
+}
+
+document.addEventListener('pointerover', (e) => {
+  const el = e.target?.closest?.(TIP_TARGETS);
+  if (!el || (tipEl && tipEl._for === el && !tipEl.hidden)) return;
+  showTip(el);
+});
+document.addEventListener('pointerout', (e) => {
+  const el = e.target?.closest?.(TIP_TARGETS);
+  if (!el || (e.relatedTarget && el.contains(e.relatedTarget))) return;
+  hideTip(el);
+});
+document.addEventListener('pointerdown', () => hideTip(), true);
+document.addEventListener('focusin', (e) => {
+  const el = e.target?.closest?.(TIP_TARGETS);
+  if (el) showTip(el);
+});
+document.addEventListener('focusout', () => hideTip());
+window.addEventListener('scroll', () => hideTip(), true);
+window.addEventListener('resize', () => hideTip());
+
 function closeSettingsPopovers() {
   document.querySelectorAll('.tile-settings').forEach((p) => {
     p._cleanup?.();
+    p._button?.classList.remove('is-open');
     p.remove();
   });
 }
 
-function toggleSettingsPopover(tile, el) {
-  const existing = el.querySelector('.tile-settings');
+/* ── the per-tile settings window ───────────────────────────────────── */
+
+/* It opens beside its tile — to the right when there is room, else the
+   left, else over it — and always inside the viewport. A window rather than
+   something inside the tile, because a tile can be smaller than its own
+   settings, and because the point of live settings is watching the tile
+   change while you change them: the window must not sit on top of it. */
+function placePopover(pop, anchor) {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const pad = 8;
+  const w = pop.offsetWidth;
+  const h = pop.offsetHeight;
+  let left = anchor.right + pad;
+  if (left + w > vw - pad) left = anchor.left - w - pad;
+  if (left < pad) left = Math.min(Math.max(pad, anchor.left), Math.max(pad, vw - w - pad));
+  let top = anchor.top;
+  if (top + h > vh - pad) top = vh - h - pad;
+  if (top < pad) top = pad;
+  pop.style.left = Math.round(left) + 'px';
+  pop.style.top = Math.round(top) + 'px';
+}
+
+function clampPopover(pop) {
+  const pad = 8;
+  const maxLeft = Math.max(pad, window.innerWidth - pop.offsetWidth - pad);
+  const maxTop = Math.max(pad, window.innerHeight - pop.offsetHeight - pad);
+  pop.style.left = Math.min(Math.max(pad, pop.offsetLeft), maxLeft) + 'px';
+  pop.style.top = Math.min(Math.max(pad, pop.offsetTop), maxTop) + 'px';
+}
+
+/** Open (or close) the settings window for `tile`, beside its element `el`; `button` is the gear that asked. */
+function toggleSettingsPopover(tile, el, button = null) {
+  const existing = document.querySelector(`.tile-settings[data-tile-id="${tile.id}"]`);
   closeSettingsPopovers();
   if (existing) return;
   const man = registry.get(tile.module);
-  if (!man || !man.instanceSchema) return;
+  if (!man) return;
+  const { schema, groups: groupMeta } = tileSchema(tile, man);
 
   const pop = document.createElement('div');
   pop.className = 'tile-settings';
-  const inputs = new Map();
+  pop.dataset.tileId = tile.id;
+  pop.setAttribute('role', 'dialog');
+  pop.setAttribute('aria-label', `${tile.title || man.name} settings`);
+  // The gear that opened it wears the window's colour while it is open.
+  if (button) {
+    button.classList.add('is-open');
+    pop._button = button;
+  }
 
-  /* These are display choices — a text size, a filter, a colour — so they
-     apply as they are changed and save with the layout. There is nothing to
-     confirm, so there is no Apply. Typing is debounced because applying
-     means remounting the module, which shouldn't happen per keystroke. */
+  // A slim bar to move it by — nothing else. No title (the window sits beside
+  // the tile it belongs to) and no close button: a click anywhere else, or
+  // Escape, closes it.
+  const bar = document.createElement('div');
+  bar.className = 'tile-settings-bar';
+  bar.title = 'Drag to move';
+  const body = document.createElement('div');
+  body.className = 'tile-settings-body';
+  pop.append(bar, body);
+
+  const inputs = new Map();
+  const shownWhen = []; // fields that appear only while another has a given value
+
+  /* Display choices apply as they change and save with the layout — nothing
+     to confirm, so no Apply. Typing is debounced because applying means
+     remounting the module, which shouldn't happen per keystroke. */
+  const same = (a, b) => a === b
+    || (Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => v === b[i]));
   let applyTimer = null;
   const commit = (delay) => {
     clearTimeout(applyTimer);
@@ -1023,11 +1325,11 @@ function toggleSettingsPopover(tile, el) {
       applyTimer = null;
       // Only when something really moved: a text field fires `input` and then
       // `change` on the way out, and a module shouldn't be torn down twice
-      // over for one edit.
+      // over for one edit. A reader answering undefined has nothing to say.
       let changed = false;
       for (const [key, read] of inputs) {
         const value = read();
-        if (tile.settings[key] === value) continue;
+        if (value === undefined || same(tile.settings[key], value)) continue;
         tile.settings[key] = value;
         changed = true;
       }
@@ -1039,19 +1341,31 @@ function toggleSettingsPopover(tile, el) {
   const live = (input, event = 'change', delay = 0) => {
     input.addEventListener(event, () => commit(delay));
   };
+  /** Choices a module only knows at runtime, from one of its own routes. */
+  const fetchOptions = async (route) => {
+    try {
+      const res = await fetchWithTimeout(`/api/modules/${encodeURIComponent(man.id)}${route}`, 8000);
+      const data = res.ok ? await res.json() : null;
+      return Array.isArray(data?.options) ? data.options : null;
+    } catch {
+      return null;
+    }
+  };
+  const optValue = (opt) => String(typeof opt === 'object' ? opt.value : opt);
+  const optLabel = (opt) => String(typeof opt === 'object' ? (opt.label ?? opt.value) : opt);
 
   // Fields render in schema order; a field's `group` starts a labeled
-  // subsection that consecutive same-group fields share, and the manifest's
-  // optional `instanceGroups[name]` adds { collapsed, columns, help } —
-  // the same conventions as the admin page's config form.
-  const groupMeta = man.instanceGroups && typeof man.instanceGroups === 'object' ? man.instanceGroups : {};
+  // subsection that consecutive same-group fields share, and the groups map
+  // adds { collapsed, columns, help, toggle } — the same conventions as the
+  // admin page's config form.
   let groupName = null;
-  let container = pop;
+  let container = body;
+  let current = null; // the open group: { el, title, toggleKey }
 
-  for (const [key, spec] of Object.entries(man.instanceSchema)) {
+  for (const [key, spec] of Object.entries(schema)) {
     const type = spec?.type || 'string';
     const label = spec?.label || key;
-    const current = key in (tile.settings || {}) ? tile.settings[key] : spec?.default;
+    const value = key in (tile.settings || {}) ? tile.settings[key] : spec?.default;
 
     const g = spec?.group || '';
     if (g !== groupName) {
@@ -1064,54 +1378,151 @@ function toggleSettingsPopover(tile, el) {
         if (folds) group.open = !meta.collapsed;
         const title = document.createElement(folds ? 'summary' : 'div');
         title.className = 'field-group-title';
-        title.textContent = g;
+        const titleText = document.createElement('span');
+        titleText.className = 'field-group-name';
+        titleText.textContent = g;
+        title.appendChild(titleText);
         group.appendChild(title);
-        const body = document.createElement('div');
-        body.className = 'field-group-body';
+        const groupBody = document.createElement('div');
+        groupBody.className = 'field-group-body';
         const cols = Math.min(4, Math.trunc(Number(meta.columns)) || 0);
         if (cols > 1) {
-          body.classList.add('is-columns');
-          body.style.setProperty('--cols', String(cols));
+          groupBody.classList.add('is-columns');
+          groupBody.style.setProperty('--cols', String(cols));
         }
         if (meta.help) {
           const help = document.createElement('div');
           help.className = 'field-group-help';
           help.textContent = meta.help;
-          body.appendChild(help);
+          groupBody.appendChild(help);
         }
-        group.appendChild(body);
-        pop.appendChild(group);
+        group.appendChild(groupBody);
+        body.appendChild(group);
         pop.classList.add('has-groups');
-        container = body;
+        container = groupBody;
+        current = { el: group, title, toggleKey: typeof meta.toggle === 'string' ? meta.toggle : '' };
       } else {
-        container = pop;
+        container = body;
+        current = null;
       }
     }
 
-    const field = document.createElement('label');
-    field.className = 'field' + (type === 'boolean' ? ' check' : '');
+    const isSwitch = type === 'boolean' || type === 'switch';
+    // A multiselect holds several controls, so it can't be a <label>: a click
+    // anywhere in one would flip the first control.
+    const field = document.createElement(type === 'multiselect' ? 'div' : 'label');
+    field.className = 'field' + (isSwitch ? ' check' : '');
+    let switchInput = null;
 
-    if (type === 'boolean') {
+    if (isSwitch) {
+      // A switch: on is shown/enabled, off is hidden/disabled — the label
+      // names what it turns on. A real checkbox stays underneath (keyboard,
+      // label clicks and `change` all keep working); the track is the look.
+      const text = document.createElement('span');
+      text.className = 'check-label';
+      text.textContent = label;
+      const toggle = document.createElement('span');
+      toggle.className = 'switch';
       const input = document.createElement('input');
       input.type = 'checkbox';
-      input.checked = Boolean(current);
-      field.append(input, document.createTextNode(label));
+      input.checked = Boolean(value);
+      input.setAttribute('aria-label', label);
+      const track = document.createElement('span');
+      track.className = 'track';
+      toggle.append(input, track);
+      field.append(text, toggle);
       inputs.set(key, () => input.checked);
       live(input);
-    } else if (type === 'select' && Array.isArray(spec.options)) {
+      switchInput = input;
+    } else if (type === 'select' && (Array.isArray(spec.options) || spec.optionsRoute)) {
       const span = document.createElement('span');
       span.textContent = label;
       const select = document.createElement('select');
-      for (const opt of spec.options) {
-        const o = document.createElement('option');
-        o.value = String(typeof opt === 'object' ? opt.value : opt);
-        o.textContent = String(typeof opt === 'object' ? (opt.label ?? opt.value) : opt);
-        select.appendChild(o);
-      }
-      select.value = String(current ?? '');
+      const saved = value === undefined || value === null ? '' : String(value);
+      const fill = (options) => {
+        const wanted = select.options.length ? select.value : saved;
+        select.innerHTML = '';
+        // What this tile saved stays choosable even when the live list has
+        // moved on (a source that is off right now, say).
+        if (saved && !options.some((o) => optValue(o) === saved)) {
+          options = [{ value: saved, label: `${saved} (saved)` }, ...options];
+        }
+        for (const opt of options) {
+          const o = document.createElement('option');
+          o.value = optValue(opt);
+          o.textContent = optLabel(opt);
+          select.appendChild(o);
+        }
+        select.value = options.some((o) => optValue(o) === wanted) ? wanted : saved;
+      };
+      fill(Array.isArray(spec.options) ? spec.options : []);
+      if (spec.optionsRoute) fetchOptions(spec.optionsRoute).then((opts) => { if (opts) fill(opts); });
       field.append(span, select);
       inputs.set(key, () => select.value);
       live(select);
+    } else if (type === 'multiselect' && (Array.isArray(spec.options) || spec.optionsRoute)) {
+      // Several picks from a list, one switch each, stored as an array. With
+      // `allByDefault`, a tile that has never chosen shows every option on
+      // and saves nothing until someone flips one — so options that turn up
+      // later are on as well, until there is an explicit list.
+      field.classList.add('multiselect-field');
+      const span = document.createElement('span');
+      span.className = 'field-label';
+      span.textContent = label;
+      const list = document.createElement('div');
+      list.className = 'multiselect';
+      const cols = Math.min(4, Math.trunc(Number(spec.columns)) || 0);
+      if (cols > 1) {
+        list.classList.add('is-columns');
+        list.style.setProperty('--cols', String(cols));
+      }
+      const saved = Array.isArray(value) ? value.map(String) : null; // null: never chosen
+      let touched = false;
+      const chosen = new Set(saved || []);
+      const fill = (options) => {
+        for (const input of list.querySelectorAll('input')) {
+          if (input.checked) chosen.add(input.value);
+          else chosen.delete(input.value);
+        }
+        list.innerHTML = '';
+        const missing = [...chosen].filter((v) => !options.some((o) => optValue(o) === v));
+        const all = [...options, ...missing.map((v) => ({ value: v, label: `${v} (saved — not listed now)` }))];
+        for (const opt of all) {
+          const row = document.createElement('label');
+          row.className = 'multiselect-row';
+          const text = document.createElement('span');
+          text.className = 'check-label';
+          text.textContent = optLabel(opt);
+          const toggle = document.createElement('span');
+          toggle.className = 'switch';
+          const input = document.createElement('input');
+          input.type = 'checkbox';
+          input.value = optValue(opt);
+          input.checked = saved === null && !touched && spec.allByDefault ? true : chosen.has(input.value);
+          if (input.checked) chosen.add(input.value);
+          const track = document.createElement('span');
+          track.className = 'track';
+          toggle.append(input, track);
+          row.append(text, toggle);
+          input.addEventListener('change', () => {
+            touched = true;
+            commit(0);
+          });
+          list.appendChild(row);
+        }
+        if (!all.length) {
+          const none = document.createElement('div');
+          none.className = 'multiselect-empty';
+          none.textContent = 'Nothing to choose from yet.';
+          list.appendChild(none);
+        }
+      };
+      fill(Array.isArray(spec.options) ? spec.options : []);
+      if (spec.optionsRoute) fetchOptions(spec.optionsRoute).then((opts) => { if (opts) fill(opts); });
+      field.append(span, list);
+      inputs.set(key, () => (saved === null && !touched
+        ? undefined
+        : [...list.querySelectorAll('input:checked')].map((input) => input.value)));
     } else if (type === 'color') {
       // A swatch picker; the value is always a #rrggbb string.
       field.classList.add('color-field');
@@ -1119,16 +1530,54 @@ function toggleSettingsPopover(tile, el) {
       span.textContent = label;
       const input = document.createElement('input');
       input.type = 'color';
-      input.value = colorHex(current, colorHex(spec?.default, '#2ee59a'));
+      input.value = colorHex(value, colorHex(spec?.default, '#2ee59a'));
       field.append(span, input);
       inputs.set(key, () => input.value);
       live(input, 'input', 150);   // dragging the picker fires continuously
+    } else if (type === 'template') {
+      // Text with placeholders, built by dragging (or clicking) the variables
+      // the module offers into it — nobody should have to remember the names.
+      field.classList.add('template-field');
+      const span = document.createElement('span');
+      span.textContent = label;
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.spellcheck = false;
+      input.value = value === undefined || value === null ? '' : String(value);
+      const vars = document.createElement('div');
+      vars.className = 'template-vars';
+      for (const v of Array.isArray(spec.variables) ? spec.variables : []) {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'template-var';
+        chip.draggable = true;
+        const token = optValue(v);
+        chip.textContent = optLabel(v);
+        chip.title = `Drag or click to insert ${token}`;
+        chip.addEventListener('dragstart', (e) => {
+          e.dataTransfer.setData('text/plain', token);
+          e.dataTransfer.effectAllowed = 'copy';
+        });
+        chip.addEventListener('click', (e) => {
+          e.preventDefault();
+          const start = input.selectionStart ?? input.value.length;
+          const end = input.selectionEnd ?? start;
+          input.setRangeText(token, start, end, 'end');
+          input.focus();
+          commit(0);
+        });
+        vars.appendChild(chip);
+      }
+      field.append(span, input, vars);
+      inputs.set(key, () => input.value);
+      live(input, 'input', 400);
+      live(input, 'change');
     } else {
       const span = document.createElement('span');
       span.textContent = label;
       const input = document.createElement('input');
       input.type = type === 'number' ? 'number' : (type === 'password' ? 'password' : 'text');
-      input.value = current === undefined || current === null ? '' : String(current);
+      input.value = value === undefined || value === null ? '' : String(value);
       field.append(span, input);
       inputs.set(key, () => (type === 'number' ? Number(input.value) : input.value));
       live(input, 'input', 400);   // mid-word is not the moment to remount
@@ -1140,23 +1589,115 @@ function toggleSettingsPopover(tile, el) {
       help.textContent = spec.help;
       field.appendChild(help);
     }
-    container.appendChild(field);
+
+    if (typeof spec?.showWhen === 'string' && spec.showWhen) shownWhen.push({ field, key: spec.showWhen });
+
+    if (current && switchInput && key === current.toggleKey) {
+      // The group's on/off lives in its title row, never in the body, and a
+      // click on it must not fold a <details>.
+      const grp = current;
+      field.classList.add('group-toggle');
+      field.addEventListener('click', (e) => e.stopPropagation());
+      const sync = () => grp.el.classList.toggle('is-off', !switchInput.checked);
+      switchInput.addEventListener('change', sync);
+      sync();
+      grp.title.appendChild(field);
+    } else {
+      container.appendChild(field);
+    }
   }
 
-  // Nothing to press: click away, press Escape, or click the gear again.
+  /* The tint sits on its own at the foot of the window, under a hairline —
+     it is the shell's setting, not one of the module's. Unlike those, a
+     change needs no remount: nothing but the tile's own chrome reads it. */
+  {
+    const field = document.createElement('div');
+    field.className = 'field color-field tint-field'; // the swatch reads like a module's colour field
+    const text = document.createElement('span');
+    text.textContent = 'Tile tint';
+    const input = document.createElement('input');
+    input.type = 'color';
+    input.setAttribute('aria-label', 'Tile tint');
+    const clear = document.createElement('button');
+    clear.type = 'button';
+    clear.className = 'tint-clear';
+    clear.textContent = 'Clear';
+    clear.title = 'No tint';
+    const paint = () => {
+      const hex = colorHex(tile.settings[TINT_KEY], '');
+      // With no tint the swatch opens on the panel colour, so the picker
+      // starts somewhere sane rather than at black.
+      input.value = hex || colorHex(getComputedStyle(document.documentElement).getPropertyValue('--panel'), '#1a1d21');
+      clear.hidden = !hex;
+    };
+    const set = (hex) => {
+      if (hex) tile.settings[TINT_KEY] = hex;
+      else delete tile.settings[TINT_KEY];
+      applyTint(tile);
+      paint();
+      saveLayout();
+    };
+    input.addEventListener('input', () => set(colorHex(input.value, '')));
+    clear.addEventListener('click', () => set(''));
+    paint();
+    field.append(text, clear, input);
+    body.appendChild(field);
+  }
+
+  // "Short day" appears once "Date" is on: a field with showWhen:"K" follows
+  // K's switch, live — the same rule the admin page applies.
+  if (shownWhen.length) {
+    const refresh = () => {
+      for (const rule of shownWhen) {
+        const read = inputs.get(rule.key);
+        rule.field.hidden = read ? !read() : false;
+      }
+    };
+    refresh();
+    body.addEventListener('change', refresh);
+    body.addEventListener('input', refresh);
+  }
+
+  // Nothing to press: click away, press Escape, or the gear again.
   // (The gear's own click stops propagating, so it toggles rather than
   // closing and reopening.)
   const closeOnClick = (e) => { if (!pop.contains(e.target)) closeSettingsPopovers(); };
   const closeOnEscape = (e) => { if (e.key === 'Escape') closeSettingsPopovers(); };
+  const keepInView = () => clampPopover(pop);
   pop._cleanup = () => {
     document.removeEventListener('click', closeOnClick);
     document.removeEventListener('keydown', closeOnEscape);
+    window.removeEventListener('resize', keepInView);
   };
   document.addEventListener('click', closeOnClick);
   document.addEventListener('keydown', closeOnEscape);
+  window.addEventListener('resize', keepInView);
+
+  // Moved by its bar.
+  bar.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 && e.pointerType === 'mouse') return;
+    e.preventDefault();
+    bar.setPointerCapture(e.pointerId);
+    const dx = e.clientX - pop.offsetLeft;
+    const dy = e.clientY - pop.offsetTop;
+    const onMove = (ev) => {
+      pop.style.left = (ev.clientX - dx) + 'px';
+      pop.style.top = (ev.clientY - dy) + 'px';
+      clampPopover(pop);
+    };
+    const onUp = () => {
+      bar.removeEventListener('pointermove', onMove);
+      bar.removeEventListener('pointerup', onUp);
+      bar.removeEventListener('pointercancel', onUp);
+    };
+    bar.addEventListener('pointermove', onMove);
+    bar.addEventListener('pointerup', onUp);
+    bar.addEventListener('pointercancel', onUp);
+  });
 
   pop.addEventListener('pointerdown', (e) => e.stopPropagation());
-  el.appendChild(pop);
+  document.body.appendChild(pop);
+  placePopover(pop, el.getBoundingClientRect());
 }
 
 /** Tear a tile's module down and start it again (settings changed). */
@@ -1182,8 +1723,21 @@ function renderLayout(list) {
 
 /* ── menus ──────────────────────────────────────────────────────────── */
 
-wireDropdown('add-btn', 'add-menu', async (menu) => {
-  await loadRegistry();
+/* What the ＋ picker shows, as a string: repainting a menu the user is
+   already pointing at is only worth it when something in it changed. */
+function addMenuSignature() {
+  return JSON.stringify([...registry.values()].map((m) => [m.id, m.name, m.description, m.tiles]));
+}
+
+wireDropdown('add-btn', 'add-menu', async (menu, stillOpen) => {
+  // Painted from the list already in hand, then refreshed: a module's tile
+  // list is live data, and Admin may have enabled or disabled something.
+  const shown = addMenuSignature();
+  renderAddMenu(menu);
+  if (await loadRegistry() && stillOpen() && addMenuSignature() !== shown) renderAddMenu(menu);
+});
+
+function renderAddMenu(menu) {
   menu.innerHTML = '';
   const manifests = [...registry.values()];
   if (!manifests.length) {
@@ -1203,21 +1757,25 @@ wireDropdown('add-btn', 'add-menu', async (menu) => {
       title.textContent = man.name;
       menu.appendChild(title);
       for (const entry of entries) {
+        // An entry that allows one tile at most is offered greyed out once
+        // that tile exists — a second Send box would only confuse.
+        const placed = entry.single && tiles.some((t) => t.module === man.id && t.variant === String(entry.id));
+        // Descriptions ride along as tooltips: the list stays a list.
         menu.appendChild(menuItem(entry.name, () => {
           menu.hidden = true;
           addTile(man.id, entry);
-        }, { sub: entry.description || '' }));
+        }, { disabled: placed, title: placed ? 'Already on this dashboard' : (entry.description || '') }));
       }
     } else {
       menu.appendChild(menuItem(man.name, () => {
         menu.hidden = true;
         addTile(man.id);
-      }, { sub: man.description || '' }));
+      }, { title: man.description || '' }));
     }
   }
-});
+}
 
-wireDropdown('layout-btn', 'layout-menu', async (menu) => {
+wireDropdown('layout-btn', 'layout-menu', async (menu, stillOpen) => {
   menu.innerHTML = '';
 
   menu.appendChild(menuItem('Save as named layout…', async () => {
@@ -1250,43 +1808,46 @@ wireDropdown('layout-btn', 'layout-menu', async (menu) => {
   divider.className = 'menu-divider';
   menu.appendChild(divider);
 
-  // named layouts stored on the server
-  let layouts = [];
-  try {
-    const res = await fetch('/api/layouts');
-    if (res.ok) layouts = (await res.json()).layouts || [];
-  } catch { /* server briefly away — the menu just shows none */ }
-  if (layouts.length) {
-    const title = document.createElement('div');
-    title.className = 'menu-title';
-    title.textContent = 'Load from server';
-    menu.appendChild(title);
-    for (const l of layouts) {
-      menu.appendChild(menuItem(l.name, async () => {
-        menu.hidden = true;
-        try {
-          const res = await fetch('/api/layouts/' + encodeURIComponent(l.name));
-          const body = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(body.error || 'Load failed (' + res.status + ')');
-          // Loading copies the layout into this browser's own state — it
-          // does not live-link browsers together.
-          renderLayout(body.layout.tiles || []);
-          saveLayout();
-          toast(`Loaded “${l.name}”`);
-        } catch (e) {
-          toast(e.message, true);
-        }
-      }, { sub: `${l.tiles} tile${l.tiles === 1 ? '' : 's'}` }));
-    }
-    menu.appendChild(divider.cloneNode());
-  }
-
-  menu.appendChild(menuItem('Reset layout', () => {
+  const reset = menuItem('Reset layout', () => {
     menu.hidden = true;
     renderLayout([]);
     saveLayout();
     toast('Layout cleared');
-  }, { danger: true, sub: 'Remove every tile from this browser' }));
+  }, { danger: true, sub: 'Remove every tile from this browser' });
+  menu.appendChild(reset);
+
+  // Named layouts stored on the server slot in above Reset once they
+  // arrive; until then (or if they never do) the menu is already usable.
+  let layouts = [];
+  try {
+    const res = await fetchWithTimeout('/api/layouts', 8000);
+    if (res.ok) layouts = (await res.json()).layouts || [];
+  } catch { /* server briefly away — the menu just shows none */ }
+  if (!layouts.length || !stillOpen()) return;
+  const block = document.createDocumentFragment();
+  const title = document.createElement('div');
+  title.className = 'menu-title';
+  title.textContent = 'Load from server';
+  block.appendChild(title);
+  for (const l of layouts) {
+    block.appendChild(menuItem(l.name, async () => {
+      menu.hidden = true;
+      try {
+        const res = await fetch('/api/layouts/' + encodeURIComponent(l.name));
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || 'Load failed (' + res.status + ')');
+        // Loading copies the layout into this browser's own state — it
+        // does not live-link browsers together.
+        renderLayout(body.layout.tiles || []);
+        saveLayout();
+        toast(`Loaded “${l.name}”`);
+      } catch (e) {
+        toast(e.message, true);
+      }
+    }, { sub: `${l.tiles} tile${l.tiles === 1 ? '' : 's'}` }));
+  }
+  block.appendChild(divider.cloneNode());
+  menu.insertBefore(block, reset);
 });
 
 /* ── menu bar show/hide (notch, like the tile title bars) ───────────── */
@@ -1504,19 +2065,14 @@ new ResizeObserver(() => {
    config or enabled flags change. Tiles of a changed module get
    onConfigChange(cfg) if they implement it, otherwise a clean remount. */
 
-let eventsSource = null;
-let eventsRetry = null;
-
 function subscribeEvents() {
-  try { eventsSource?.close(); } catch { /* not open */ }
-  eventsSource = new EventSource('/api/events');
-  eventsSource.addEventListener('modules-changed', () => handleModulesChanged());
-  eventsSource.onerror = () => {
-    if (eventsSource.readyState === EventSource.CLOSED) {
-      clearTimeout(eventsRetry);
-      eventsRetry = setTimeout(subscribeEvents, 4000);
-    }
-  };
+  // Rides on the page's one stream connection (see sseSubscribe) as `shell:`.
+  sseSubscribe('/api/events', {
+    events: {
+      'modules-changed': () => handleModulesChanged(),
+      theme: handleThemeEvent,
+    },
+  });
 }
 
 async function handleModulesChanged() {
@@ -1546,6 +2102,43 @@ async function handleModulesChanged() {
     }
   }
 }
+
+/* ── theme ──────────────────────────────────────────────────────────── */
+
+/* The dashboard's palette is a server-wide choice (Admin → Theme). Five
+   preset variable sets live in style.css as html[data-theme="…"]; applying
+   one is setting that attribute. The last-known theme goes on synchronously
+   from localStorage so a reload never flashes the default palette, then the
+   server's answer (GET /api/theme) wins, and a `theme` shell event on
+   /api/events switches every open dashboard the moment an admin picks
+   another. Modules style with the shell variables, so they follow; a colour
+   a tile is configured with is set on the tile itself and stays as chosen. */
+
+const LS_THEME = 'proddash:theme';
+
+function applyTheme(id) {
+  const theme = String(id || '');
+  if (!/^[a-z][a-z0-9-]{0,31}$/.test(theme)) return;
+  document.documentElement.dataset.theme = theme;
+  try { localStorage.setItem(LS_THEME, theme); } catch { /* private mode — fine */ }
+}
+
+/** `theme` shell event from /api/events (wired in subscribeEvents). */
+function handleThemeEvent(e) {
+  try {
+    applyTheme(JSON.parse(e.data).theme);
+  } catch { /* a malformed frame changes nothing */ }
+}
+
+function initTheme() {
+  try { applyTheme(localStorage.getItem(LS_THEME)); } catch { /* fine */ }
+  fetch('/api/theme', { cache: 'no-store' })
+    .then((res) => (res.ok ? res.json() : null))
+    .then((body) => { if (body?.theme) applyTheme(body.theme); })
+    .catch(() => { /* offline: the remembered theme stands */ });
+}
+
+initTheme();
 
 /* ── boot ───────────────────────────────────────────────────────────── */
 

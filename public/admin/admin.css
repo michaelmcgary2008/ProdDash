@@ -94,6 +94,35 @@ body { overflow: auto; }
 }
 .module-health.error { color: var(--danger); }
 
+/* a module card's own status line ("polling timers on 10.3.11.20:1025",
+   "no ProPresenter host configured"): a readout, so it sits in a bordered
+   monospace box a shade lighter than the card; ok / connecting / error
+   show as the text (and border) colour, the box itself never changes */
+.module-status {
+  display: inline-block;
+  max-width: 100%;
+  margin-top: 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text) 5%, var(--panel));
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.module-status:empty { display: none; }
+.module-status.ok { color: var(--text); }
+.module-status.connecting {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 40%, var(--border));
+}
+.module-status.error {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+}
+
 .module-mount-error {
   margin-top: 8px;
   padding: 8px 10px;
@@ -106,11 +135,33 @@ body { overflow: auto; }
 .module-form { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px; }
 .module-form .field { max-width: 420px; }
 
+/* a multi-line string (manifest type `text`): the same box as the other
+   inputs (those rules live in the shell's style.css), a few lines tall */
+.field textarea {
+  padding: 7px 9px;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.4;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  resize: vertical;
+  min-height: 72px;
+}
+.field textarea:focus { outline: none; border-color: var(--accent); }
+
 /* endpoint fields: every module's upstream is entered the same way */
 .field .endpoint-row { display: flex; align-items: center; gap: 7px; }
 .endpoint-row .ep-host { flex: 1; min-width: 0; }
 .endpoint-row .ep-port { width: 92px; flex: none; }
 .endpoint-row .ep-sep { color: var(--muted); font-weight: 600; }
+/* several picks from a list (manifest type `multiselect`) */
+.field.multiselect-field { cursor: default; }
+.field.multiselect-field .multiselect { display: flex; flex-direction: column; gap: 6px; }
+.multiselect-row { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.multiselect-empty { color: var(--muted); font-size: 12px; }
+
 .module-form-empty { color: var(--muted); font-size: 12px; margin-top: 10px; }
 
 /* labeled config subsections (manifest field `group`) */
@@ -121,6 +172,10 @@ body { overflow: auto; }
   border-radius: 9px;
 }
 .field-group-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  position: relative; /* the ⓘ popover hangs off this row */
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -128,7 +183,81 @@ body { overflow: auto; }
   color: var(--muted);
   margin-bottom: 10px;
 }
+.field-group-name { min-width: 0; }
 .field-group .field:last-child { margin-bottom: 0; }
+
+/* group help (configGroups[name].help): an ⓘ beside the title. Hover or
+   focus peeks at the text; a click pins it open until the next click. */
+.group-info { display: inline-flex; align-items: center; }
+.group-info-btn {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--muted);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font: italic 700 10px/1 ui-serif, Georgia, "Times New Roman", serif;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: help;
+}
+.group-info-btn:hover,
+.group-info.is-open .group-info-btn { color: var(--text); border-color: var(--text); }
+.group-info-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.group-info-pop {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 5;
+  max-width: min(440px, 100%);
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--text) 6%, var(--panel));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: normal;
+  cursor: auto;
+}
+/* keeps the popover open while the pointer crosses the gap down to it */
+.group-info-pop::before { content: ""; position: absolute; left: 0; right: 0; top: -8px; height: 8px; }
+.group-info:hover .group-info-pop,
+.group-info-btn:focus-visible + .group-info-pop,
+.group-info.is-open .group-info-pop { display: block; }
+
+/* group toggle (configGroups[name].toggle): the named switch sits at the
+   right of the title row as the group's on/off; the body dims while it is
+   off but stays editable */
+.field-group-toggle {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+.field-group-toggle .field {
+  margin: 0;
+  max-width: none;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--text);
+}
+.field-group-toggle .field.switch-field { flex-direction: row-reverse; gap: 8px; }
+.field-group-toggle .field.switch-field .switch-label { font-size: 12px; }
+.field-group-toggle .field.check { flex-direction: row-reverse; gap: 8px; }
+.field-group.is-off > .field-group-body { opacity: 0.45; transition: opacity 0.15s; }
+.field-group.has-toggle > .field-group-body { transition: opacity 0.15s; }
 
 /* collapsible groups (manifest configGroups[name].collapsed) */
 details.field-group > summary.field-group-title {
@@ -160,18 +289,16 @@ details.field-group > summary.field-group-title:hover { color: var(--text); }
   gap: 4px 16px;
 }
 .field-group-body.is-columns .field { margin-bottom: 4px; max-width: none; }
-.field-group-body.is-columns .field-group-help { grid-column: 1 / -1; }
 @media (max-width: 560px) { .field-group-body.is-columns { grid-template-columns: 1fr 1fr; } }
 
-.field-group-help,
+/* one line of guidance under a control (field `help`) */
 .field-help {
   display: block;
   font-size: 11.5px;
   line-height: 1.45;
   color: var(--muted);
+  margin-top: 2px;
 }
-.field-group-help { margin: -4px 0 8px; }
-.field-help { margin-top: 2px; }
 .field-help code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 
 /* showWhen: a hidden dependent field must actually collapse — `.field`'s
@@ -190,12 +317,19 @@ details.field-group > summary.field-group-title:hover { color: var(--text); }
 }
 .field.switch-field .switch-label { font-size: 13px; }
 
+/* the card's one action row: status on the left, Configure / Apply on the right */
 .module-actions {
   display: flex;
-  align-items: center;
+  align-items: flex-end;   /* the button stays bottom-right when a readout wraps */
   gap: 10px;
-  margin-top: 4px;
+  margin-top: 10px;
 }
+.module-name.is-toggle { cursor: pointer; }
+.module-name.is-toggle:hover,
+.module-name.is-toggle:focus-visible { color: var(--accent); outline: none; }
+.module-actions .admin-status { flex: 1; margin-top: 0; }
+.module-actions .module-status { flex: 0 1 auto; min-width: 0; margin-top: 0; }
+.module-actions .btn { flex: none; margin-left: auto; }
 
 .admin-status { min-height: 16px; font-size: 12px; color: var(--muted); margin-top: 8px; }
 .admin-status.error { color: var(--danger); }
@@ -312,3 +446,69 @@ a.btn { text-decoration: none; }
 .catalog-title { display: flex; align-items: center; gap: 8px; }
 .catalog-row .module-desc { margin: 4px 0 2px; }
 .catalog-row .module-health { margin-top: 2px; }
+
+/* ── theme ──────────────────────────────────────────────────────────── */
+
+/* one swatch per preset: a miniature dashboard (page, a tile on it, the
+   accent as a status dot) and the name; the current one wears the accent */
+.theme-swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.theme-swatch {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.theme-swatch:hover { border-color: var(--muted); }
+.theme-swatch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.theme-swatch.is-current { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.theme-preview {
+  position: relative;
+  display: block;
+  height: 46px;
+  border-radius: 6px;
+  background: var(--sw-bg);
+  border: 1px solid color-mix(in srgb, var(--sw-panel) 60%, var(--sw-accent));
+  overflow: hidden;
+}
+.theme-preview::before {
+  content: "";
+  position: absolute;
+  left: 8px; right: 8px; top: 10px; bottom: 8px;
+  border-radius: 4px;
+  background: var(--sw-panel);
+  border: 1px solid color-mix(in srgb, var(--sw-panel) 75%, var(--sw-accent));
+}
+.theme-preview::after {
+  content: "";
+  position: absolute;
+  left: 14px; top: 16px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--sw-accent);
+  box-shadow: 0 0 6px var(--sw-accent);
+}
+.theme-name { display: flex; align-items: center; gap: 6px; }
+.theme-swatch.is-current .theme-name::after {
+  content: "current";
+  margin-left: auto;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+#theme-status { margin-top: 4px; }

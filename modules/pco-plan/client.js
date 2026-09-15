@@ -4,9 +4,15 @@
    ProPresenter module's live item; this tile only renders the plan it is
    streamed. What is shown is this tile's own choice (gear menu →
    moduleApi.instanceSettings: show/hide checklist, top-bar template,
-   colors, text size); /admin only holds the connection settings. */
+   colors, item-note categories); the text size is the title bar's A− / A+
+   (saved with the tile, 14 px until someone presses one); /admin only holds
+   the connection settings. */
 
 const REFRESH_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>';
+
+/* the text-size buttons: a drawn − and + at the icon size, like every other header icon */
+const MINUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg>';
+const PLUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
 
 export default function create({ root, moduleApi }) {
   let state = null;
@@ -53,7 +59,7 @@ export default function create({ root, moduleApi }) {
 
   const refreshBtn = moduleApi.header.addButton({
     icon: REFRESH_SVG,
-    title: 'Re-read the plan from Planning Center now',
+    title: 'Refresh',
     onClick() {
       refreshBtn.classList.add('active');
       moduleApi.fetch('/refresh', { method: 'POST' })
@@ -67,8 +73,8 @@ export default function create({ root, moduleApi }) {
     moduleApi.saveInstanceSettings({ textSize: Math.min(40, Math.max(9, size + delta)) });
     applyPrefs();
   }
-  moduleApi.header.addButton({ label: 'A−', title: 'Smaller text', onClick: () => bumpTextSize(-1) });
-  moduleApi.header.addButton({ label: 'A+', title: 'Larger text', onClick: () => bumpTextSize(1) });
+  moduleApi.header.addButton({ icon: MINUS_SVG, title: 'Smaller text', onClick: () => bumpTextSize(-1) });
+  moduleApi.header.addButton({ icon: PLUS_SVG, title: 'Larger text', onClick: () => bumpTextSize(1) });
 
   /* ── formatting ─────────────────────────────────────────────────── */
 
@@ -85,6 +91,16 @@ export default function create({ root, moduleApi }) {
     const sec = s % 60;
     if (h) return `${sign}${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
     return `${sign}${m}:${String(sec).padStart(2, '0')}`;
+  }
+
+  /** "Starts in": under a day like fmtDur; a day or more reads "2 Days, 05:12:44". */
+  function fmtStartsIn(totalSec) {
+    const s = Math.max(0, Math.round(totalSec));
+    const days = Math.floor(s / 86400);
+    if (!days) return fmtDur(s);
+    const rest = s % 86400;
+    const pad = (v) => String(v).padStart(2, '0');
+    return `${days} ${days === 1 ? 'Day' : 'Days'}, ${pad(Math.floor(rest / 3600))}:${pad(Math.floor((rest % 3600) / 60))}:${pad(rest % 60)}`;
   }
 
   function fmtMinutes(totalSec) {
@@ -121,10 +137,19 @@ export default function create({ root, moduleApi }) {
     });
   }
 
+  /**
+   * Which note categories this tile shows. Unset (never chosen in the gear
+   * window) means every category, including ones Planning Center gains
+   * later; an array is exactly those, by name. A layout saved before the
+   * categories were a list holds a comma-separated string — read as that
+   * list, blank as unset.
+   */
   function noteFilter() {
-    const raw = String(cfg().noteCategories || '');
-    const wanted = raw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
-    return wanted.length ? (note) => wanted.includes(String(note.category || '').toLowerCase()) : () => true;
+    const raw = cfg().noteCategories;
+    const names = Array.isArray(raw) ? raw : String(raw ?? '').split(',');
+    const wanted = new Set(names.map((s) => String(s).trim().toLowerCase()).filter(Boolean));
+    if (!Array.isArray(raw) && !wanted.size) return () => true;
+    return (note) => wanted.has(String(note.category || '').trim().toLowerCase());
   }
 
   /* ── status dot ─────────────────────────────────────────────────── */
@@ -209,36 +234,55 @@ export default function create({ root, moduleApi }) {
     renderClock();
   }
 
+  /**
+   * The header clock follows the service the server says owns the clock
+   * (state.service: idle → running → stopped, by schedule or by the admin's
+   * ProPresenter document cues): a countdown before it, the running time
+   * while it runs (with ahead/behind when following ProPresenter), the final
+   * time once it has ended.
+   */
   function renderClock() {
     const plan = state?.plan;
     const live = state?.live || {};
+    const svc = state?.service || {};
     clockLabelEl.textContent = '';
     clockValueEl.textContent = '';
     clockValueEl.className = 'pp-clock-value';
     if (!plan || headEl.hidden) return;
     const now = serverNow();
-    if (on('showRunningClock') && live.following && live.serviceStartedAt) {
+    const startedAt = svc.startedAt || live.serviceStartedAt || 0;
+    if (on('showRunningClock') && svc.phase === 'running' && startedAt) {
       clockLabelEl.textContent = 'Running';
-      clockValueEl.textContent = fmtDur((now - live.serviceStartedAt) / 1000);
-      // Ahead of / behind the plan: elapsed minus what the completed items were planned to take.
-      const done = state.items.filter((it) => live.history?.[it.id]?.endedAt);
-      const planned = done.reduce((sum, it) => sum + (it.length || 0), 0);
-      const actual = done.reduce((sum, it) => sum + (live.history[it.id].endedAt - live.history[it.id].startedAt) / 1000, 0);
-      const drift = actual - planned;
-      if (planned && Math.abs(drift) >= 30) {
-        clockLabelEl.textContent = `Running · ${drift > 0 ? 'behind' : 'ahead'} ${fmtDur(Math.abs(drift))}`;
-        clockValueEl.classList.add(drift > 0 ? 'is-behind' : 'is-ahead');
+      clockValueEl.textContent = fmtDur((now - startedAt) / 1000);
+      if (live.following) {
+        // Ahead of / behind the plan: elapsed minus what the completed items were planned to take.
+        const done = state.items.filter((it) => live.history?.[it.id]?.endedAt);
+        const planned = done.reduce((sum, it) => sum + (it.length || 0), 0);
+        const actual = done.reduce((sum, it) => sum + (live.history[it.id].endedAt - live.history[it.id].startedAt) / 1000, 0);
+        const drift = actual - planned;
+        if (planned && Math.abs(drift) >= 30) {
+          clockLabelEl.textContent = `Running · ${drift > 0 ? 'behind' : 'ahead'} ${fmtDur(Math.abs(drift))}`;
+          clockValueEl.classList.add(drift > 0 ? 'is-behind' : 'is-ahead');
+        }
       }
       return;
     }
-    if (on('showCountdown') && plan.serviceStartsAt && plan.serviceStartsAt > now) {
-      clockLabelEl.textContent = 'Starts in';
-      clockValueEl.textContent = fmtDur((plan.serviceStartsAt - now) / 1000);
+    if (on('showRunningClock') && svc.phase === 'stopped' && startedAt && svc.endedAt) {
+      clockLabelEl.textContent = 'Ended';
+      clockValueEl.textContent = fmtDur((svc.endedAt - startedAt) / 1000);
       return;
     }
-    if (on('showRunningClock') && plan.serviceStartsAt) {
-      clockLabelEl.textContent = 'Since start';
-      clockValueEl.textContent = fmtDur((now - plan.serviceStartsAt) / 1000);
+    const startsAt = svc.startsAt || plan.serviceStartsAt || 0;
+    if (on('showCountdown') && startsAt > now) {
+      clockLabelEl.textContent = 'Starts in';
+      clockValueEl.textContent = fmtStartsIn((startsAt - now) / 1000);
+      return;
+    }
+    if (on('showRunningClock') && startsAt) {
+      // Past the scheduled start and not started: waiting for the admin's
+      // start document to go live in ProPresenter (or its failsafe).
+      clockLabelEl.textContent = 'Scheduled';
+      clockValueEl.textContent = fmtClock(startsAt);
     }
   }
 

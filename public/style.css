@@ -10,6 +10,7 @@
   --text: #e6edf3;
   --muted: #8b98a5;
   --accent: #2ee59a;
+  --accent-text: #06281a; /* text that sits on --accent (buttons, badges) */
   --danger: #f4433c;
   --warn: #f0b429;
   /* grid geometry (shell.js reads these) */
@@ -169,6 +170,7 @@ body.menu-hidden #topbar {
   margin-top: 2px;
   white-space: normal;
 }
+.menu-item[disabled] { opacity: 0.45; cursor: default; }
 .menu-item.danger { color: var(--danger); }
 .menu-note {
   padding: 8px 10px;
@@ -230,6 +232,18 @@ body.menu-hidden #topbar {
   border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
+}
+
+/* A tile the user gave a colour: a wash over the panel, a stronger edge and
+   a tinted title bar. Module content keeps its own colours — this is the
+   tile's chrome, so a tinted tile still reads like every other one. */
+.tile.is-tinted {
+  background: color-mix(in srgb, var(--tile-tint) 14%, var(--panel));
+  border-color: color-mix(in srgb, var(--tile-tint) 45%, var(--border));
+}
+.tile.is-tinted > .tile-head {
+  background: color-mix(in srgb, var(--tile-tint) 20%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--tile-tint) 35%, var(--border));
 }
 
 .tile.dragging,
@@ -304,6 +318,26 @@ body.menu-hidden #topbar {
 .tile-btn:hover { background: var(--border); color: var(--text); }
 .tile-btn.close:hover { color: var(--danger); }
 .tile-btn.active { color: var(--accent); }
+.tile-btn.is-open,
+.tile-btn.is-open:hover { background: var(--accent); color: var(--accent-text); }
+
+/* the shell's tooltip: shown at once under the button the pointer is on */
+#tip {
+  position: fixed;
+  z-index: 200;
+  pointer-events: none;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+#tip[hidden] { display: none; }
 .tile-btn svg { width: 13px; height: 13px; display: block; }
 
 /* controls a module adds to its own title bar (moduleApi.header) */
@@ -532,28 +566,122 @@ body.fullscreen #grid { padding-bottom: 0; }
 
 /* ── per-tile settings popover ─────────────────────────────────────── */
 
+/* A small window beside its tile (shell.js places and clamps it), not a
+   box inside the tile: a tile can be smaller than its own settings, and the
+   whole point of live settings is watching the tile change. */
 .tile-settings {
-  position: absolute;
-  top: 36px;
-  right: 6px;
-  z-index: 45;
-  min-width: 220px;
-  max-width: calc(100% - 12px);
-  max-height: calc(100% - 40px);
-  overflow-y: auto;
+  position: fixed;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  /* as wide as its content wants and no wider: a couple of switches make a
+     small window, a three-column checklist a wide one */
+  width: max-content;
+  min-width: 150px;
+  max-width: min(560px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow: hidden;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55);
+}
+/* the grab bar: a slim accent strip with a grip mark, nothing to read or
+   press — the gear that opened the window wears the same colour meanwhile */
+.tile-settings-bar {
+  flex: none;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+.tile-settings-bar::before {
+  content: "";
+  width: 34px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--accent-text);
+  opacity: 0.7;
+  transition: opacity 0.12s;
+}
+.tile-settings-bar:hover::before { opacity: 1; }
+.tile-settings .field[hidden] { display: none; }
+/* the tint, the shell's own setting, under a hairline at the foot */
+.tile-settings .tint-field {
+  margin: 8px 0 0;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+  gap: 8px;
+}
+.tile-settings .tint-clear {
+  flex: none;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.tile-settings .tint-clear:hover { color: var(--text); background: var(--border); }
+.tile-settings .tint-clear[hidden] { display: none; }
+.tile-settings-bar:active { cursor: grabbing; }
+.tile-settings-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   padding: 10px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
 }
+/* Help lines never widen the window: they take no room of their own when the
+   content is measured, then wrap to whatever width the fields settled on. */
+.tile-settings .field-help,
+.tile-settings .field-group-help,
+.tile-settings .multiselect-empty { width: 0; min-width: 100%; }
+/* a group's on/off sits in its title row; the body dims while it is off */
+.tile-settings .field-group-title { display: flex; align-items: center; gap: 8px; }
+.tile-settings .field-group-name { flex: 1; min-width: 0; }
+.tile-settings .group-toggle { margin: 0 0 0 auto; }
+.tile-settings .group-toggle .check-label { display: none; }
+.tile-settings .field-group.is-off .field-group-body { opacity: 0.45; }
+/* several picks from a list (type `multiselect`) */
+.tile-settings .multiselect-field { display: flex; flex-direction: column; gap: 4px; }
+.tile-settings .multiselect { display: flex; flex-direction: column; gap: 3px; }
+.tile-settings .multiselect.is-columns {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr));
+  gap: 3px 14px;
+}
+.tile-settings .multiselect-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+}
+.tile-settings .multiselect-row .check-label { flex: 1 1 0; min-width: 0; }
+.tile-settings .multiselect-empty { color: var(--muted); font-size: 12px; }
+/* a text built from offered variables (type `template`) */
+.tile-settings .template-vars { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+.tile-settings .template-var {
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  cursor: grab;
+}
+.tile-settings .template-var:hover { border-color: var(--accent); }
+.tile-settings .template-var:active { cursor: grabbing; }
 
-/* A popover with grouped settings needs room for its columns; it still
-   never grows past the tile (max-width above). */
-.tile-settings.has-groups {
-  min-width: min(540px, calc(100% - 12px));
-  container-type: inline-size;
-}
 .tile-settings .field-group {
   margin: 0 0 10px;
   padding: 8px 10px;
@@ -589,19 +717,20 @@ body.fullscreen #grid { padding-bottom: 0; }
 .tile-settings details.field-group[open] > summary.field-group-title::before { transform: rotate(90deg); }
 .tile-settings details.field-group[open] > summary.field-group-title { margin-bottom: 8px; }
 .tile-settings .field-group .field:last-child { margin-bottom: 0; }
+/* Settings apply as they change, so nothing sits under the last field — its
+   bottom margin would only pad the popover's own padding a second time. */
+.tile-settings-body > :last-child { margin-bottom: 0; }
 .tile-settings .field-group-body.is-columns {
   display: grid;
   grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr));
-  gap: 3px 14px;
+  gap: 6px 14px; /* the grid gap is the whole row spacing: no per-field margin */
 }
-.tile-settings .field-group-body.is-columns .field { margin-bottom: 3px; }
+.tile-settings .field-group-body.is-columns .field { margin-bottom: 0; }
 .tile-settings .field-group-body.is-columns .field-group-help { grid-column: 1 / -1; }
-@container (max-width: 420px) {
-  .tile-settings .field-group-body.is-columns { grid-template-columns: 1fr 1fr; }
-}
-@container (max-width: 260px) {
-  .tile-settings .field-group-body.is-columns { grid-template-columns: 1fr; }
-}
+/* a list of switches or a template with its chips is a row of its own, however
+   many columns the group lays its other fields out in */
+.tile-settings .field-group-body.is-columns .multiselect-field,
+.tile-settings .field-group-body.is-columns .template-field { grid-column: 1 / -1; }
 .tile-settings .field-group-help,
 .tile-settings .field-help {
   display: block;
@@ -636,14 +765,64 @@ body.fullscreen #grid { padding-bottom: 0; }
   outline: none;
   border-color: var(--accent);
 }
+/* boolean / switch settings: label on the left, switch on the right (help,
+   when there is any, wraps under both) */
 .field.check {
   flex-direction: row;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 4px 10px;
   color: var(--text);
   cursor: pointer;
 }
-.field.check input { width: 15px; height: 15px; accent-color: var(--accent); }
+.field.check .check-label { flex: 1 1 0; min-width: 0; }
+.field.check .field-help { flex-basis: 100%; }
+
+/* The switch: the admin page's module switch, same track, knob and colours,
+   so a toggle reads the same on both surfaces. On = shown/enabled (accent),
+   off = hidden/disabled (border track, muted knob). The real checkbox lies
+   invisibly over the track — still focusable, so Tab reaches it and Space
+   flips it — and the label around it makes the text clickable too. */
+.switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  cursor: pointer;
+}
+.switch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.switch .track {
+  display: block;
+  position: relative;
+  width: 34px;
+  height: 19px;
+  border-radius: 999px;
+  background: var(--border);
+  transition: background 0.2s;
+}
+.switch .track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.2s, background 0.2s;
+}
+.switch input:checked + .track { background: var(--accent); }
+.switch input:checked + .track::after { transform: translateX(15px); background: var(--bg); }
+.switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* color fields: label on the left, swatch on the right */
 .field.color-field {
@@ -709,7 +888,7 @@ body.fullscreen #grid { padding-bottom: 0; }
 .btn.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #06281a;
+  color: var(--accent-text);
   font-weight: 600;
 }
 
@@ -755,4 +934,65 @@ body.fullscreen #grid { padding-bottom: 0; }
 
 @media (max-width: 560px) {
   #topbar { padding: 0 8px; gap: 6px; }
+}
+
+/* ── themes ────────────────────────────────────────────────────────── */
+
+/* Preset palettes, chosen in Admin → Theme and applied by shell.js (and the
+   admin page) as html[data-theme="…"]. Each swaps exactly the eight palette
+   variables the module guide names — nothing else — so every module and
+   every shell element follows, and a colour a tile is configured with (set
+   on the tile itself) still wins. The :root block at the top of this file is
+   "booth", the default; the list of ids and names lives in server.js
+   (GET /api/theme). All four are booth-grade: high contrast, the accent
+   nowhere near the danger red or the warning amber, muted still readable. */
+
+/* Harbor — deep navy, cyan accent */
+html[data-theme="harbor"] {
+  --bg: #06101f;
+  --panel: #0c1a30;
+  --border: #1a2b48;
+  --text: #e6eefb;
+  --muted: #8ea4c8;
+  --accent: #2ad4ee;
+  --danger: #ff5a5f;
+  --warn: #f7b53b;
+}
+
+/* Graphite — neutral charcoal, electric-blue accent */
+html[data-theme="graphite"] {
+  --bg: #0f1012;
+  --panel: #17191d;
+  --border: #2a2d33;
+  --text: #f0f2f4;
+  --muted: #9ca3ad;
+  --accent: #6cb4ff;
+  --danger: #ff4d4f;
+  --warn: #ffb224;
+}
+
+/* Ember — warm broadcast black, orange accent (danger stays a cool red,
+   warn a pale yellow, so the three status colours never blur) */
+html[data-theme="ember"] {
+  --bg: #120c0a;
+  --panel: #1d1411;
+  --border: #35251e;
+  --text: #f6ede6;
+  --muted: #b39b8c;
+  --accent: #ff8f3a;
+  --danger: #f03247;
+  --warn: #ffd86b;
+}
+
+/* Daylight — the light one, for a front-of-house desk in daytime */
+html[data-theme="daylight"] {
+  --bg: #eef1f5;
+  --panel: #ffffff;
+  --border: #cfd6e0;
+  --text: #14181f;
+  --muted: #5b6675;
+  --accent: #0b8a5f;
+  --accent-text: #ffffff; /* dark text drowns on this accent */
+  --danger: #d1242f;
+  --warn: #b26a00;
 }

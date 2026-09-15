@@ -92,6 +92,7 @@ the app); its settings are kept for a later reinstall.
 | `proddash` | yes | The ProdDash versions this module works with: `">=1.1.0"`, `"^1.1.0"`, `">=1.1.0 <2.0.0"`, or `"*"`. A module whose requirement the running shell doesn't meet is listed in the admin page but never loaded, and can't be installed from the catalog. |
 | `description` | no | Shown in the admin page / picker. |
 | `permissions` | no | What macOS must allow before this module can work — see **Permissions macOS has to grant**. Ignored by the shell; read by the macOS launcher. |
+| `provides` | no | Capabilities other modules can consume — `["timers"]` today. Forwarded in `/api/modules` so a consumer can find you. See **Working with other modules**. |
 | `client` | yes | Client entry file, loaded as an ES module. |
 | `server` | no | Server entry file (CommonJS), loaded with `require()`. |
 | `style` | no | A stylesheet the shell injects once per module. |
@@ -103,7 +104,7 @@ the app); its settings are kept for a later reinstall.
 Both schemas map field names to specs:
 
 ```
-{ "type": "string" | "number" | "boolean" | "switch" | "select" | "color" | "password" | "endpoint",
+{ "type": "string" | "text" | "number" | "boolean" | "switch" | "select" | "multiselect" | "template" | "color" | "password" | "endpoint",
   "label": "Shown next to the field",
   "default": <value>,
   "group": "Section heading",                         // optional; see below
@@ -115,10 +116,33 @@ Both schemas map field names to specs:
 }
 ```
 
-`boolean` renders as a checkbox; `switch` is the same true/false value shown
-as a toggle (use it for a feature on/off that other fields depend on).
+`boolean` and `switch` are the same true/false value. In a tile's gear popover
+both render as a switch; in the admin page `switch` is the toggle and
+`boolean` the plainer checkbox (use `switch` for a feature on/off that other
+fields depend on). **Label a switch with the noun of what it turns on** —
+"Seconds", "Top bar", "Section headers" — never "Show seconds": on means
+shown or enabled, off means hidden or disabled, and the label shouldn't say
+so twice.
 `color` renders a swatch picker and stores a `#rrggbb` string (give it a hex
 default; the tile applies it as a CSS custom property — see `pco-plan`).
+`multiselect` is several picks from one list — the same `options` /
+`optionsRoute` as `select`, rendered as one switch per option and stored as
+an array of values. A saved value the list no longer offers stays checked and
+marked, so nothing is dropped behind anyone's back. In a tile's gear popover
+it also takes `columns` (2–4) and `allByDefault: true`: a tile that has never
+chosen shows every option on and saves nothing until someone flips one, so
+options that turn up later are on as well (give it no `default` then).
+`select` and `multiselect` may use `optionsRoute` in `instanceSchema` too —
+the popover GETs `/api/modules/<id><optionsRoute>` like the admin page does.
+
+`template` (tile settings) is a text with placeholders, built by dragging or
+clicking the variables the module offers into it: `"variables": [ { "value":
+"{series}", "label": "Series" }, … ]`. Keep `help` to the joining rules; the
+chips carry the names.
+
+`text` is a multi-line string — a `<textarea>` in the admin page, stored with
+its newlines; one item per line is the convention (the `slack` module's quick
+replies). Admin config only.
 
 `group` gathers consecutive fields under a labeled subsection in the admin
 page, so a module with several distinct concerns (e.g. a ProPresenter
@@ -141,7 +165,15 @@ the group name:
   still empty. Omit it and the group is a plain, always-open block.
 - `columns`: 2–4 lays the group's fields out in a grid — the way to keep a
   long checklist of booleans compact.
-- `help`: a line of guidance at the top of the group.
+- `help`: guidance for the whole group. The admin page shows it as an
+  ⓘ beside the group title (click or hover to read), so a group can carry a
+  paragraph without pushing its fields down the page. Say where a value comes
+  from, not what a field is.
+- `toggle`: the key of a `switch` field in this group. It renders in the
+  group's title row, at the right, as the group's on/off; the rest of the group
+  dims while it is off, and the field is not repeated in the body. This is how
+  an integration is disabled without unmounting the module — ProPresenter
+  timers, say, on a Sunday when ProPresenter isn't running.
 
 `help` on a field puts one line of guidance under its control — allowed
 placeholders, where a value comes from. Keep labels short and put the
@@ -149,13 +181,27 @@ explanation there.
 
 `group` and `help` work on `instanceSchema` fields too, and a manifest
 `instanceGroups` map plays the `configGroups` role for the tile's gear
-popover (`collapsed: true | false`, `columns`, `help`). That is how a module
-with a long show/hide checklist keeps the popover usable — see `pco-plan`.
-Display choices belong there, per tile; admin config is for connections.
+popover (`collapsed: true | false`, `columns`, `help`, `toggle`). That is how
+a module with a long show/hide checklist keeps the popover usable — see
+`pco-plan`. Display choices belong there, per tile; admin config is for
+connections. The popover itself is a small window beside the tile — sized to
+its content, moved by the slim bar on top, closed by clicking anywhere else
+or pressing Escape — so a tile never has to be big enough to hold its own
+settings, and a change can be watched as it lands. Under everything you
+offer, the shell adds **Tile tint** — a colour the operator can wash that
+tile's chrome in, saved with the layout. It is not yours to declare and it
+never remounts you; don't offer one of your own.
+
+A picker entry (see **Presenting multiple tiles**) may carry its own
+`instanceSchema` and `instanceGroups`: tiles added from that entry get those
+instead of the module's. A tile that shows one ProPresenter timer has no use
+for a clock's format switches — give it a schema of what applies.
 
 `showWhen: "<key>"` hides a field until the boolean/`switch` field named
 `<key>` is on — e.g. the audio device and channel appear only once the LTC
 listener switch is enabled. The hidden field still keeps its stored value.
+It works the same in a tile's gear (`instanceSchema`): "Short day" and
+"Short month" appear once the clock's "Date" is on.
 
 A `select` whose choices are only knowable at runtime (audio devices, serial
 ports, discovered sources) sets `optionsRoute` instead of — or as a fallback
@@ -272,7 +318,7 @@ export default function create({ root, moduleApi }) {
 | `instanceId` | Unique per tile — two tiles of the same module get different ids. Handy for keying anything per-tile. |
 | `variant` | For multi-tile modules: the id of the tile-list entry this tile was added as, `''` otherwise (see **Presenting multiple tiles**). |
 | `config` | Admin (server-wide) config, read-only, always current. Password fields are absent — they never reach the client. |
-| `instanceSettings` | This tile's settings: your `instanceSchema` defaults overlaid with whatever this tile has saved. Read it fresh whenever you render — don't cache it. |
+| `instanceSettings` | This tile's settings: your `instanceSchema` defaults overlaid with whatever this tile has saved. Read it fresh whenever you render — don't cache it. Keys beginning `__` are the shell's own (`__tint`, the tile's colour) — never use that prefix, and ignore the ones you find. |
 | `saveInstanceSettings(patch)` | Merge `patch` into this tile's settings and persist them with the layout. No restart happens — you made the change, you already know. Use it for state the user sets *inside* your tile (a toggled filter, a chosen tab). |
 | `fetch(path, opts)` | `fetch` scoped to your server routes: `fetch('/state')` hits `/api/modules/<id>/state`. |
 | `sse(path, handlers)` | An `EventSource` scoped the same way, **with auto-reconnect** (see below). Returns a handle with `close()`. |
@@ -287,16 +333,17 @@ bar, next to the shell's gear/close buttons:
 
 ```js
 const btn = moduleApi.header.addButton({
-  icon: '<svg …>…</svg>',   // inline SVG string, and/or
-  label: 'A+',              // short text
-  title: 'Larger text',     // hover tooltip
+  icon: '<svg …>…</svg>',   // inline SVG string (13 px), and/or
+  label: 'Timers ▾',        // short text
+  title: 'Larger text',     // tooltip — one or two words; the shell shows
+                            // it the moment the pointer arrives
   onClick() { … },
 });
 btn.classList.add('active'); // toggle styling for on/off buttons
 
 const menu = moduleApi.header.addMenu({
   label: 'Channels ▾',
-  title: 'Choose visible channels',
+  title: 'Channels',
   build(menuEl) {
     // called on every open with an emptied menu element — fill it with
     // buttons (give them your scoped classes; the container is styled and
@@ -308,7 +355,17 @@ menu.setLabel('Channels (2/4) ▾'); // update the button text any time
 
 Everything you add is removed automatically when your instance stops, so a
 remount never duplicates controls. Keep them compact (icon buttons, short
-labels): the title bar is 32 px tall and shared with the tile's name.
+labels): the title bar is 32 px tall and shared with the tile's name. Draw
+icons as inline SVG rather than characters — a glyph such as ✕ or ＋ takes
+its size from whatever font each browser picks; text-size buttons are a
+drawn − and +.
+
+**One control per action.** Whatever has a dedicated header button is not
+offered again in the gear popover: text size is A− / A+ up here (persisted
+through `saveInstanceSettings({ textSize })`, read back with a sane
+fallback), never a "Text size" field in `instanceSchema`; a timestamps or
+newest-first toggle in the header means no such switch in the gear. The
+gear is for display choices that have no button of their own.
 
 One more thing to know: the user can hide the whole title bar with the
 small notch on its bottom edge (a clean-view mode for wall displays). Your
@@ -327,14 +384,20 @@ const stream = moduleApi.sse('/stream', {
 // later: stream.close()
 ```
 
-Browsers' `EventSource` retries transient drops itself but gives up for good
-when a retry gets a completed non-SSE response — which is what a proxy's 502
-looks like while the upstream is down. The shell's `sse()` recreates closed
-streams on a 3-second timer until they work again, so **reconnect logic is
-free**: handle `open` (refresh/backfill your state; you may have missed
-events) and `error` (report degraded status), and you're resilient. Streams
-you forget to close are force-closed when the tile unmounts — but close your
-own in `stop()` anyway.
+Your route serves a plain SSE stream; how it reaches the page is the
+shell's business. A dashboard holds **one** connection for every stream on
+it (`GET /api/stream`, which the server feeds from your route over
+loopback) — browsers allow about six connections to a host and a tile per
+stream ran out of them — so `open` also fires whenever that shared
+connection is remade (a tile was added or removed) and whenever your route
+comes back after a drop. Browsers' `EventSource` retries transient drops
+itself but gives up for good when a retry gets a completed non-SSE
+response — which is what a proxy's 502 looks like while the upstream is
+down; the shell recreates a closed connection on a 3-second timer until it
+works again, so **reconnect logic is free**: handle `open` (refresh/backfill
+your state; you may have missed events) and `error` (report degraded
+status), and you're resilient. Streams you forget to close are force-closed
+when the tile unmounts — but close your own in `stop()` anyway.
 
 ### Lifecycle you must expect
 
@@ -363,9 +426,15 @@ own in `stop()` anyway.
 
 2. **Style with the shell's CSS variables — no hardcoded colors.** The
    palette: `--bg` (page), `--panel` (tile), `--border`, `--text`,
-   `--muted`, `--accent`, `--danger`, `--warn`. Derive tints with
+   `--muted`, `--accent`, `--accent-text` (text that sits on the accent —
+   dark on most themes, white where the accent is deep), `--danger`,
+   `--warn`. Derive tints with
    `color-mix(in srgb, var(--accent) 20%, transparent)`. This is what makes
-   every module look native on the dark, high-contrast booth theme.
+   every module look native — and what makes the dashboard's **themes**
+   (Admin → Theme) reach into every tile: a theme swaps those variables and
+   nothing else. A colour a tile is configured with (a `color` instance
+   setting, applied as a custom property on the tile) is set closer than the
+   theme and wins over it, by design.
 
 3. **No external network calls from the client.** Browsers talk only to
    ProdDash. Anything upstream (your device, service, API) goes through your
@@ -385,7 +454,7 @@ ethos; Node 18+ so global `fetch` is available). Exports either or both of:
 
 ```js
 module.exports = {
-  init({ config, log }) {
+  init({ config, log, shell }) {
     // Called on startup / re-init, BEFORE routes(). Start your upstream
     // connection here. Return a handle:
     return {
@@ -394,7 +463,7 @@ module.exports = {
     };
   },
 
-  routes({ config, log }) {
+  routes({ config, log, shell }) {
     // Route table, mounted under /api/modules/<id>/
     return {
       'GET /state':     (req, res) => { … },
@@ -410,6 +479,9 @@ module.exports = {
 - `config` is your admin config: `configSchema` defaults overlaid with what
   the admin page saved — **including password fields**.
 - `log(...)` prefixes output with your module id.
+- `shell.port` is the port ProdDash is serving on — what you need to read
+  another module's routes over loopback (`http://127.0.0.1:${shell.port}/api/
+  modules/<id>/…`). Never guess it.
 - Handlers get plain Node `(req, res)`. On a prefix route, `req.wildcard` is
   the matched remainder (leading `/` included) and `req.search` is the query
   string (with `?`, or `''`) — so a proxy rebuilds the upstream path as
@@ -446,7 +518,7 @@ module.exports = {
     return config.pages.map((page) => ({
       id: page.name,                    // stable id, stored with the tile
       name: page.name,                  // picker label AND the tile's title
-      description: page.url,            // optional line under the label
+      description: page.url,            // optional; the picker's tooltip
       settings: { page: page.name },    // preset instance settings
       defaultSize: { w: 4, h: 3 },      // optional per-entry size overrides
       minSize: { w: 2, h: 2 },
@@ -459,6 +531,17 @@ module.exports = {
   keep it fast (answer from state you already hold; don't fetch upstream on
   demand). A throw or a hang (>2 s) falls back to the classic single entry,
   so a dead upstream can't break the picker.
+- `instanceSchema` / `instanceGroups` on an entry replace the module's for
+  tiles added from it — settings that fit that tile, nothing else.
+- `aliases: ['old-id', …]` on an entry names earlier variant ids it stands
+  for: a tile added under one of them (a layout saved by an older version of
+  your module) gets this entry's settings too. A tile whose variant matches
+  no entry and no alias falls back to the module's full `instanceSchema`.
+- Entry `description`s are tooltips in the ＋ picker now, not visible lines —
+  one short sentence.
+- `single: true` on an entry allows at most one such tile per dashboard: the
+  picker greys the entry out once it is placed. Use it for a control surface
+  that would only confuse in duplicate — a send box, a master switch.
 - When the user adds an entry, its `settings` overlay your `instanceSchema`
   defaults in that tile's instance settings, the entry's `name` becomes the
   tile's title, and `moduleApi.variant` carries its `id`.
@@ -495,6 +578,71 @@ comment every ~15 s so idle connections survive sleepy Wi-Fi, and wrap every
 per-client `res.write` in try/catch (drop the client on failure). The
 `propresenter-now-next` module is the reference implementation of this
 pattern.
+
+## Working with other modules
+
+Modules don't import each other. When one needs what another knows, it reads
+that module's **own server routes over loopback**, exactly as a browser would:
+`http://127.0.0.1:${shell.port}/api/modules/<id>/…`. The PCO Plan module
+follows ProPresenter this way — it reads `propresenter-now-next`'s `/stream`
+rather than talking to ProPresenter a second time. A consumer must survive the
+provider being disabled, uninstalled, or restarting mid-service (404s and
+dropped connections are normal; retry with backoff and say so in `health()`).
+
+### Offering timers to the Timers module
+
+The Timers module shows timers from anywhere: ProPresenter, LTC, its own
+clock, and any module that offers some. A module offers timers by:
+
+1. Declaring it — `"provides": ["timers"]` in `module.json`. The shell
+   forwards `provides` in `/api/modules`, which is how the Timers module finds
+   providers without a list anyone maintains.
+2. Serving `GET /timers` from its server routes, returning a snapshot:
+
+```json
+{
+  "source": "pco-plan",
+  "label": "PCO Plan",
+  "updatedAt": 1757800000000,
+  "timers": [
+    {
+      "id": "service",
+      "label": "Service",
+      "kind": "elapsed",
+      "state": "running",
+      "startedAt": 1757799000000,
+      "elapsedMs": 1000000,
+      "remainingMs": null,
+      "targetMs": 4500000,
+      "status": { "text": "Welcome & Announcements", "tone": "ok" },
+      "detail": "Item 3 of 12"
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `source`, `label` | Your module id, and the heading the Timers module puts over your timers. |
+| `updatedAt` | ms since epoch when this snapshot was taken. Every duration below is *as of this instant*. |
+| `id` | Stable within your module — the Timers module keys tile settings (shown/hidden, colours) on `source` + `id`. |
+| `kind` | `elapsed` (counts up), `countdown` (counts down to zero), `clock` (a time of day; put the ISO time in `status.text`). |
+| `state` | `running`, `paused`, `stopped` (finished; value frozen), `idle` (exists, hasn't started — a timer that will start at 11:00). |
+| `startedAt` | ms epoch when it last started running; the consumer extrapolates from here, so a running timer never needs a fast poll. |
+| `elapsedMs`, `remainingMs` | The values at `updatedAt`; `null` when not meaningful for the kind. |
+| `targetMs` | Planned length (elapsed) or full length (countdown), or `null`. Lets the consumer colour overruns. |
+| `status` | Optional one-liner the consumer shows beside the time — the current item, "ahead 1:20". `tone`: `ok`, `warn`, `danger`, `muted`. |
+| `detail` | Optional second line. |
+
+The consumer derives the displayed time locally from `startedAt`/`elapsedMs`
+and its own clock, so a snapshot every couple of seconds is plenty — `/timers`
+must be cheap to answer (serve from state you already hold; never call
+upstream to answer it). Optionally also serve `GET /timers/stream` as SSE
+(`event: timers`, `data:` the same object, on every change plus a heartbeat
+comment every 15 s); the consumer uses the stream when it exists and polls
+`/timers` otherwise. Only offer timers a production tech would want on a
+wall — the Timers module lets them hide any of them per tile, but every entry
+you add is a decision someone has to make.
 
 ## Complete minimal example
 

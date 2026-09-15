@@ -15,9 +15,10 @@ touching the shell (see [docs/MODULE-GUIDE.md](docs/MODULE-GUIDE.md)).
 2. Discovers modules in `modules/` and serves each one's client at
    `/modules/<id>/`.
 3. Mounts each enabled module's server routes under `/api/modules/<id>/` —
-   that's where module servers proxy ProdCom, poll ProPresenter, and stream
-   live updates over SSE, so browsers never talk to production gear
-   directly (no CORS, and API keys never leave the server).
+   that's where module servers follow ProdCom, poll ProPresenter, and stream
+   live updates over SSE — one upstream connection per module, however many
+   dashboards are open — so browsers never talk to production gear directly
+   (no CORS, and API keys never leave the server).
 4. Stores server-wide module config and named layouts in a per-machine data
    directory outside the app folder, so updating ProdDash never loses them.
 
@@ -99,6 +100,7 @@ with this machine's shell settings — the same keys as the checked-in
 | --- | --- |
 | `port` | Port ProdDash serves on (default `24500`). The macOS launcher writes this one, so the port it is set to holds however ProdDash is started. |
 | `adminPasscode` | If set, the admin page asks for this shared passcode. Leave `""` for none — it's a plain-HTTP LAN tool. |
+| `theme` | The dashboard palette: `booth` (default), `harbor`, `graphite`, `ember` or `daylight`. The admin page's **Theme** section writes this one — see [Themes](#themes). |
 
 Environment variables override both files: `PORT`, `PRODDASH_PASSCODE`, and
 `PRODDASH_DATA_DIR` to put the data directory somewhere else (a relative path
@@ -110,6 +112,22 @@ so and falls back to the app's `config/` folder.
 `config/modules.json` and `config/layouts/` from the app folder into the data
 directory, so nothing has to be re-entered. The old files are left in place and
 ignored from then on.
+
+### Themes
+
+The whole dashboard — every tile, on every browser — draws with one palette,
+chosen in the admin page's **Theme** section and switched live: pick a swatch
+and open dashboards change without a reload. Five presets ship: **Booth**
+(the default dark, mint accent), **Harbor** (deep navy, cyan), **Graphite**
+(neutral charcoal, electric blue), **Ember** (warm broadcast black, orange)
+and **Daylight**, a light palette for a front-of-house desk in daytime. Each
+keeps the status colours apart — the accent is never near the danger red or
+the warning amber — and muted text readable in a dark booth. The choice is
+stored as `theme` in the data directory's `proddash.json` (table above), so
+it holds across restarts and updates; a browser remembers the last theme it
+saw and applies it before the server answers, so nothing flashes. Modules
+style with the shell's colour variables, which is why they follow; a colour
+set on a tile itself (a PCO Plan header colour, say) is deliberately kept.
 
 ## Installing modules and updating
 

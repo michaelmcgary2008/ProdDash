@@ -3,8 +3,13 @@
    Ported from prodcom-listener/public/app.js into the ProdDash module
    contract: everything lives inside the tile's root, per-tile state
    (hidden channels, channel icons, timestamps, text size, flow direction)
-   persists in instance settings, and all network traffic goes through
-   moduleApi (the module's server proxy at /prodcom/*). */
+   persists in instance settings, and the data comes from the module's own
+   server, which keeps one connection to ProdCom for every dashboard: a
+   snapshot on connect (`state`), then each changed entry (`entry`). */
+
+/* the text-size buttons: a drawn − and + at the icon size, like every other header icon */
+const MINUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg>';
+const PLUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
 
 export default function create({ root, moduleApi }) {
   /* ── per-instance state ─────────────────────────────────────────── */
@@ -15,7 +20,6 @@ export default function create({ root, moduleApi }) {
   let pinnedToLatest = true;
   let hiddenChannels = new Set(moduleApi.instanceSettings.hiddenChannels || []);
   let stream = null;          // moduleApi.sse handle
-  let bootTimer = null;
   let stopped = false;
 
   /* ── DOM skeleton ───────────────────────────────────────────────── */
@@ -48,7 +52,7 @@ export default function create({ root, moduleApi }) {
   let channelMenuEl = null; // the open menu's element (filled on each open)
   const channelsMenu = moduleApi.header.addMenu({
     icon: CHANNELS_SVG,
-    title: 'Choose visible channels',
+    title: 'Channels',
     build(menu) {
       menu.classList.add('pt-menu');
       channelMenuEl = menu;
@@ -65,7 +69,7 @@ export default function create({ root, moduleApi }) {
   let timeBtn = null;
   timeBtn = moduleApi.header.addButton({
     icon: CLOCK_SVG,
-    title: 'Show / hide timestamps',
+    title: 'Timestamps',
     onClick() {
       moduleApi.saveInstanceSettings({ showTimes: !moduleApi.instanceSettings.showTimes });
       applyInstanceSettings();
@@ -77,8 +81,8 @@ export default function create({ root, moduleApi }) {
     moduleApi.saveInstanceSettings({ textSize: Math.min(48, Math.max(10, current + delta)) });
     applyInstanceSettings();
   }
-  moduleApi.header.addButton({ label: 'A−', title: 'Smaller text', onClick: () => bumpTextSize(-2) });
-  moduleApi.header.addButton({ label: 'A+', title: 'Larger text', onClick: () => bumpTextSize(2) });
+  moduleApi.header.addButton({ icon: MINUS_SVG, title: 'Smaller text', onClick: () => bumpTextSize(-2) });
+  moduleApi.header.addButton({ icon: PLUS_SVG, title: 'Larger text', onClick: () => bumpTextSize(2) });
 
   // icon and tooltip track the current direction — applyInstanceSettings sets both
   const flowBtn = moduleApi.header.addButton({
@@ -93,7 +97,7 @@ export default function create({ root, moduleApi }) {
 
   moduleApi.header.addButton({
     icon: JUMP_SVG,
-    title: 'Jump to latest',
+    title: 'Latest',
     onClick() {
       pinnedToLatest = true;
       jumpBtn.hidden = true;
@@ -103,7 +107,7 @@ export default function create({ root, moduleApi }) {
 
   const clearBtn = moduleApi.header.addButton({
     icon: CLEAR_SVG,
-    title: 'Clear this tile (does not affect ProdCom)',
+    title: 'Clear',
     onClick: clearView,
   });
   clearBtn.classList.add('pt-clear');
@@ -120,9 +124,7 @@ export default function create({ root, moduleApi }) {
     wrap.classList.toggle('newest-first', up);
     flowBtn.innerHTML = up ? FLOW_UP_SVG : FLOW_DOWN_SVG;
     flowBtn.classList.toggle('active', up);
-    flowBtn.title = up
-      ? 'Newest at top — click for newest at bottom'
-      : 'Newest at bottom — click for newest at top';
+    flowBtn.title = up ? 'Newest first' : 'Oldest first';
     jumpBtn.textContent = (up ? '↑' : '↓') + ' New messages';
   }
   applyInstanceSettings();
@@ -174,9 +176,7 @@ export default function create({ root, moduleApi }) {
     channelCountEl.textContent = filtering ? `${visibleCount}/${channels.size}` : '';
     channelCountEl.hidden = !filtering;
     channelsMenu.button.classList.toggle('active', filtering);
-    channelsMenu.button.title = filtering
-      ? `Channels — showing ${visibleCount} of ${channels.size}`
-      : 'Choose visible channels';
+    channelsMenu.button.title = filtering ? `Channels ${visibleCount}/${channels.size}` : 'Channels';
   }
 
   function rebuildChannelMenu() {
@@ -353,120 +353,68 @@ export default function create({ root, moduleApi }) {
 
   /* The stream sends JSON objects for new/updated/completed transcript
      entries. Be liberal about the envelope shape. */
-  function extractEntries(obj) {
-    if (!obj || typeof obj !== 'object') return [];
-    if (Array.isArray(obj)) return obj.flatMap(extractEntries);
-    if (typeof obj.text === 'string' && (obj.id || obj.channelId)) return [obj];
-    for (const key of ['data', 'payload', 'entry', 'entries', 'transcript']) {
-      if (obj[key] && typeof obj[key] === 'object') {
-        const found = extractEntries(obj[key]);
-        if (found.length) return found;
-      }
-    }
-    return [];
+  /* ── the module's feed: one snapshot, then each change ─────────── */
+
+  function applyStatus(st) {
+    if (!st || typeof st !== 'object') return;
+    if (st.state === 'ok') moduleApi.setStatus('ok', st.message || 'Live');
+    else moduleApi.setStatus(st.state === 'error' ? 'error' : 'connecting', st.message || 'Connecting to ProdCom…');
   }
 
-  function handleEventData(raw) {
-    let obj;
-    try { obj = JSON.parse(raw); } catch { return; }
-    const kind = String(obj.type || obj.event || '').toLowerCase();
-    if (kind.includes('clear')) {
-      entryEls.forEach((el) => el.remove());
-      entryEls.clear();
-      emptyEl.hidden = false;
-      return;
-    }
-    extractEntries(obj).forEach(upsertEntry);
-  }
-
-  /* ── data loading (all via the module's proxy) ──────────────────── */
-
-  async function loadChannels() {
-    const res = await moduleApi.fetch('/prodcom/api/v1/channels');
-    if (!res.ok) throw new Error('channels ' + res.status);
-    const body = await res.json();
+  function applySnapshot(snap) {
+    if (!snap || typeof snap !== 'object') return;
     channels.clear();
-    for (const ch of body.data || []) {
-      channels.set(ch.id, { name: ch.name, color: ch.color || '#8b98a5' });
-    }
-    rebuildChannelMenu();
-  }
-
-  async function loadGroups() {
-    const res = await moduleApi.fetch('/prodcom/api/v1/groups');
-    if (!res.ok) throw new Error('groups ' + res.status);
-    const body = await res.json();
+    for (const ch of snap.channels || []) channels.set(String(ch.id), { name: ch.name, color: ch.color || '#8b98a5' });
     groups.clear();
-    for (const g of body.data || []) {
-      groups.set(g.id, { name: g.name, channelIds: g.channelIds || [] });
-    }
+    for (const g of snap.groups || []) groups.set(String(g.id), { name: g.name, channelIds: g.channelIds || [] });
     rebuildChannelMenu();
+    const list = (snap.entries || []).slice().sort((a, b) => new Date(a.date) - new Date(b.date));
+    list.forEach(upsertEntry); // dedupes by id, so a snapshot after a reconnect is harmless
+    applyStatus(snap.status);
   }
 
-  async function loadHistory() {
-    const res = await moduleApi.fetch('/prodcom/api/v1/transcript?limit=100');
-    if (!res.ok) throw new Error('transcript ' + res.status);
-    const body = await res.json();
-    const entries = (body.data || []).slice();
-    entries.sort((a, b) => new Date(a.date) - new Date(b.date));
-    entries.forEach(upsertEntry);
+  async function loadState() {
+    try {
+      const res = await moduleApi.fetch('/state');
+      if (!res.ok) throw new Error(String(res.status));
+      applySnapshot(await res.json());
+    } catch { /* the stream's own snapshot covers it */ }
   }
-
-  /* ── live stream ────────────────────────────────────────────────── */
-
-  const SSE_EVENT_NAMES = [
-    'transcript', 'transcript.new', 'transcript.updated', 'transcript.update',
-    'transcript.completed', 'transcript.complete', 'entry', 'new', 'update',
-    'updated', 'complete', 'completed',
-  ];
 
   function connect() {
-    const onEvent = (ev) => handleEventData(ev.data);
-    const events = {};
-    for (const name of SSE_EVENT_NAMES) events[name] = onEvent;
-
-    stream = moduleApi.sse('/prodcom/api/v1/transcript/stream', {
+    stream = moduleApi.sse('/stream', {
       open() {
-        moduleApi.setStatus('ok', 'Live');
-        // refresh channels/groups and backfill entries missed while
-        // disconnected (upsertEntry dedupes by id, so this is harmless)
-        loadChannels().catch(() => {});
-        loadGroups().catch(() => {});
-        loadHistory().catch(() => {});
+        loadState(); // a late joiner, or a reconnect: catch up on what was missed
       },
       error() {
-        moduleApi.setStatus('error', 'ProdCom unreachable — reconnecting…');
+        moduleApi.setStatus('error', 'ProdDash ProdCom module unreachable — reconnecting…');
       },
-      message: onEvent,
-      events,
+      events: {
+        state(ev) {
+          try { applySnapshot(JSON.parse(ev.data)); } catch { /* a bad frame is skipped */ }
+        },
+        entry(ev) {
+          try { upsertEntry(JSON.parse(ev.data)); } catch { /* skipped */ }
+        },
+        clear() {
+          clearView();
+        },
+        status(ev) {
+          try { applyStatus(JSON.parse(ev.data)); } catch { /* skipped */ }
+        },
+      },
     });
   }
 
   /* ── lifecycle ──────────────────────────────────────────────────── */
 
-  async function boot() {
-    if (stopped) return;
-    moduleApi.setStatus('connecting', 'Connecting to ProdCom…');
-    try {
-      await loadChannels();
-      await loadGroups().catch(() => {}); // groups are optional
-      await loadHistory();
-    } catch {
-      moduleApi.setStatus('error', 'ProdCom unreachable — retrying…');
-      bootTimer = setTimeout(boot, 5000);
-      return;
-    }
-    scrollToLatest();
-    connect();
-  }
-
   return {
     start() {
-      boot();
+      moduleApi.setStatus('connecting', 'Connecting to ProdCom…');
+      connect();
     },
     stop() {
       stopped = true;
-      clearTimeout(bootTimer);
       stream?.close();
       root.innerHTML = ''; // header controls are removed by the shell
     },

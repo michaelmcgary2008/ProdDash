@@ -373,14 +373,17 @@ function mountModule(id) {
     // Re-require fresh config on every (re)mount; the module code itself stays cached.
     const mod = require(serverPath);
     const config = effectiveConfig(id);
+    // What a module needs to reach the rest of ProdDash — another module's
+    // routes over loopback, chiefly — without guessing.
+    const shell = { port: PORT };
     if (typeof mod.init === 'function') {
-      entry.handle = mod.init({ config, log }) || null;
+      entry.handle = mod.init({ config, log, shell }) || null;
     }
     if (typeof mod.routes === 'function') {
-      entry.routes = parseRouteTable(mod.routes({ config, log }));
+      entry.routes = parseRouteTable(mod.routes({ config, log, shell }));
     }
     if (typeof mod.tiles === 'function') {
-      entry.tiles = () => mod.tiles({ config, log });
+      entry.tiles = () => mod.tiles({ config, log, shell });
     }
     log('mounted' + (entry.routes.length ? ` (${entry.routes.length} routes)` : ''));
   } catch (err) {
@@ -460,7 +463,20 @@ function sanitizeTileEntry(raw) {
     name: String(raw.name),
     description: raw.description ? String(raw.description) : '',
     settings: raw.settings && typeof raw.settings === 'object' ? raw.settings : {},
+    // at most one tile of this entry per dashboard (the picker greys it out)
+    single: raw.single === true,
   };
+  // An entry may offer its own gear settings — a solo timer wants none of a
+  // full tile's switches. Same shape as the manifest's instanceSchema/Groups.
+  for (const key of ['instanceSchema', 'instanceGroups']) {
+    if (raw[key] && typeof raw[key] === 'object') out[key] = raw[key];
+  }
+  // Earlier variant ids this entry stands for, so a tile added under one of
+  // them (a layout from an older module version) gets this entry's settings.
+  if (Array.isArray(raw.aliases)) {
+    const aliases = raw.aliases.map((a) => String(a)).filter(Boolean);
+    if (aliases.length) out.aliases = aliases;
+  }
   for (const key of ['minSize', 'defaultSize']) {
     const size = raw[key];
     if (size && Number(size.w) > 0 && Number(size.h) > 0) {
@@ -510,6 +526,8 @@ async function clientManifest(id) {
     instanceSchema: man.instanceSchema || {},
     instanceGroups: man.instanceGroups && typeof man.instanceGroups === 'object' ? man.instanceGroups : {},
     hasServer: Boolean(man.server),
+    // capabilities other modules consume ("timers") — see the module guide
+    provides: Array.isArray(man.provides) ? man.provides.map(String) : [],
     config: clientConfig(id),
     tiles: await moduleTiles(id),
   };
@@ -540,6 +558,196 @@ setInterval(() => {
     }
   }
 }, 25000).unref();
+
+/* ── one stream per page ─────────────────────────────────────────────
+   Browsers allow about six HTTP/1.1 connections to a host and an open
+   EventSource holds one for as long as it lives. A dashboard with six
+   modules ran out — Safari first — and from then on every further request
+   (a remounted tile's /state, an avatar) waited in the browser's queue for
+   ever. So a page opens ONE EventSource, GET /api/stream?s=<keys>, naming
+   the streams it wants: `slack:/stream`, `pco-plan:/timers/stream`, `shell:`
+   for the shell's own events. The server opens each module stream for it
+   over loopback (the module's route is untouched and still serves curl and
+   other tools), and forwards every frame with the event name prefixed by
+   its key — `event: slack:/stream|state`. Two frames of its own bracket a
+   stream's life: `<key>|__open` when the upstream answers, `<key>|__down`
+   when it ends (it is re-opened after a pause while the page stays). */
+
+const MUX_MAX_STREAMS = 32;
+const MUX_RETRY_MS = 3000;
+const MUX_RETRY_REFUSED_MS = 10000;
+const MUX_PING_MS = 15000;
+const MUX_KEY_RE = /^([A-Za-z0-9_-]+):(\/[A-Za-z0-9_\-./]*)?$/;
+
+function parseMuxKeys(search) {
+  const params = new URLSearchParams(search || '');
+  const out = [];
+  const seen = new Set();
+  for (const raw of String(params.get('s') || '').split(',')) {
+    const key = raw.trim();
+    const m = MUX_KEY_RE.exec(key);
+    if (!m || seen.has(key)) continue;
+    seen.add(key);
+    out.push({ key, id: m[1], subPath: m[2] || '' });
+    if (out.length >= MUX_MAX_STREAMS) break;
+  }
+  return out;
+}
+
+function handleMuxStream(req, res, search) {
+  const wanted = parseMuxKeys(search);
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.write('retry: 3000\n\n');
+  try { req.socket.setKeepAlive(true, 15000); } catch { /* gone */ }
+  let closed = false;
+  const send = (frame) => {
+    if (closed) return;
+    try {
+      res.write(frame);
+    } catch {
+      /* the client is gone; 'close' follows */
+    }
+  };
+
+  // The shell's own events ride along under `shell:` — a stand-in sits in
+  // shellStreams and rewrites the event line of every frame it is handed.
+  let shellProxy = null;
+  const upstreams = [];
+  for (const entry of wanted) {
+    if (entry.id === 'shell') {
+      if (shellProxy) continue;
+      shellProxy = { write(frame) { send(String(frame).replace(/^event: /m, `event: ${entry.key}|`)); } };
+      shellStreams.add(shellProxy);
+      send(`event: ${entry.key}|__open\ndata: {}\n\n`);
+      continue;
+    }
+    upstreams.push({ ...entry, req: null, timer: null, gone: false });
+  }
+
+  function forwardBlock(entry, block) {
+    let name = 'message';
+    const data = [];
+    for (const line of block.split('\n')) {
+      if (line.startsWith(':')) continue; // the upstream's keepalive; this connection pings on its own
+      if (line.startsWith('event:')) name = line.slice(6).trim() || 'message';
+      else if (line.startsWith('data:')) data.push(line.slice(5).replace(/^ /, ''));
+      // id: and retry: belong to the upstream connection, not to the page's
+    }
+    if (!data.length) return;
+    send(`event: ${entry.key}|${name}\n${data.map((d) => `data: ${d}`).join('\n')}\n\n`);
+  }
+
+  function down(entry, why, delay) {
+    if (closed || entry.gone) return;
+    entry.gone = true;
+    send(`event: ${entry.key}|__down\ndata: ${JSON.stringify({ why })}\n\n`);
+    try { entry.req?.destroy(); } catch { /* already gone */ }
+    entry.req = null;
+    entry.timer = setTimeout(() => {
+      entry.gone = false;
+      open(entry);
+    }, delay);
+  }
+
+  function open(entry) {
+    if (closed) return;
+    const path = `/api/modules/${encodeURIComponent(entry.id)}${entry.subPath || '/'}`;
+    const up = http.request({ host: '127.0.0.1', port: PORT, path, method: 'GET', headers: { accept: 'text/event-stream' } }, (upRes) => {
+      if (upRes.statusCode !== 200 || !/text\/event-stream/.test(String(upRes.headers['content-type'] || ''))) {
+        upRes.resume();
+        return down(entry, `HTTP ${upRes.statusCode}`, MUX_RETRY_REFUSED_MS);
+      }
+      send(`event: ${entry.key}|__open\ndata: {}\n\n`);
+      let buf = '';
+      upRes.setEncoding('utf8');
+      upRes.on('data', (chunk) => {
+        buf += chunk;
+        let i;
+        while ((i = buf.indexOf('\n\n')) >= 0) {
+          forwardBlock(entry, buf.slice(0, i));
+          buf = buf.slice(i + 2);
+        }
+        if (buf.length > 1e6) buf = ''; // a frame that never ends is dropped, not kept
+      });
+      upRes.on('end', () => down(entry, 'ended', MUX_RETRY_MS));
+      upRes.on('error', (err) => down(entry, err.message, MUX_RETRY_MS));
+    });
+    up.on('error', (err) => down(entry, err.message, MUX_RETRY_MS));
+    up.end();
+    entry.req = up;
+  }
+
+  for (const entry of upstreams) open(entry);
+  const ping = setInterval(() => send(': ping\n\n'), MUX_PING_MS);
+  req.on('close', () => {
+    closed = true;
+    clearInterval(ping);
+    if (shellProxy) shellStreams.delete(shellProxy);
+    for (const entry of upstreams) {
+      clearTimeout(entry.timer);
+      try { entry.req?.destroy(); } catch { /* already gone */ }
+    }
+  });
+}
+
+/* ── themes ─────────────────────────────────────────────────────────── */
+
+/* Preset palettes for the whole dashboard, chosen in Admin → Theme. The
+   variable sets themselves live in public/style.css (html[data-theme="…"]);
+   this list is the one authority on ids and names, and carries the three
+   colours the admin page previews a theme with. The choice is a shell
+   setting — `theme` in the data directory's proddash.json — and reaches open
+   dashboards live as a `theme` shell event. */
+const THEMES = [
+  { id: 'booth',    name: 'Booth',    colors: { bg: '#0b0e12', panel: '#131920', accent: '#2ee59a' } },
+  { id: 'harbor',   name: 'Harbor',   colors: { bg: '#06101f', panel: '#0c1a30', accent: '#2ad4ee' } },
+  { id: 'graphite', name: 'Graphite', colors: { bg: '#0f1012', panel: '#17191d', accent: '#6cb4ff' } },
+  { id: 'ember',    name: 'Ember',    colors: { bg: '#120c0a', panel: '#1d1411', accent: '#ff8f3a' } },
+  { id: 'daylight', name: 'Daylight', colors: { bg: '#eef1f5', panel: '#ffffff', accent: '#0b8a5f' } },
+];
+const DEFAULT_THEME = THEMES[0].id;
+
+function themeExists(id) {
+  return THEMES.some((t) => t.id === id);
+}
+
+let currentTheme = themeExists(shellConfig.theme) ? shellConfig.theme : DEFAULT_THEME;
+
+/** What GET /api/theme returns — public, since dashboards need it before anyone logs in. */
+function themeView() {
+  return {
+    theme: currentTheme,
+    themes: THEMES.map((t) => ({ id: t.id, name: t.name, colors: { ...t.colors } })),
+  };
+}
+
+/**
+ * Persist the theme into this machine's proddash.json (every other key there
+ * — port, adminPasscode, repo… — is kept), remember it, and tell every open
+ * dashboard and admin page. Throws an httpError for an unknown id or an
+ * unreadable settings file; the route turns that into the response.
+ */
+function setTheme(id) {
+  if (!themeExists(id)) throw httpError(400, `Unknown theme "${id}".`);
+  const file = path.join(DATA_DIR, 'proddash.json');
+  let existing = {};
+  if (fs.existsSync(file)) {
+    existing = readJson(file, null);
+    if (!existing || typeof existing !== 'object' || Array.isArray(existing)) {
+      throw httpError(500, `${file} is not a JSON object — fix it by hand before changing the theme.`);
+    }
+  }
+  writeJson(file, { ...existing, theme: id });
+  currentTheme = id;
+  shellConfig.theme = id;
+  broadcastShellEvent('theme', { theme: id });
+  return themeView();
+}
 
 /* ── the repo: module catalog and shell updates ──────────────────────── */
 
@@ -996,6 +1204,9 @@ function applyConfigPatch(id, patch) {
     }
     if (type === 'number') value = Number(value) || 0;
     else if (type === 'boolean' || type === 'switch') value = Boolean(value);
+    else if (type === 'multiselect') {
+      value = (Array.isArray(value) ? value : []).map((v) => String(v)).filter(Boolean);
+    }
     else if (type === 'endpoint') {
       const src = value && typeof value === 'object' ? value : {};
       value = {
@@ -1107,6 +1318,22 @@ async function handleAdminApi(req, res, urlPath) {
     remountModule(id);
     broadcastShellEvent('modules-changed', { id });
     return sendJson(res, 200, { ok: true, module: adminModuleView(id) });
+  }
+
+  /* — theme: { "theme": "<id>" }, validated against THEMES — */
+  if (urlPath === '/api/admin/theme' && req.method === 'POST') {
+    if (refuseAdminWrite(req, res)) return;
+    let body = {};
+    try {
+      body = JSON.parse((await readBody(req)) || '{}');
+    } catch {
+      return sendJson(res, 400, { error: 'Malformed request.' });
+    }
+    try {
+      return sendJson(res, 200, { ok: true, ...setTheme(String(body.theme ?? '')) });
+    } catch (err) {
+      return sendJson(res, err.status || 500, { error: err.message || String(err) });
+    }
   }
 
   sendJson(res, 404, { error: 'Unknown admin endpoint.' });
@@ -1350,6 +1577,16 @@ function handleRequest(req, res) {
         if (!res.headersSent) sendJson(res, 500, { error: 'Server error.' });
       });
     return;
+  }
+
+  /* — theme: public (dashboards need it without a passcode); changed via POST /api/admin/theme — */
+  if (urlPath === '/api/theme' && req.method === 'GET') {
+    return sendJson(res, 200, themeView());
+  }
+
+  /* — every stream a page wants, over one connection — */
+  if (urlPath === '/api/stream' && req.method === 'GET') {
+    return handleMuxStream(req, res, search);
   }
 
   /* — shell events: open dashboards learn about admin changes live — */

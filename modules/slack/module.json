@@ -1,0 +1,129 @@
+{
+  "id": "slack",
+  "name": "Slack",
+  "version": "1.2.0",
+  "proddash": ">=1.4.0",
+  "description": "Live transcripts of this location's Slack channels, plus PIN-protected sending as the location",
+  "client": "client.js",
+  "server": "server.js",
+  "style": "style.css",
+  "minSize": {
+    "w": 2,
+    "h": 2
+  },
+  "defaultSize": {
+    "w": 4,
+    "h": 4
+  },
+  "configGroups": {
+    "Slack account": {
+      "collapsed": "whenSet",
+      "help": "Create a Slack app in the workspace (api.slack.com/apps → Create New App → From scratch) and, under OAuth & Permissions → User Token Scopes, add channels:history, channels:read, groups:history, groups:read, chat:write, users:read, reactions:write (emoji reactions) and emoji:read (the workspace's custom emoji). Sign in to Slack as this location's account — the one named for the campus — open the app's OAuth & Permissions page and press Install to Workspace (or Reinstall to Workspace), then copy the User OAuth Token (xoxp-…) it shows and paste it here: messages from this machine are then literally from the location. A bot token (xoxb-…) works too; it posts as the app, with \"Send as\" naming the location."
+    },
+    "Channels": {
+      "help": "Every channel picked here becomes its own transcript tile in the ＋ picker, titled with the channel's name. The Send message and Quick replies tiles post to whichever transcript was clicked last — its bottom edge lights up in the accent colour — and to the first channel here until one is clicked. Only channels the account has joined are listed; join one in Slack first. Each channel is read on its own schedule, all of them together kept inside Slack's rate limit."
+    },
+    "Sending": {
+      "toggle": "sendEnabled",
+      "help": "Messages and emoji reactions leave this machine only after the PIN is entered — on a Send or Quick replies tile, or in the reaction menu a right-click on a transcript message opens. One PIN unlocks every Slack tile on that dashboard page until Auto-lock minutes pass without a send; a reload asks again. Sending stays refused until a 4–8 digit PIN is set here. A message goes to the channel of the transcript clicked last. Quick emojis are sent with one press from the Send message tile and offered first when reacting. Quick replies are one per line, Label | Message, with an optional | #channel-name to bind that one to a channel: a bound reply always goes there, whichever transcript is selected."
+    }
+  },
+  "configSchema": {
+    "token": {
+      "type": "password",
+      "label": "Token",
+      "default": "",
+      "group": "Slack account",
+      "help": "The location account's User OAuth Token (xoxp-…, recommended) or a Bot User OAuth Token (xoxb-…)."
+    },
+    "sendAs": {
+      "type": "string",
+      "label": "Send as",
+      "default": "",
+      "group": "Slack account",
+      "help": "Only used with a bot token — a user token always sends as its own account; needs the chat:write.customize scope."
+    },
+    "channels": {
+      "type": "multiselect",
+      "label": "Channels",
+      "default": [],
+      "group": "Channels",
+      "optionsRoute": "/channels",
+      "help": "One transcript tile per channel; the first one is where sends go until a transcript is clicked. Only channels the account has joined are listed — join one in Slack first."
+    },
+    "pollSeconds": {
+      "type": "number",
+      "label": "Refresh interval (s)",
+      "default": 2,
+      "group": "Transcript",
+      "help": "How often each channel is re-read (1 s at the fastest). With several channels the interval stretches so the module stays inside Slack's rate limit — at least 1.5 s × the number of channels; the health line shows the interval in use."
+    },
+    "historyCount": {
+      "type": "number",
+      "label": "Messages kept",
+      "default": 40,
+      "group": "Transcript"
+    },
+    "includeReplies": {
+      "type": "switch",
+      "label": "Thread replies",
+      "default": false,
+      "group": "Transcript"
+    },
+    "sendEnabled": {
+      "type": "switch",
+      "label": "Sending",
+      "default": false,
+      "group": "Sending"
+    },
+    "pin": {
+      "type": "password",
+      "label": "PIN",
+      "default": "",
+      "group": "Sending",
+      "help": "4–8 digits; the pad unlocks by itself once they are all in."
+    },
+    "pinIdleMinutes": {
+      "type": "number",
+      "label": "Auto-lock (min)",
+      "default": 10,
+      "group": "Sending"
+    },
+    "quickReplies": {
+      "type": "text",
+      "label": "Quick replies",
+      "default": "",
+      "group": "Sending",
+      "help": "One per line: Label | Message. Add | #channel-name to bind one to a channel — it then ignores which transcript is selected."
+    },
+    "quickEmojis": {
+      "type": "string",
+      "label": "Quick emojis",
+      "default": "👍 🙏 ✅ 👀 🎉",
+      "group": "Sending",
+      "help": "Emoji or :codes: separated by spaces, eight at most. One press sends one from the Send message tile; they also head the reaction menu."
+    }
+  },
+  "instanceSchema": {
+    "showAvatars": {
+      "type": "switch",
+      "label": "Avatars",
+      "default": true
+    },
+    "showTimes": {
+      "type": "switch",
+      "label": "Timestamps",
+      "default": true
+    },
+    "showNames": {
+      "type": "switch",
+      "label": "Names",
+      "default": true
+    },
+    "showSystem": {
+      "type": "switch",
+      "label": "Channel notices",
+      "default": true
+    }
+  }
+}

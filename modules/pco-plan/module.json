@@ -1,9 +1,10 @@
 {
   "id": "pco-plan",
   "name": "PCO Plan",
-  "version": "1.3.0",
-  "proddash": ">=1.3.0",
-  "description": "Order of service from Planning Center Services, following ProPresenter live",
+  "version": "1.4.0",
+  "proddash": ">=1.4.0",
+  "description": "Order of service from Planning Center Services",
+  "provides": ["timers"],
   "client": "client.js",
   "server": "server.js",
   "style": "style.css",
@@ -12,13 +13,16 @@
   "configGroups": {
     "Planning Center credentials": {
       "collapsed": "whenSet",
-      "help": "Create a Personal Access Token at api.planningcenteronline.com (Application ID + Secret), or paste an OAuth 2.0 access token instead. Saved secrets never reach browsers."
+      "help": "Create a Personal Access Token at api.planningcenteronline.com and paste its Client ID + Secret here, or paste an OAuth 2.0 access token instead. Saved secrets never reach browsers."
+    },
+    "Service timing": {
+      "help": "Each service in the plan takes its turn owning the service clock: the next one takes over Pre-roll minutes before its scheduled start, and the elapsed clock, item timing and countdown start afresh for it. A service starts at its scheduled time — or, with document triggers on, the moment the chosen Start document goes live in ProPresenter (falling back to the schedule after the start failsafe) — and ends when the End document goes live, or when the next service takes over. The document lists hold what ProPresenter has shown or listed since ProdDash started plus what is saved here; names are matched loosely, so a renamed \"Post-Service Loop\" still counts."
     }
   },
   "configSchema": {
     "appId": {
       "type": "string",
-      "label": "Application ID",
+      "label": "Client ID",
       "default": "",
       "group": "Planning Center credentials"
     },
@@ -30,7 +34,7 @@
     },
     "accessToken": {
       "type": "password",
-      "label": "OAuth 2.0 access token (instead of Application ID + Secret)",
+      "label": "OAuth 2.0 access token (instead of Client ID + Secret)",
       "default": "",
       "group": "Planning Center credentials"
     },
@@ -38,8 +42,7 @@
       "type": "select",
       "label": "Service type",
       "default": "",
-      "optionsRoute": "/service-types",
-      "help": "Your Planning Center Services folders appear as groups in this list; pick the service type whose plans the tiles follow. Save the credentials first if the list is empty."
+      "optionsRoute": "/service-types"
     },
     "planId": {
       "type": "select",
@@ -47,18 +50,67 @@
       "default": "",
       "options": [{ "value": "", "label": "Automatic — today's plan, else the next upcoming" }],
       "optionsRoute": "/plans",
-      "optionsDependsOn": "serviceTypeId",
-      "help": "Leave on Automatic for services. Pin a specific plan for rehearsals or to review a past service."
+      "optionsDependsOn": "serviceTypeId"
     },
     "pollSeconds": {
       "type": "number",
-      "label": "Re-read the plan every N seconds",
+      "label": "Refresh Interval (s)",
       "default": 30
     },
     "followProPresenter": {
       "type": "switch",
-      "label": "Follow the ProPresenter module's live item to highlight the current plan item and time it",
+      "label": "Follow ProPresenter Module",
       "default": true
+    },
+    "preRollMinutes": {
+      "type": "number",
+      "label": "Pre-roll (min)",
+      "default": 30,
+      "group": "Service timing",
+      "help": "How long before a service's scheduled start the clock, item timing and countdown switch to it."
+    },
+    "useDocumentTriggers": {
+      "type": "switch",
+      "label": "ProPresenter document triggers",
+      "default": false,
+      "group": "Service timing"
+    },
+    "serviceStartTrigger": {
+      "type": "select",
+      "label": "Service start",
+      "default": "schedule",
+      "group": "Service timing",
+      "showWhen": "useDocumentTriggers",
+      "options": [
+        { "value": "schedule", "label": "Scheduled service time" },
+        { "value": "document", "label": "ProPresenter document" }
+      ]
+    },
+    "serviceStartDocument": {
+      "type": "select",
+      "label": "Start document",
+      "default": "",
+      "group": "Service timing",
+      "showWhen": "useDocumentTriggers",
+      "optionsRoute": "/documents",
+      "help": "The document that goes live as the service begins."
+    },
+    "startGraceMinutes": {
+      "type": "number",
+      "label": "Start failsafe (min)",
+      "default": 10,
+      "group": "Service timing",
+      "showWhen": "useDocumentTriggers",
+      "help": "Without the start document this long after the scheduled start, the service counts from the scheduled start anyway."
+    },
+    "serviceEndDocument": {
+      "type": "select",
+      "label": "End document",
+      "default": "",
+      "group": "Service timing",
+      "showWhen": "useDocumentTriggers",
+      "optionsRoute": "/documents",
+      "help": "The document that goes live as the service ends; it freezes the service clock."
     }
   },
   "instanceGroups": {
@@ -69,32 +121,48 @@
       "collapsed": false,
       "columns": 2
     },
+    "Item notes": {
+      "toggle": "showNotes"
+    },
     "Show / hide": {
       "collapsed": true,
       "columns": 3,
-      "help": "Untick anything this tile should not show."
+      "help": "Switch off anything this tile should not show."
     }
   },
   "instanceSchema": {
-    "textSize": { "type": "number", "label": "Text size (px)", "default": 14 },
     "autoScroll": { "type": "boolean", "label": "Keep the current item in view", "default": true },
-    "noteCategories": {
-      "type": "string",
-      "label": "Item note categories to show (comma-separated, blank = all)",
-      "default": ""
-    },
     "headerTemplate": {
-      "type": "string",
+      "type": "template",
       "label": "Top bar text",
       "default": "{series} • {part} | {serviceType} • {date}",
       "group": "Top bar",
-      "help": "Placeholders: {series} series name · {part} plan title / part number · {serviceType} · {date} · {shortDate} · {time} service start time · {length} planned length · {items} item count. Use • between items (an item whose placeholders are empty or hidden is dropped) and | to start a second line."
+      "variables": [
+        { "value": "{series}", "label": "Series" },
+        { "value": "{part}", "label": "Part / plan title" },
+        { "value": "{serviceType}", "label": "Service type" },
+        { "value": "{date}", "label": "Date" },
+        { "value": "{shortDate}", "label": "Short date" },
+        { "value": "{time}", "label": "Service time" },
+        { "value": "{length}", "label": "Planned length" },
+        { "value": "{items}", "label": "Item count" }
+      ],
+      "help": "Use • between items and | to start a second line."
     },
     "keyColor": { "type": "color", "label": "Song key", "default": "#4ea1ff", "group": "Colors" },
     "headerColor": { "type": "color", "label": "Section headers", "default": "#2ee59a", "group": "Colors" },
     "currentColor": { "type": "color", "label": "Current item", "default": "#2ee59a", "group": "Colors" },
     "headerGradient": { "type": "boolean", "label": "Fade header color to the right", "default": true, "group": "Colors" },
     "tintByType": { "type": "boolean", "label": "Tint items by type (song / media / other)", "default": false, "group": "Colors" },
+    "showNotes": { "type": "switch", "label": "Item notes", "default": true, "group": "Item notes" },
+    "noteCategories": {
+      "type": "multiselect",
+      "label": "Categories",
+      "group": "Item notes",
+      "optionsRoute": "/note-categories",
+      "columns": 3,
+      "allByDefault": true
+    },
     "showTopBar": { "type": "boolean", "label": "Top bar", "default": true, "group": "Show / hide" },
     "showSeries": { "type": "boolean", "label": "Series name", "default": true, "group": "Show / hide" },
     "showPart": { "type": "boolean", "label": "Part # / plan title", "default": true, "group": "Show / hide" },
@@ -113,7 +181,6 @@
     "showArrangement": { "type": "boolean", "label": "Song arrangement", "default": false, "group": "Show / hide" },
     "showSongAuthor": { "type": "boolean", "label": "Song author / CCLI", "default": false, "group": "Show / hide" },
     "showDescription": { "type": "boolean", "label": "Item description", "default": true, "group": "Show / hide" },
-    "showNotes": { "type": "boolean", "label": "Item notes", "default": true, "group": "Show / hide" },
     "showPreService": { "type": "boolean", "label": "Pre-service items", "default": true, "group": "Show / hide" },
     "showPostService": { "type": "boolean", "label": "Post-service items", "default": true, "group": "Show / hide" },
     "showNowIndicator": { "type": "boolean", "label": "Now indicator", "default": true, "group": "Show / hide" },

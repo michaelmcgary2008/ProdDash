@@ -37,6 +37,7 @@ title-bar controls). The rules that matter most:
 - Verify against the guide's testing section and resilience checklist. Mocks
   for the existing upstreams: `node tools/prodcom-mock.js` (ProdCom) and
   `node band-lineup-display/tmp/pp-mock.js 1599` (ProPresenter).
+  `node tools/slack-mock.js 24716` (Slack; run ProdDash with `SLACK_API_BASE=http://127.0.0.1:24716/api`).
 
 ## Reference code (read-only forks — don't develop these here)
 

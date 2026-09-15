@@ -39,11 +39,14 @@
       <div class="admin-status" id="update-status"></div>
     </section>
 
+    <section id="theme-section" hidden>
+      <h1 class="admin-h1">Theme</h1>
+      <div class="theme-swatches" id="theme-swatches" role="radiogroup" aria-label="Theme"></div>
+      <div class="admin-status" id="theme-status"></div>
+    </section>
+
     <section id="modules-section" hidden>
       <h1 class="admin-h1">Modules</h1>
-      <p class="admin-copy">Server-wide settings, shared by every dashboard. Saving re-initialises the
-        module immediately — open tiles reconnect on their own. Per-tile options (filters, text size)
-        live in each tile's gear menu instead.</p>
       <p class="admin-copy admin-storage" id="storage-note" hidden>Saved on the server at
         <code id="storage-path"></code> — outside the app folder, so updating ProdDash keeps them.</p>
       <div id="modules-list"></div>
@@ -51,9 +54,6 @@
 
     <section id="available-section" hidden>
       <h1 class="admin-h1">Available modules</h1>
-      <p class="admin-copy">Modules in the ProdDash repo that aren't installed here. Installing downloads the module
-        into the server's data directory — no restart, nothing written into the app folder. A module that needs a
-        newer ProdDash can't be installed until the shell is updated.</p>
       <div class="catalog-toolbar">
         <button class="btn small" id="catalog-refresh">Check again</button>
         <span class="admin-status" id="catalog-status"></span>
@@ -62,9 +62,7 @@
     </section>
 
     <section id="layouts-section" hidden>
-      <h1 class="admin-h1">Named layouts</h1>
-      <p class="admin-copy">Layouts saved to the server from the dashboard's Layout menu. Loading one
-        copies it into that browser; deleting one here does not touch any browser's current layout.</p>
+      <h1 class="admin-h1">Saved layouts</h1>
       <div id="layouts-list"></div>
     </section>
   </main>
