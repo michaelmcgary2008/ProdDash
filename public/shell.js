@@ -286,7 +286,7 @@ function buildTile(tile) {
     gear.innerHTML = GEAR_SVG;
     gear.addEventListener('click', (e) => {
       e.stopPropagation();
-      toggleSettingsPopover(tile, el);
+      toggleSettingsPopover(tile, el, gear);
     });
     head.appendChild(gear);
   }
@@ -1108,6 +1108,7 @@ function tileSchema(tile, man) {
 function closeSettingsPopovers() {
   document.querySelectorAll('.tile-settings').forEach((p) => {
     p._cleanup?.();
+    p._button?.classList.remove('is-open');
     p.remove();
   });
 }
@@ -1143,7 +1144,8 @@ function clampPopover(pop) {
   pop.style.top = Math.min(Math.max(pad, pop.offsetTop), maxTop) + 'px';
 }
 
-function toggleSettingsPopover(tile, el) {
+/** Open (or close) the settings window for `tile`, beside its element `el`; `button` is the gear that asked. */
+function toggleSettingsPopover(tile, el, button = null) {
   const existing = document.querySelector(`.tile-settings[data-tile-id="${tile.id}"]`);
   closeSettingsPopovers();
   if (existing) return;
@@ -1156,6 +1158,11 @@ function toggleSettingsPopover(tile, el) {
   pop.dataset.tileId = tile.id;
   pop.setAttribute('role', 'dialog');
   pop.setAttribute('aria-label', `${tile.title || man.name} settings`);
+  // The gear that opened it wears the window's colour while it is open.
+  if (button) {
+    button.classList.add('is-open');
+    pop._button = button;
+  }
 
   // A slim bar to move it by — nothing else. No title (the window sits beside
   // the tile it belongs to) and no close button: a click anywhere else, or
@@ -1168,6 +1175,7 @@ function toggleSettingsPopover(tile, el) {
   pop.append(bar, body);
 
   const inputs = new Map();
+  const shownWhen = []; // fields that appear only while another has a given value
 
   /* Display choices apply as they change and save with the layout — nothing
      to confirm, so no Apply. Typing is debounced because applying means
@@ -1446,6 +1454,8 @@ function toggleSettingsPopover(tile, el) {
       field.appendChild(help);
     }
 
+    if (typeof spec?.showWhen === 'string' && spec.showWhen) shownWhen.push({ field, key: spec.showWhen });
+
     if (current && switchInput && key === current.toggleKey) {
       // The group's on/off lives in its title row, never in the body, and a
       // click on it must not fold a <details>.
@@ -1461,7 +1471,21 @@ function toggleSettingsPopover(tile, el) {
     }
   }
 
-  // Nothing to press: click away, press Escape, the ✕, or the gear again.
+  // "Short day" appears once "Date" is on: a field with showWhen:"K" follows
+  // K's switch, live — the same rule the admin page applies.
+  if (shownWhen.length) {
+    const refresh = () => {
+      for (const rule of shownWhen) {
+        const read = inputs.get(rule.key);
+        rule.field.hidden = read ? !read() : false;
+      }
+    };
+    refresh();
+    body.addEventListener('change', refresh);
+    body.addEventListener('input', refresh);
+  }
+
+  // Nothing to press: click away, press Escape, or the gear again.
   // (The gear's own click stops propagating, so it toggles rather than
   // closing and reopening.)
   const closeOnClick = (e) => { if (!pop.contains(e.target)) closeSettingsPopovers(); };

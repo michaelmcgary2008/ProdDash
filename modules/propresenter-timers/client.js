@@ -41,8 +41,6 @@
    theme; left at their defaults they follow the theme's variables. */
 
 /** Which instance switch governs a source kind. */
-const SOURCE_SWITCH = { propresenter: 'showProPresenter', ltc: 'showLtc', clock: 'showClock', module: 'showModules' };
-
 /** Colour settings → custom property, and the schema default (module.json) that means "follow the theme". */
 const COLOR_SETTINGS = [
   ['runningColor', '--tm-ok', '#2ee59a'],
@@ -65,15 +63,17 @@ const LTC_KEY = 'ltc:ltc';
     switches default to on, the clock to 24-hour with seconds and no date —
     the same values module.json gives the full "All timers" schema. */
 const DEFAULTS = {
-  showClock: true,
-  showProPresenter: true,
-  showLtc: true,
-  showModules: true,
+  showNames: true,
   showHeadings: true,
   showStatus: true,
-  clockFormat: '24h',
+  showDetail: true,
+  showSeconds: true,
+  leadingZeros: false,
+  clock24h: true,
   clockSeconds: true,
   clockDate: false,
+  dateShortDay: false,
+  dateShortMonth: false,
 };
 
 /* ── SMPTE timecode math (module-scope, exported for tests) ─────────
@@ -140,14 +140,26 @@ export function valueAt(timer, sourceUpdatedAt, now) {
 }
 
 /** Signed ms → "M:SS" / "H:MM:SS" (whole seconds, floor of the magnitude). */
-export function fmtDuration(ms) {
+/**
+ * A duration as digits. `seconds: false` shows minutes only — a countdown
+ * rounds up (3:59 left reads "4", 0:30 over reads "-1"), an elapsed timer
+ * rounds down; `zeros` pads the leading field to two digits ("05:07").
+ */
+export function fmtDuration(ms, { seconds = true, zeros = false, up = false } = {}) {
   const sign = ms < 0 ? '-' : '';
-  const s = Math.floor(Math.abs(ms) / 1000);
+  const total = Math.abs(ms) / 1000;
+  const pad = (v) => String(v).padStart(2, '0');
+  if (!seconds) {
+    const mins = up ? Math.ceil(total / 60) : Math.floor(total / 60);
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return h ? `${sign}${zeros ? pad(h) : h}:${pad(m)}` : `${sign}${zeros ? pad(m) : m}`;
+  }
+  const s = Math.floor(total);
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
   const sec = s % 60;
-  const pad = (v) => String(v).padStart(2, '0');
-  return h ? `${sign}${h}:${pad(m)}:${pad(sec)}` : `${sign}${m}:${pad(sec)}`;
+  return h ? `${sign}${zeros ? pad(h) : h}:${pad(m)}:${pad(sec)}` : `${sign}${zeros ? pad(m) : m}:${pad(sec)}`;
 }
 
 function warnWindow(targetMs) {
@@ -198,7 +210,10 @@ export default function create({ root, moduleApi }) {
       whatever its (possibly slimmer) schema would or wouldn't default. */
   const pref = (key) => {
     const v = settings()[key];
-    return v === undefined || v === null ? DEFAULTS[key] : v;
+    if (v !== undefined && v !== null) return v;
+    // A layout from before the 24-hour switch chose a "clockFormat".
+    if (key === 'clock24h' && settings().clockFormat === '12h') return false;
+    return DEFAULTS[key];
   };
   const keyOf = (source, timer) => `${source.id}:${timer.id}`;
 
@@ -348,11 +363,6 @@ export default function create({ root, moduleApi }) {
 
   /* ── state → what this tile shows ───────────────────────────────── */
 
-  function sourceShown(source) {
-    const key = SOURCE_SWITCH[source.kind] || 'showModules';
-    return pref(key) !== false;
-  }
-
   /** [{ id, source, items: [{ key, source, timer } | { key, missing }] }] */
   function visibleGroups() {
     if (!state) return [];
@@ -372,7 +382,6 @@ export default function create({ root, moduleApi }) {
     }
     const groups = [];
     for (const source of state.sources) {
-      if (!sourceShown(source)) continue;
       const items = [];
       for (const timer of source.timers) {
         const key = keyOf(source, timer);
@@ -418,6 +427,7 @@ export default function create({ root, moduleApi }) {
   /** The parts of a card that only change with the snapshot (label, kind). */
   function updateCard(card, item) {
     card.item = item;
+    card.isClock = !item.missing && item.source?.kind === 'clock';
     const isLtc = item.source?.kind === 'ltc';
     const badge = card.nameEl.querySelector('.tm-ltc-badge');
     if (isLtc && !badge) {
@@ -428,7 +438,7 @@ export default function create({ root, moduleApi }) {
     } else if (!isLtc && badge) {
       badge.remove();
     }
-    const label = item.missing ? (lastSoloLabel || 'Timer') : item.timer.label;
+    const label = item.missing ? (lastSoloLabel || 'Timer') : card.isClock ? '' : item.timer.label;
     if (card.labelEl.textContent !== label) {
       setText(card.labelEl, label);
       needFit = true; // the title's size follows its length
@@ -454,7 +464,7 @@ export default function create({ root, moduleApi }) {
   /* ── clocks ─────────────────────────────────────────────────────── */
 
   function clockOptions() {
-    const h12 = pref('clockFormat') === '12h';
+    const h12 = pref('clock24h') === false;
     return {
       hour12: h12,
       hour: h12 ? 'numeric' : '2-digit',
@@ -467,8 +477,43 @@ export default function create({ root, moduleApi }) {
     return new Date().toLocaleTimeString([], clockOptions());
   }
 
-  function dateText() {
-    return new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+  /** The date as the day and the rest — the break, when one is needed, falls between them. */
+  function dateParts() {
+    const d = new Date();
+    return {
+      day: d.toLocaleDateString([], { weekday: pref('dateShortDay') ? 'short' : 'long' }),
+      rest: d.toLocaleDateString([], { month: pref('dateShortMonth') ? 'short' : 'long', day: 'numeric' }),
+    };
+  }
+
+  /**
+   * The clock's date under its digits: one line when it fits the card,
+   * otherwise a line break after the day and a size that fits the longer
+   * half. Re-done only when the text or the card width changes.
+   */
+  function renderDate(card, d) {
+    const cw = lastFit.cw;
+    const lineSize = lastFit.meta * LINE_SCALE;
+    const whole = `${d.day}, ${d.rest}`;
+    const key = `${whole}|${Math.round(cw)}|${lineSize}`;
+    if (card.dateKey === key) return;
+    card.dateKey = key;
+    let px = lineSize;
+    let wrapIt = false;
+    if (textWidth(whole, lineSize, 0.1) > cw) {
+      wrapIt = true;
+      const widest = Math.max(textWidth(`${d.day},`, lineSize, 0.1), textWidth(d.rest, lineSize, 0.1));
+      px = Math.max(8, Math.floor(lineSize * Math.min(1, cw / widest)));
+    }
+    const el = card.statusEl;
+    el.textContent = '';
+    const a = document.createElement('span');
+    a.textContent = `${d.day},`;
+    const b = document.createElement('span');
+    b.textContent = d.rest;
+    el.append(a, document.createTextNode(' '), b);
+    el.style.fontSize = px === lineSize ? '' : `${px}px`;
+    card.dateCls = wrapIt ? ' is-date is-wrap' : ' is-date';
   }
 
   /** A provider's kind:"clock" timer carries an ISO time in status.text as of its snapshot. */
@@ -559,6 +604,8 @@ export default function create({ root, moduleApi }) {
     if (!state) return;
     const now = serverNow();
     const showStatus = pref('showStatus') !== false;
+    const showDetail = pref('showDetail') !== false;
+    const digits = { seconds: pref('showSeconds') !== false, zeros: pref('leadingZeros') === true };
     let charsChanged = false;
     for (const card of cards.values()) {
       const { item } = card;
@@ -573,6 +620,7 @@ export default function create({ root, moduleApi }) {
       let statusTone = '';
       let detailText = '';
       let extra = '';
+      let date = null;
       if (timer.kind === 'clock') {
         if (source.kind === 'ltc') {
           const l = timer.ltc || {};
@@ -588,7 +636,8 @@ export default function create({ root, moduleApi }) {
         } else if (source.kind === 'clock') {
           text = wallClockText();
           tone = 'plain';
-          statusText = pref('clockDate') ? dateText() : '';
+          date = pref('clockDate') ? dateParts() : null;
+          statusText = date ? `${date.day}, ${date.rest}` : '';
           statusTone = 'muted';
         } else {
           text = providerClockText(timer, source, now);
@@ -598,7 +647,7 @@ export default function create({ root, moduleApi }) {
         }
       } else {
         const value = valueAt(timer, source.updatedAt, now);
-        text = value === null ? '—' : fmtDuration(value);
+        text = value === null ? '—' : fmtDuration(value, { ...digits, up: timer.kind === 'countdown' });
         tone = toneFor(timer, value);
         statusText = timer.status?.text || defaultStatus(timer, value, tone);
         statusTone = timer.status?.tone || tone;
@@ -615,12 +664,18 @@ export default function create({ root, moduleApi }) {
       }
       // Notes that must survive the compact look: an unavailable LTC input.
       const isNote = extra === ' is-unavailable';
-      setText(card.statusEl, statusText);
+      setText(card.statusEl, statusText); // a no-op over the date's two spans: same text
       card.statusEl.hidden = !statusText || (!showStatus && !isNote);
-      card.statusEl.className = 'tm-status' + (isNote ? ' is-note' : '');
+      if (date && !card.statusEl.hidden) renderDate(card, date);
+      else if (card.dateCls) {
+        card.dateCls = '';
+        card.dateKey = '';
+        card.statusEl.style.fontSize = '';
+      }
+      card.statusEl.className = 'tm-status' + (isNote ? ' is-note' : '') + (card.dateCls || '');
       card.statusEl.dataset.tone = statusTone;
       setText(card.detailEl, detailText);
-      card.detailEl.hidden = !detailText || !showStatus;
+      card.detailEl.hidden = !detailText || !showDetail;
       const kindCls = source.kind === 'ltc' ? ' tm-card-ltc' : source.kind === 'clock' ? ' tm-card-clock' : '';
       setCardClass(card, `tm-card is-${tone}${extra}${kindCls}`);
     }
@@ -694,9 +749,17 @@ export default function create({ root, moduleApi }) {
       needFit = true;
     }
     const showHeadings = !solo && pref('showHeadings') !== false;
-    const showStatus = pref('showStatus') !== false;
     wrap.classList.toggle('tm-headings', showHeadings);
-    wrap.classList.toggle('tm-nostatus', !showStatus);
+    for (const [cls, on] of [
+      ['tm-nostatus', pref('showStatus') === false],
+      ['tm-nodetail', pref('showDetail') === false],
+      ['tm-nonames', pref('showNames') === false],
+    ]) {
+      if (wrap.classList.contains(cls) !== on) {
+        wrap.classList.toggle(cls, on);
+        needFit = true;
+      }
+    }
 
     let hint = '';
     const groups = visibleGroups();
@@ -779,20 +842,23 @@ export default function create({ root, moduleApi }) {
   /** Status and detail lines are drawn at this share of the label's size (style.css agrees). */
   const LINE_SCALE = 0.8;
 
-  /* The title fits its card: measured off-screen, it shrinks (down to a
-     floor) before the card would cut it off. Uppercase and letter-spaced
-     like the CSS draws it. */
+  /* Text measured off-screen the way the CSS draws it (bold, uppercase,
+     letter-spaced), so a title or the date can shrink before the card
+     would cut it off. */
   const measurer = document.createElement('canvas').getContext('2d');
-  let labelFamily = '';
-  function labelWidth(text, px) {
-    if (!labelFamily) labelFamily = getComputedStyle(root).fontFamily || 'sans-serif';
-    measurer.font = `700 ${px}px ${labelFamily}`;
+  let textFamily = '';
+  function textWidth(text, px, spacingEm) {
+    if (!textFamily) textFamily = getComputedStyle(root).fontFamily || 'sans-serif';
+    measurer.font = `700 ${px}px ${textFamily}`;
     const t = String(text || '').toUpperCase();
-    return measurer.measureText(t).width + 0.08 * px * Math.max(0, t.length - 1);
+    return measurer.measureText(t).width + spacingEm * px * Math.max(0, t.length - 1);
   }
+  /** The last fit's card width and label size — what the date is fitted against. */
+  let lastFit = { cw: 200, meta: 12 };
   function fitLabel(card, meta, avail) {
+    if (card.isClock) return; // the clock has no label line
     const room = Math.max(24, avail - (card.nameEl.querySelector('.tm-ltc-badge') ? 34 : 0));
-    const natural = labelWidth(card.labelEl.textContent, meta);
+    const natural = textWidth(card.labelEl.textContent, meta, 0.08);
     const px = natural > room ? Math.max(8, Math.floor((meta * room) / natural)) : meta;
     card.labelEl.style.fontSize = px === meta ? '' : `${px}px`;
   }
@@ -810,15 +876,25 @@ export default function create({ root, moduleApi }) {
     const groups = [...groupEls.values()].filter((g) => g.el.isConnected);
     const headings = wrap.classList.contains('tm-headings') ? groups.length : 0;
     const showStatus = !wrap.classList.contains('tm-nostatus');
-    // Lines under the digits besides the label: status, and detail if any card has one.
-    const metaLines = showStatus ? 1 + (list.some((c) => !c.detailEl.hidden) ? 1 : 0) : 0;
+    const showDetail = !wrap.classList.contains('tm-nodetail');
+    const namesOn = !wrap.classList.contains('tm-nonames');
+    // Lines under the digits: status, and detail if any card has one.
+    const metaLines = (showStatus ? 1 : 0) + (showDetail && list.some((c) => !c.detailEl.hidden) ? 1 : 0);
+    const date = showStatus && pref('clockDate') && list.some((c) => c.isClock) ? dateParts() : null;
+    const dateWhole = date ? `${date.day}, ${date.rest}` : '';
 
     // For each column count, budget a card's full stack (label, digits,
     // lines) and score by the digit size it affords — the SMALLEST card's,
     // so no timer ends up unreadable. Cards too short for the full stack
     // drop to a compact look (label + digits, the colour carries the
     // state), but any layout with a readable full stack beats every
-    // compact one.
+    // compact one. The clock has no label line, and its date may take two.
+    const budgetFor = (c, ch, meta, mode, dateWrap) => {
+      const nameLine = namesOn && !c.isClock ? 1.3 * meta : 0;
+      if (mode === 'compact') return ch - nameLine;
+      const lines = metaLines + (c.isClock && dateWrap ? 1 : 0);
+      return ch - nameLine - lines * 1.3 * meta * LINE_SCALE;
+    };
     let best = null;
     for (let cols = 1; cols <= n; cols += 1) {
       const rows = headings
@@ -828,19 +904,18 @@ export default function create({ root, moduleApi }) {
       const ch = (H - PAD * 2 - headings * HEAD_H - GAP * (rows - 1) - (headings ? (headings - 1) * GAP : 0)) / rows - CARD_PAD;
       if (cw <= 0 || ch <= 0) continue;
       const meta = Math.max(9, Math.min(22, Math.floor(ch * 0.16)));
-      const fullBudget = ch - 1.3 * meta - metaLines * 1.3 * meta * LINE_SCALE;
-      const compactBudget = ch - 1.3 * meta;
+      const dateWrap = Boolean(dateWhole) && textWidth(dateWhole, meta * LINE_SCALE, 0.1) > cw;
       let full = Infinity;
       let compact = Infinity;
       for (const c of list) {
         const byWidth = (cw * 1.55) / c.chars;
-        full = Math.min(full, byWidth, fullBudget);
-        compact = Math.min(compact, byWidth, compactBudget);
+        full = Math.min(full, byWidth, budgetFor(c, ch, meta, 'full', dateWrap));
+        compact = Math.min(compact, byWidth, budgetFor(c, ch, meta, 'compact', dateWrap));
       }
       const mode = full >= 14 ? 'full' : 'compact';
       const size = mode === 'full' ? full : compact;
       const score = (mode === 'full' ? 1000 : 0) + size;
-      if (!best || score > best.score) best = { cols, meta, mode, cw, budget: mode === 'full' ? fullBudget : compactBudget, score };
+      if (!best || score > best.score) best = { cols, meta, mode, cw, ch, dateWrap, score };
     }
     if (!best) return;
     for (const g of groups) {
@@ -853,10 +928,13 @@ export default function create({ root, moduleApi }) {
     wrap.style.setProperty('--tm-gap', GAP + 'px');
     wrap.style.setProperty('--tm-meta-size', best.meta + 'px');
     wrap.classList.toggle('tm-compact', best.mode === 'compact');
+    lastFit = { cw: best.cw, meta: best.meta };
     for (const c of list) {
-      const px = Math.max(11, Math.floor(Math.min((best.cw * 1.55) / c.chars, best.budget)));
+      const budget = budgetFor(c, best.ch, best.meta, best.mode, best.dateWrap);
+      const px = Math.max(11, Math.floor(Math.min((best.cw * 1.55) / c.chars, budget)));
       c.timeEl.style.fontSize = px + 'px';
       fitLabel(c, best.meta, best.cw);
+      c.dateKey = ''; // the date re-fits to the new card width on the next paint
     }
   }
 

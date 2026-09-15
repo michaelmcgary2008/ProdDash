@@ -911,20 +911,23 @@ function gearOf(keys, { loose = [], groups = {} } = {}) {
 }
 
 const COLOURS = ['runningColor', 'warningColor', 'overrunColor', 'idleColor'];
+/** What a timer card can show or hide of itself (which timers appear is the header menu's job). */
+const TIMER_ELEMENTS = ['showNames', 'showStatus', 'showDetail', 'showSeconds', 'leadingZeros'];
+const CLOCK_ELEMENTS = ['clock24h', 'clockSeconds', 'clockDate', 'dateShortDay', 'dateShortMonth'];
 /** With one card there is little else to see: the colours start unfolded. */
 const OPEN_COLOURS = { groups: { Colours: { collapsed: false } } };
 
 const GEAR = {
-  /** Every source, the headings, the clock's format, the tones. */
+  /** Every card's elements, the headings, how the clock reads, the tones. */
   all: { instanceSchema: FULL_SCHEMA, instanceGroups: FULL_GROUPS },
-  /** One ProPresenter or module timer: its lines, and the tone its digits take per state. */
-  timer: gearOf(['showStatus', ...COLOURS], { loose: ['showStatus'], ...OPEN_COLOURS }),
-  /** The timecode: running, no signal (warning) and stopped (idle) — it never overruns. */
-  ltc: gearOf(['showStatus', 'runningColor', 'warningColor', 'idleColor'], { loose: ['showStatus'], ...OPEN_COLOURS }),
+  /** One ProPresenter or module timer: its elements, and the tone its digits take per state. */
+  timer: gearOf([...TIMER_ELEMENTS, ...COLOURS], OPEN_COLOURS),
+  /** The timecode: running, no signal (warning) and stopped (idle) — it never overruns, and frames are frames. */
+  ltc: gearOf(['showNames', 'showStatus', 'runningColor', 'warningColor', 'idleColor'], OPEN_COLOURS),
   /** The time of day: plain digits, so only how they read. */
-  clock: gearOf(['clockFormat', 'clockSeconds', 'clockDate']),
+  clock: gearOf(CLOCK_ELEMENTS),
   /** A clock another module offers: read like the clock, muted while it isn't running. */
-  providerClock: gearOf(['showStatus', 'clockFormat', 'clockSeconds', 'idleColor'], { loose: ['showStatus'], ...OPEN_COLOURS }),
+  providerClock: gearOf(['showNames', 'showStatus', 'clock24h', 'clockSeconds', 'idleColor'], OPEN_COLOURS),
 };
 
 /** The gear a solo card of this timer gets — by what the card can show. */

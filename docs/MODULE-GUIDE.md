@@ -197,6 +197,8 @@ for a clock's format switches — give it a schema of what applies.
 `showWhen: "<key>"` hides a field until the boolean/`switch` field named
 `<key>` is on — e.g. the audio device and channel appear only once the LTC
 listener switch is enabled. The hidden field still keeps its stored value.
+It works the same in a tile's gear (`instanceSchema`): "Short day" and
+"Short month" appear once the clock's "Date" is on.
 
 A `select` whose choices are only knowable at runtime (audio devices, serial
 ports, discovered sources) sets `optionsRoute` instead of — or as a fallback

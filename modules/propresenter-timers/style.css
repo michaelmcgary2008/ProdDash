@@ -132,7 +132,10 @@
 [data-module="propresenter-timers"] .tm-compact .tm-status:not(.is-note),
 [data-module="propresenter-timers"] .tm-compact .tm-detail,
 [data-module="propresenter-timers"] .tm-nostatus .tm-status:not(.is-note),
-[data-module="propresenter-timers"] .tm-nostatus .tm-detail { display: none; }
+[data-module="propresenter-timers"] .tm-nodetail .tm-detail { display: none; }
+/* "Names" off hides every title; the clock never carries one — its digits say what it is */
+[data-module="propresenter-timers"] .tm-nonames .tm-name,
+[data-module="propresenter-timers"] .tm-card-clock .tm-name { display: none; }
 
 /* ── one timer card ── */
 
@@ -220,6 +223,18 @@
 [data-module="propresenter-timers"] .tm-status[data-tone="warn"] { color: var(--tm-warn); }
 [data-module="propresenter-timers"] .tm-status[data-tone="danger"] { color: var(--tm-danger); }
 [data-module="propresenter-timers"] .tm-status[data-tone="muted"] { color: var(--tm-muted); }
+
+/* The clock's date: one line when it fits, else the day on its own line
+   (renderDate() sizes it to the longer half). */
+[data-module="propresenter-timers"] .tm-status.is-date {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  text-align: center;
+  line-height: 1.15;
+}
+[data-module="propresenter-timers"] .tm-status.is-date span { white-space: nowrap; }
+[data-module="propresenter-timers"] .tm-status.is-date.is-wrap span { display: block; }
 
 /* Explanatory notes read as sentences, not badges. */
 [data-module="propresenter-timers"] .tm-status.is-note {
