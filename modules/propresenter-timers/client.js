@@ -765,6 +765,7 @@ export default function create({ root, moduleApi }) {
     const showHeadings = !solo && pref('groupBySource') === true && pref('showHeadings') !== false;
     wrap.classList.toggle('tm-headings', showHeadings);
     for (const [cls, on] of [
+      ['tm-grouped', !solo && pref('groupBySource') === true],
       ['tm-nostatus', pref('showStatus') === false],
       ['tm-nodetail', pref('showDetail') === false],
       ['tm-nonames', pref('showNames') === false],
@@ -894,6 +895,9 @@ export default function create({ root, moduleApi }) {
     const CARD_PAD = 12; // a card's own vertical padding + borders
     const HEAD_H = 20; // a source heading line, margin included
     const groups = [...groupEls.values()].filter((g) => g.el.isConnected);
+    // Grouped: each source's grid wraps on its own, so its rows add up; flat:
+    // one grid. Headings only add a line each — they never decide the rows.
+    const grouped = wrap.classList.contains('tm-grouped') && groups.length > 1;
     const headings = wrap.classList.contains('tm-headings') ? groups.length : 0;
     const showStatus = !wrap.classList.contains('tm-nostatus');
     const showDetail = !wrap.classList.contains('tm-nodetail');
@@ -915,13 +919,17 @@ export default function create({ root, moduleApi }) {
       const lines = metaLines + (c.isClock && dateWrap ? 1 : 0);
       return ch - nameLine - lines * 1.3 * meta * LINE_SCALE;
     };
+    const rowsFor = (cols) => (grouped
+      ? groups.reduce((a, g) => a + Math.max(1, Math.ceil(g.count / cols)), 0)
+      : Math.ceil(n / cols));
     let best = null;
     for (let cols = 1; cols <= n; cols += 1) {
-      const rows = headings
-        ? groups.reduce((a, g) => a + Math.max(1, Math.ceil(g.count / cols)), 0)
-        : Math.ceil(n / cols);
+      const rows = rowsFor(cols);
       const cw = (W - PAD * 2 - GAP * (cols - 1)) / cols - 18;
-      const ch = (H - PAD * 2 - headings * HEAD_H - GAP * (rows - 1) - (headings ? (headings - 1) * GAP : 0)) / rows - CARD_PAD;
+      // Every row the same height: padding, one heading line per group, and
+      // a gap between any two rows (between groups too) come off the top.
+      const rowH = (H - PAD * 2 - headings * HEAD_H - GAP * (rows - 1)) / rows;
+      const ch = rowH - CARD_PAD;
       if (cw <= 0 || ch <= 0) continue;
       const meta = Math.max(9, Math.min(22, Math.floor(ch * 0.16)));
       const dateWrap = Boolean(dateWhole) && textWidth(dateWhole, meta * LINE_SCALE, 0.1) > cw;
@@ -935,15 +943,17 @@ export default function create({ root, moduleApi }) {
       const mode = full >= 14 ? 'full' : 'compact';
       const size = mode === 'full' ? full : compact;
       const score = (mode === 'full' ? 1000 : 0) + size;
-      if (!best || score > best.score) best = { cols, meta, mode, cw, ch, dateWrap, score };
+      if (!best || score > best.score) best = { cols, meta, mode, cw, ch, rowH, dateWrap, score };
     }
     if (!best) return;
     for (const g of groups) {
       g.gridEl.style.gridTemplateColumns = `repeat(${best.cols}, 1fr)`;
       g.gridEl.style.setProperty('--tm-cols', String(best.cols));
-      // Space is shared in proportion to each group's rows, so a card is
-      // the same height under every heading.
-      g.el.style.flexGrow = String(Math.max(1, Math.ceil(g.count / best.cols)));
+      // Each group takes exactly the height its rows, gaps and heading need,
+      // so a card is the same height under every heading.
+      const rows = Math.max(1, Math.ceil(g.count / best.cols));
+      const head = headings ? HEAD_H : 0;
+      g.el.style.flexGrow = String(Math.max(1, Math.round(head + rows * best.rowH + (rows - 1) * GAP)));
     }
     wrap.style.setProperty('--tm-pad', PAD + 'px');
     wrap.style.setProperty('--tm-gap', GAP + 'px');
@@ -956,6 +966,19 @@ export default function create({ root, moduleApi }) {
       c.timeEl.style.fontSize = px + 'px';
       fitLabel(c, best.meta, best.cw);
       c.dateKey = ''; // the date re-fits to the new card width on the next paint
+    }
+    // Then a look at the real thing: the layout is applied, so each card's
+    // height is known. Digits that would still spill past it — an estimate
+    // off by a line, a heading taller than budgeted — shrink to what is
+    // there. Only ever smaller; the estimate above sets the ceiling.
+    for (const c of list) {
+      const box = c.el.clientHeight;
+      if (!box) continue;
+      const parts = [c.nameEl, c.timeEl, c.statusEl, c.detailEl].filter((el) => !el.hidden && getComputedStyle(el).display !== 'none');
+      const others = parts.filter((el) => el !== c.timeEl).reduce((a, el) => a + el.getBoundingClientRect().height, 0);
+      const room = box - CARD_PAD - others - 0.02 * box * Math.max(0, parts.length - 1); // .tm-card's 2% gaps
+      const px = parseFloat(c.timeEl.style.fontSize) || 0;
+      if (room > 0 && px * 1.05 > room) c.timeEl.style.fontSize = `${Math.max(11, Math.floor(room / 1.05))}px`;
     }
   }
 
