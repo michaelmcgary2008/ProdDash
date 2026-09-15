@@ -794,80 +794,130 @@ function tileMessage(entry, text) {
   entry.body.appendChild(msg);
 }
 
-/* ── shared event streams ───────────────────────────────────────────── */
+/* ── one stream per page ─────────────────────────────────────────────── */
 
 /* Browsers allow about six HTTP/1.1 connections to one host, and an open
-   EventSource holds one of them for as long as it lives. One stream per
-   tile plus the shell's own /api/events reaches that ceiling at five or six
-   tiles, and from then on every further request — the ＋ picker's module
-   list, a new tile's /state, its stream — sits in the browser's queue
-   waiting for a connection that is never handed back. So tiles that ask
-   for the same stream share one connection: the pool keeps one EventSource
-   per URL, fans its events out to every subscriber, and reconnects it (on
-   the same 3-second timer the per-tile version used) while anyone is still
-   listening. A tile joining an already-open stream is told `open` straight
-   away, so its backfill runs exactly as if the connection were its own. */
+   EventSource holds one of them for as long as it lives. Sharing one
+   stream per URL was not enough: a dashboard with six modules still ran
+   out (Safari first), and from then on every further request — a remounted
+   tile's /state, an avatar, the ＋ picker's list — sat in the browser's
+   queue waiting for a connection that was never handed back. So the page
+   holds ONE EventSource, GET /api/stream?s=<keys>, and the server relays
+   every stream named in it (a module's, or `shell:` for the shell's own)
+   with the key prefixed to each event name. Subscribers still see the
+   events they asked for by their own names. Adding or dropping a stream
+   remakes the connection with the new list, a moment later so several
+   tiles mounting together cause one reconnect; every stream announces
+   `open` again after it, so backfills run as before. */
 
-const ssePool = new Map(); // url -> shared source
+const muxSubs = new Map();     // key -> { subs: Set<{ handlers }> }
+let muxEs = null;              // the page's one EventSource
+let muxKeys = '';              // the key list it was opened with
+let muxTimer = null;           // the pending (re)connect
+let muxRetry = null;           // retry after the connection gave up
+const muxListened = new Set(); // "key|name" pairs with a listener on muxEs
+
+/** The stream key for a URL: `/api/modules/<id><path>` → `<id>:<path>`, `/api/events` → `shell:`. */
+function muxKeyFor(url) {
+  if (url === '/api/events') return 'shell:';
+  const m = /^\/api\/modules\/([^/?#]+)(\/[^?#]*)?$/.exec(url);
+  return m ? `${decodeURIComponent(m[1])}:${m[2] || '/'}` : null;
+}
+
+function muxFanOut(key, kind, e) {
+  for (const sub of [...(muxSubs.get(key)?.subs || [])]) {
+    const fn = kind === 'event' ? sub.handlers.events?.[e.type] : sub.handlers[kind];
+    try { fn?.(e); } catch (err) { console.error('[shell] stream handler failed:', err); }
+  }
+}
+
+/** Listen for `<key>|<name>` on the open connection and hand it to that key's subscribers as `name`. */
+function muxListen(key, name) {
+  const full = `${key}|${name}`;
+  if (!muxEs || muxListened.has(full)) return;
+  muxListened.add(full);
+  muxEs.addEventListener(full, (e) => {
+    if (name === '__open') return muxFanOut(key, 'open', new Event('open'));
+    if (name === '__down') return muxFanOut(key, 'error', new Event('error'));
+    const ev = { type: name, data: e.data, lastEventId: e.lastEventId };
+    muxFanOut(key, name === 'message' ? 'message' : 'event', ev);
+  });
+}
+
+function muxConnect() {
+  clearTimeout(muxTimer);
+  muxTimer = null;
+  clearTimeout(muxRetry);
+  muxRetry = null;
+  const keys = [...muxSubs.keys()].sort();
+  const wanted = keys.join(',');
+  if (!keys.length) {
+    try { muxEs?.close(); } catch { /* not open */ }
+    muxEs = null;
+    muxKeys = '';
+    return;
+  }
+  if (muxEs && muxKeys === wanted && muxEs.readyState !== EventSource.CLOSED) return;
+  try { muxEs?.close(); } catch { /* not open */ }
+  muxListened.clear();
+  muxKeys = wanted;
+  const es = new EventSource(`/api/stream?s=${encodeURIComponent(wanted)}`);
+  muxEs = es;
+  // Each stream says `open` for itself (the server's __open), so nothing to do on the connection's own open.
+  es.onerror = () => {
+    if (es !== muxEs) return;
+    for (const key of muxSubs.keys()) muxFanOut(key, 'error', new Event('error'));
+    // EventSource retries transient drops itself but gives up for good on a
+    // completed non-SSE response (a 502 while the server restarts).
+    if (es.readyState === EventSource.CLOSED && muxSubs.size) {
+      clearTimeout(muxRetry);
+      muxRetry = setTimeout(muxConnect, 3000);
+    }
+  };
+  for (const [key, entry] of muxSubs) {
+    muxListen(key, '__open');
+    muxListen(key, '__down');
+    muxListen(key, 'message');
+    for (const sub of entry.subs) for (const name of Object.keys(sub.handlers.events || {})) muxListen(key, name);
+  }
+}
 
 function sseSubscribe(url, handlers = {}) {
-  let shared = ssePool.get(url);
-  if (!shared) {
-    shared = { subs: new Set(), es: null, retryTimer: null, names: new Set() };
-    const fanOut = (kind, e) => {
-      for (const sub of [...shared.subs]) {
-        const fn = kind === 'event' ? sub.handlers.events?.[e.type] : sub.handlers[kind];
-        try { fn?.(e); } catch (err) { console.error('[shell] stream handler failed:', err); }
-      }
-    };
-    shared.listen = (name) => shared.es.addEventListener(name, (e) => fanOut('event', e));
-    shared.connect = () => {
-      clearTimeout(shared.retryTimer);
-      shared.retryTimer = null;
-      try { shared.es?.close(); } catch { /* already closed */ }
-      const es = new EventSource(url);
-      shared.es = es;
-      es.onopen = (e) => fanOut('open', e);
-      es.onmessage = (e) => fanOut('message', e);
-      es.onerror = (e) => {
-        fanOut('error', e);
-        // EventSource retries transient drops itself but gives up for good on
-        // a completed non-SSE response (a 502 while the upstream is down).
-        if (es.readyState === EventSource.CLOSED && shared.subs.size) {
-          clearTimeout(shared.retryTimer);
-          shared.retryTimer = setTimeout(shared.connect, 3000);
-        }
-      };
-      for (const name of shared.names) shared.listen(name);
-    };
-    ssePool.set(url, shared);
+  const key = muxKeyFor(url);
+  if (!key) {
+    console.warn('[shell] not a stream this page can carry:', url);
+    return { close() {} };
   }
-
+  let entry = muxSubs.get(key);
+  if (!entry) {
+    entry = { subs: new Set() };
+    muxSubs.set(key, entry);
+  }
   const sub = { handlers };
-  shared.subs.add(sub);
-  for (const name of Object.keys(handlers.events || {})) {
-    if (shared.names.has(name)) continue;
-    shared.names.add(name);
-    if (shared.es) shared.listen(name);
+  entry.subs.add(sub);
+  const carried = Boolean(muxEs) && muxKeys.split(',').includes(key) && muxEs.readyState !== EventSource.CLOSED;
+  if (carried) {
+    // Joining a stream the connection already carries: listeners for any
+    // new event names, and `open` a moment later so the caller's own setup
+    // finishes first — exactly as a fresh connection would have reported it.
+    for (const name of Object.keys(handlers.events || {})) muxListen(key, name);
+    if (muxEs.readyState === EventSource.OPEN) {
+      setTimeout(() => {
+        if (!entry.subs.has(sub)) return;
+        try { handlers.open?.(new Event('open')); } catch (err) { console.error('[shell] stream handler failed:', err); }
+      }, 0);
+    }
+  } else {
+    clearTimeout(muxTimer);
+    muxTimer = setTimeout(muxConnect, 20);
   }
-  if (!shared.es || shared.es.readyState === EventSource.CLOSED) {
-    // first subscriber, or the stream had given up while nobody listened
-    shared.connect();
-  } else if (shared.es.readyState === EventSource.OPEN) {
-    // Joining mid-flight: report the open the way a fresh connection would
-    // have, a moment later, so the caller's own setup finishes first.
-    setTimeout(() => {
-      if (!shared.subs.has(sub)) return;
-      try { handlers.open?.(new Event('open')); } catch (err) { console.error('[shell] stream handler failed:', err); }
-    }, 0);
-  }
-
   return {
     close() {
-      if (!shared.subs.delete(sub) || shared.subs.size) return;
-      clearTimeout(shared.retryTimer);
-      try { shared.es?.close(); } catch { /* already closed */ }
-      ssePool.delete(url);
+      if (!entry.subs.delete(sub) || entry.subs.size) return;
+      muxSubs.delete(key);
+      // A remount closes and reopens within milliseconds: wait before remaking the connection.
+      clearTimeout(muxTimer);
+      muxTimer = setTimeout(muxConnect, 500);
     },
   };
 }
@@ -1959,20 +2009,14 @@ new ResizeObserver(() => {
    config or enabled flags change. Tiles of a changed module get
    onConfigChange(cfg) if they implement it, otherwise a clean remount. */
 
-let eventsSource = null;
-let eventsRetry = null;
-
 function subscribeEvents() {
-  try { eventsSource?.close(); } catch { /* not open */ }
-  eventsSource = new EventSource('/api/events');
-  eventsSource.addEventListener('modules-changed', () => handleModulesChanged());
-  eventsSource.addEventListener('theme', handleThemeEvent);
-  eventsSource.onerror = () => {
-    if (eventsSource.readyState === EventSource.CLOSED) {
-      clearTimeout(eventsRetry);
-      eventsRetry = setTimeout(subscribeEvents, 4000);
-    }
-  };
+  // Rides on the page's one stream connection (see sseSubscribe) as `shell:`.
+  sseSubscribe('/api/events', {
+    events: {
+      'modules-changed': () => handleModulesChanged(),
+      theme: handleThemeEvent,
+    },
+  });
 }
 
 async function handleModulesChanged() {

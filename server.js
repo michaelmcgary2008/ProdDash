@@ -559,6 +559,142 @@ setInterval(() => {
   }
 }, 25000).unref();
 
+/* ── one stream per page ─────────────────────────────────────────────
+   Browsers allow about six HTTP/1.1 connections to a host and an open
+   EventSource holds one for as long as it lives. A dashboard with six
+   modules ran out — Safari first — and from then on every further request
+   (a remounted tile's /state, an avatar) waited in the browser's queue for
+   ever. So a page opens ONE EventSource, GET /api/stream?s=<keys>, naming
+   the streams it wants: `slack:/stream`, `pco-plan:/timers/stream`, `shell:`
+   for the shell's own events. The server opens each module stream for it
+   over loopback (the module's route is untouched and still serves curl and
+   other tools), and forwards every frame with the event name prefixed by
+   its key — `event: slack:/stream|state`. Two frames of its own bracket a
+   stream's life: `<key>|__open` when the upstream answers, `<key>|__down`
+   when it ends (it is re-opened after a pause while the page stays). */
+
+const MUX_MAX_STREAMS = 32;
+const MUX_RETRY_MS = 3000;
+const MUX_RETRY_REFUSED_MS = 10000;
+const MUX_PING_MS = 15000;
+const MUX_KEY_RE = /^([A-Za-z0-9_-]+):(\/[A-Za-z0-9_\-./]*)?$/;
+
+function parseMuxKeys(search) {
+  const params = new URLSearchParams(search || '');
+  const out = [];
+  const seen = new Set();
+  for (const raw of String(params.get('s') || '').split(',')) {
+    const key = raw.trim();
+    const m = MUX_KEY_RE.exec(key);
+    if (!m || seen.has(key)) continue;
+    seen.add(key);
+    out.push({ key, id: m[1], subPath: m[2] || '' });
+    if (out.length >= MUX_MAX_STREAMS) break;
+  }
+  return out;
+}
+
+function handleMuxStream(req, res, search) {
+  const wanted = parseMuxKeys(search);
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.write('retry: 3000\n\n');
+  try { req.socket.setKeepAlive(true, 15000); } catch { /* gone */ }
+  let closed = false;
+  const send = (frame) => {
+    if (closed) return;
+    try {
+      res.write(frame);
+    } catch {
+      /* the client is gone; 'close' follows */
+    }
+  };
+
+  // The shell's own events ride along under `shell:` — a stand-in sits in
+  // shellStreams and rewrites the event line of every frame it is handed.
+  let shellProxy = null;
+  const upstreams = [];
+  for (const entry of wanted) {
+    if (entry.id === 'shell') {
+      if (shellProxy) continue;
+      shellProxy = { write(frame) { send(String(frame).replace(/^event: /m, `event: ${entry.key}|`)); } };
+      shellStreams.add(shellProxy);
+      send(`event: ${entry.key}|__open\ndata: {}\n\n`);
+      continue;
+    }
+    upstreams.push({ ...entry, req: null, timer: null, gone: false });
+  }
+
+  function forwardBlock(entry, block) {
+    let name = 'message';
+    const data = [];
+    for (const line of block.split('\n')) {
+      if (line.startsWith(':')) continue; // the upstream's keepalive; this connection pings on its own
+      if (line.startsWith('event:')) name = line.slice(6).trim() || 'message';
+      else if (line.startsWith('data:')) data.push(line.slice(5).replace(/^ /, ''));
+      // id: and retry: belong to the upstream connection, not to the page's
+    }
+    if (!data.length) return;
+    send(`event: ${entry.key}|${name}\n${data.map((d) => `data: ${d}`).join('\n')}\n\n`);
+  }
+
+  function down(entry, why, delay) {
+    if (closed || entry.gone) return;
+    entry.gone = true;
+    send(`event: ${entry.key}|__down\ndata: ${JSON.stringify({ why })}\n\n`);
+    try { entry.req?.destroy(); } catch { /* already gone */ }
+    entry.req = null;
+    entry.timer = setTimeout(() => {
+      entry.gone = false;
+      open(entry);
+    }, delay);
+  }
+
+  function open(entry) {
+    if (closed) return;
+    const path = `/api/modules/${encodeURIComponent(entry.id)}${entry.subPath || '/'}`;
+    const up = http.request({ host: '127.0.0.1', port: PORT, path, method: 'GET', headers: { accept: 'text/event-stream' } }, (upRes) => {
+      if (upRes.statusCode !== 200 || !/text\/event-stream/.test(String(upRes.headers['content-type'] || ''))) {
+        upRes.resume();
+        return down(entry, `HTTP ${upRes.statusCode}`, MUX_RETRY_REFUSED_MS);
+      }
+      send(`event: ${entry.key}|__open\ndata: {}\n\n`);
+      let buf = '';
+      upRes.setEncoding('utf8');
+      upRes.on('data', (chunk) => {
+        buf += chunk;
+        let i;
+        while ((i = buf.indexOf('\n\n')) >= 0) {
+          forwardBlock(entry, buf.slice(0, i));
+          buf = buf.slice(i + 2);
+        }
+        if (buf.length > 1e6) buf = ''; // a frame that never ends is dropped, not kept
+      });
+      upRes.on('end', () => down(entry, 'ended', MUX_RETRY_MS));
+      upRes.on('error', (err) => down(entry, err.message, MUX_RETRY_MS));
+    });
+    up.on('error', (err) => down(entry, err.message, MUX_RETRY_MS));
+    up.end();
+    entry.req = up;
+  }
+
+  for (const entry of upstreams) open(entry);
+  const ping = setInterval(() => send(': ping\n\n'), MUX_PING_MS);
+  req.on('close', () => {
+    closed = true;
+    clearInterval(ping);
+    if (shellProxy) shellStreams.delete(shellProxy);
+    for (const entry of upstreams) {
+      clearTimeout(entry.timer);
+      try { entry.req?.destroy(); } catch { /* already gone */ }
+    }
+  });
+}
+
 /* ── themes ─────────────────────────────────────────────────────────── */
 
 /* Preset palettes for the whole dashboard, chosen in Admin → Theme. The
@@ -1446,6 +1582,11 @@ function handleRequest(req, res) {
   /* — theme: public (dashboards need it without a passcode); changed via POST /api/admin/theme — */
   if (urlPath === '/api/theme' && req.method === 'GET') {
     return sendJson(res, 200, themeView());
+  }
+
+  /* — every stream a page wants, over one connection — */
+  if (urlPath === '/api/stream' && req.method === 'GET') {
+    return handleMuxStream(req, res, search);
   }
 
   /* — shell events: open dashboards learn about admin changes live — */
