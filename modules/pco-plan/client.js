@@ -89,6 +89,16 @@ export default function create({ root, moduleApi }) {
     return `${sign}${m}:${String(sec).padStart(2, '0')}`;
   }
 
+  /** "Starts in": under a day like fmtDur; a day or more reads "2 Days, 05:12:44". */
+  function fmtStartsIn(totalSec) {
+    const s = Math.max(0, Math.round(totalSec));
+    const days = Math.floor(s / 86400);
+    if (!days) return fmtDur(s);
+    const rest = s % 86400;
+    const pad = (v) => String(v).padStart(2, '0');
+    return `${days} ${days === 1 ? 'Day' : 'Days'}, ${pad(Math.floor(rest / 3600))}:${pad(Math.floor((rest % 3600) / 60))}:${pad(rest % 60)}`;
+  }
+
   function fmtMinutes(totalSec) {
     const m = Math.round(totalSec / 60);
     if (m < 60) return `${m} min`;
@@ -261,7 +271,7 @@ export default function create({ root, moduleApi }) {
     const startsAt = svc.startsAt || plan.serviceStartsAt || 0;
     if (on('showCountdown') && startsAt > now) {
       clockLabelEl.textContent = 'Starts in';
-      clockValueEl.textContent = fmtDur((startsAt - now) / 1000);
+      clockValueEl.textContent = fmtStartsIn((startsAt - now) / 1000);
       return;
     }
     if (on('showRunningClock') && startsAt) {
